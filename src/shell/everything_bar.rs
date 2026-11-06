@@ -1,6 +1,8 @@
 //! Static Everything Bar. Product controls are disabled, not fake implementations.
 //! Native window management is the only interaction enabled in this slice.
 
+use std::rc::Rc;
+
 use gpui_kit::{
     App, Entity, FontWeight, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce,
     Role, StatefulInteractiveElement, Styled, TestSupportExt, Window, WindowControlArea,
@@ -25,12 +27,14 @@ pub const BAR_HEIGHT: Pixels = px(40.);
 #[derive(IntoElement)]
 pub struct EverythingBar {
     search: Entity<InputState>,
+    on_new_widget: Rc<dyn Fn(&mut App)>,
 }
 
 impl EverythingBar {
-    pub fn new(search: &Entity<InputState>) -> Self {
+    pub fn new(search: &Entity<InputState>, on_new_widget: impl Fn(&mut App) + 'static) -> Self {
         Self {
             search: search.clone(),
+            on_new_widget: Rc::new(on_new_widget),
         }
     }
 }
@@ -139,7 +143,10 @@ impl RenderOnce for EverythingBar {
             .child(
                 segment("new-widget")
                     .accessibility_label("New Widget")
-                    .disabled(true)
+                    .on_click({
+                        let on_new_widget = self.on_new_widget.clone();
+                        move |_, _, cx| on_new_widget(cx)
+                    })
                     .flex_none()
                     .px(px(if compact { 12. } else { 16. }))
                     // Keep a visible end before the flexible gap. The negative

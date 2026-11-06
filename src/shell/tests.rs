@@ -32,14 +32,7 @@ fn shell_keeps_chrome_reachable_and_placeholders_disabled(cx: &mut TestAppContex
             assert_eq!(bar.bounds().size.height, px(40.));
             assert_eq!(bar.bounds().size.width, px(width - 16.));
 
-            for id in [
-                "layout",
-                "page-1",
-                "add-page",
-                "new-widget",
-                "connections",
-                "settings",
-            ] {
+            for id in ["layout", "page-1", "add-page", "connections", "settings"] {
                 assert_eq!(window.find(id).disabled(), Some(true), "{id}");
             }
             assert_eq!(window.find("clock").label(), Some("Clock unavailable"));
@@ -128,6 +121,8 @@ fn shell_keeps_chrome_reachable_and_placeholders_disabled(cx: &mut TestAppContex
             window.click("add-page", cx);
             window.click("new-widget", cx);
             window.click("settings", cx);
+            window.render_frame(cx);
+            assert!(window.try_find(("pane", 1usize)).is_some());
             assert_eq!(cx.windows().len(), 1);
             assert!(window.try_find("page-2").is_none());
         })
