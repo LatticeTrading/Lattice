@@ -3,11 +3,13 @@
 
 use std::rc::Rc;
 
+type PageSelectHandler = dyn Fn(&mut App, usize);
+
 use gpui_kit::{
     App, Entity, FontWeight, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce,
     Role, StatefulInteractiveElement, Styled, TestSupportExt, Window, WindowControlArea,
     component::{
-        Disableable, Icon, IconName, Sizable,
+        Disableable, Icon, IconName, Selectable, Sizable,
         button::{Button, ButtonVariants},
         input::{Input, InputState},
     },
@@ -28,13 +30,28 @@ pub const BAR_HEIGHT: Pixels = px(40.);
 pub struct EverythingBar {
     search: Entity<InputState>,
     on_new_widget: Rc<dyn Fn(&mut App)>,
+    on_add_page: Rc<dyn Fn(&mut App)>,
+    on_select_page: Rc<PageSelectHandler>,
+    page_ids: Vec<usize>,
+    active_page_id: usize,
 }
 
 impl EverythingBar {
-    pub fn new(search: &Entity<InputState>, on_new_widget: impl Fn(&mut App) + 'static) -> Self {
+    pub fn new(
+        search: &Entity<InputState>,
+        on_new_widget: impl Fn(&mut App) + 'static,
+        on_add_page: impl Fn(&mut App) + 'static,
+        on_select_page: impl Fn(&mut App, usize) + 'static,
+        page_ids: Vec<usize>,
+        active_page_id: usize,
+    ) -> Self {
         Self {
             search: search.clone(),
             on_new_widget: Rc::new(on_new_widget),
+            on_add_page: Rc::new(on_add_page),
+            on_select_page: Rc::new(on_select_page),
+            page_ids,
+            active_page_id,
         }
     }
 }
@@ -79,6 +96,43 @@ impl RenderOnce for EverythingBar {
         let control_width = px(if compact { 36. } else { 40. });
         let page_width = px(if compact { 28. } else { 32. });
 
+        let on_add_page = self.on_add_page.clone();
+        let on_select_page = self.on_select_page.clone();
+        let page_buttons = self
+            .page_ids
+            .iter()
+            .enumerate()
+            .map(|(index, page_id)| {
+                let page_id = *page_id;
+                let selected = page_id == self.active_page_id;
+                Button::new(format!("page-{page_id}"))
+                    .accessibility_label(format!("Layout {}", index + 1))
+                    .ghost()
+                    .rounded(px(0.))
+                    .h_full()
+                    .w(page_width)
+                    .px_0()
+                    .selected(selected)
+                    .text_color(color(if selected {
+                        theme::ACCENT
+                    } else {
+                        theme::TEXT_SECONDARY
+                    }))
+                    .bg(color(if selected {
+                        theme::ACCENT
+                    } else {
+                        theme::BAR_BACKGROUND
+                    })
+                    .opacity(if selected { 0.1 } else { 1. }))
+                    .border_l_1()
+                    .border_color(color(theme::BORDER))
+                    .on_click({
+                        let on_select_page = on_select_page.clone();
+                        move |_, _, cx| on_select_page(cx, page_id)
+                    })
+                    .child((index + 1).to_string())
+            })
+            .collect::<Vec<_>>();
         let left = div()
             .flex()
             .h_full()
@@ -96,23 +150,23 @@ impl RenderOnce for EverythingBar {
                     .child("LATTICE"),
             )
             .child(placeholder("layout", "Layout"))
-            // One blank initial page; no sample layouts or extra numbered pages.
+            .children(page_buttons)
             .child(
-                placeholder("page-1", "1")
-                    .accessibility_label("Layout 1")
-                    .w(page_width)
-                    .px_0()
-                    .text_color(color(theme::ACCENT))
-                    .bg(color(theme::ACCENT).opacity(0.1)),
-            )
-            .child(
-                placeholder("add-page", "+")
+                Button::new("add-page")
                     .accessibility_label("Add layout page")
+                    .ghost()
+                    .rounded(px(0.))
+                    .h_full()
                     .w(page_width)
                     .px_0()
+                    .border_l_1()
+                    .border_r_1()
+                    .border_color(color(theme::BORDER))
+                    .text_color(color(theme::TEXT_SECONDARY))
+                    .on_click(move |_, _, cx| on_add_page(cx))
+                    .child(div().text_size(px(14.)).child("+"))
                     // Close the segment even when space separates it from search.
                     // Share this edge with search's left border when adjacent.
-                    .border_r_1()
                     .mr(-px(1.)),
             );
 

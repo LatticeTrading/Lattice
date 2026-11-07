@@ -1,15 +1,17 @@
 //! First migration checkpoint: a scrollable grid of blank, resizable mock panes.
 mod grid;
+pub(crate) use grid::Grid;
 
-use crate::theme::{self, color};
+use crate::{
+    storage::{self, StoredPage, StoredWorkspace},
+    theme::{self, color},
+};
 use gpui_kit::{
     AppContext, Context, DragMoveEvent, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
     MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, Render, ScrollHandle,
     StatefulInteractiveElement, Styled, Subscription, TestSupportExt, Window, canvas, div, px,
 };
-use grid::{
-    GAP, Grid, Pane, ROW_STEP, Rect, breakpoint, column_step, columns, compact, moved, resized,
-};
+use grid::{GAP, Pane, ROW_STEP, Rect, breakpoint, column_step, columns, compact, moved, resized};
 
 struct ResizeGhost;
 
@@ -50,7 +52,9 @@ struct Move {
 }
 
 pub struct Workspace {
-    grid: Grid,
+    pages: Vec<StoredPage>,
+    active_page_id: usize,
+    next_page_id: usize,
     resize: Option<Resize>,
     pane_move: Option<Move>,
     scroll: ScrollHandle,
@@ -59,6 +63,32 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let mut saved = storage::load();
+        if saved.pages.is_empty() {
+            saved.pages.push(StoredPage {
+                id: saved.active_page_id.max(1),
+                grid: Grid::default(),
+            });
+        }
+        if !saved
+            .pages
+            .iter()
+            .any(|page| page.id == saved.active_page_id)
+        {
+            saved.active_page_id = saved.pages[0].id;
+        }
+        saved.next_page_id = saved
+            .pages
+            .iter()
+            .map(|page| page.id)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1)
+            .max(saved.next_page_id);
+        for page in &mut saved.pages {
+            page.grid.repair_counters();
+        }
+
         let subscriptions = vec![
             cx.observe_window_activation(window, |this, window, cx| {
                 if !window.is_window_active() {
@@ -67,28 +97,126 @@ impl Workspace {
             }),
             cx.observe_window_bounds(window, |this, _, cx| this.cancel(cx)),
         ];
-        Self {
-            grid: Grid::default(),
+        let workspace = Self {
+            pages: saved.pages,
+            active_page_id: saved.active_page_id,
+            next_page_id: saved.next_page_id,
             resize: None,
             pane_move: None,
             scroll: ScrollHandle::new(),
             _subscriptions: subscriptions,
+        };
+        workspace.persist();
+        workspace
+    }
+
+    fn active_page(&self) -> &StoredPage {
+        self.pages
+            .iter()
+            .find(|page| page.id == self.active_page_id)
+            .expect("workspace must always have an active page")
+    }
+
+    fn active_page_mut(&mut self) -> &mut StoredPage {
+        self.pages
+            .iter_mut()
+            .find(|page| page.id == self.active_page_id)
+            .expect("workspace must always have an active page")
+    }
+
+    fn active_grid(&self) -> &Grid {
+        &self.active_page().grid
+    }
+
+    fn active_grid_mut(&mut self) -> &mut Grid {
+        &mut self.active_page_mut().grid
+    }
+
+    fn persist(&self) {
+        let saved = StoredWorkspace {
+            active_page_id: self.active_page_id,
+            next_page_id: self.next_page_id,
+            pages: self.pages.clone(),
+            ..StoredWorkspace::default()
+        };
+        if let Err(error) = storage::save(&saved) {
+            eprintln!("Lattice: unable to save workspace: {error:#}");
         }
+    }
+
+    pub fn page_ids(&self) -> Vec<usize> {
+        self.pages.iter().map(|page| page.id).collect()
+    }
+
+    pub fn active_page_id(&self) -> usize {
+        self.active_page_id
+    }
+
+    pub fn select_page(&mut self, page_id: usize, cx: &mut Context<Self>) {
+        if self.active_page_id == page_id || !self.pages.iter().any(|page| page.id == page_id) {
+            return;
+        }
+        self.cancel(cx);
+        self.active_page_id = page_id;
+        self.persist();
+        cx.notify();
+    }
+
+    pub fn add_page(&mut self, cx: &mut Context<Self>) {
+        self.cancel(cx);
+        let id = self.next_page_id;
+        self.next_page_id = self.next_page_id.saturating_add(1);
+        self.pages.push(StoredPage {
+            id,
+            grid: Grid::default(),
+        });
+        self.active_page_id = id;
+        self.persist();
+        cx.notify();
     }
 
     pub fn spawn(&mut self, cx: &mut Context<Self>) {
         self.cancel(cx);
-        self.grid.spawn();
+        self.active_grid_mut().spawn();
+        self.persist();
+        cx.notify();
+    }
+
+    pub fn remove_pane(&mut self, pane_id: usize, cx: &mut Context<Self>) {
+        self.cancel(cx);
+        self.active_grid_mut().remove_pane(pane_id);
+        self.persist();
+        cx.notify();
+    }
+
+    pub fn add_tab(&mut self, pane_id: usize, cx: &mut Context<Self>) {
+        self.cancel(cx);
+        self.active_grid_mut().add_tab(pane_id);
+        self.persist();
+        cx.notify();
+    }
+
+    pub fn activate_tab(&mut self, pane_id: usize, tab_id: usize, cx: &mut Context<Self>) {
+        self.cancel(cx);
+        self.active_grid_mut().activate_tab(pane_id, tab_id);
+        self.persist();
+        cx.notify();
+    }
+
+    pub fn close_tab(&mut self, pane_id: usize, tab_id: usize, cx: &mut Context<Self>) {
+        self.cancel(cx);
+        self.active_grid_mut().close_tab(pane_id, tab_id);
+        self.persist();
         cx.notify();
     }
 
     fn cancel(&mut self, cx: &mut Context<Self>) {
         if let Some(resize) = self.resize.take() {
-            self.grid.layouts[resize.breakpoint] = resize.before;
+            self.active_grid_mut().layouts[resize.breakpoint] = resize.before;
             cx.notify();
         }
         if let Some(pane_move) = self.pane_move.take() {
-            self.grid.layouts[pane_move.breakpoint] = pane_move.before;
+            self.active_grid_mut().layouts[pane_move.breakpoint] = pane_move.before;
             cx.notify();
         }
     }
@@ -120,7 +248,7 @@ impl Workspace {
             pane.rect = preview;
         }
         compact(&mut layout, Some(id));
-        self.grid.layouts[breakpoint] = layout;
+        self.active_grid_mut().layouts[breakpoint] = layout;
         if let Some(pane_move) = &mut self.pane_move {
             pane_move.preview = preview;
         }
@@ -129,6 +257,7 @@ impl Workspace {
 
     fn finish_move(&mut self, cx: &mut Context<Self>) {
         if self.pane_move.take().is_some() {
+            self.persist();
             cx.notify();
         }
     }
@@ -167,7 +296,7 @@ impl Workspace {
             pane.rect = preview;
         }
         compact(&mut layout, Some(id));
-        self.grid.layouts[breakpoint] = layout;
+        self.active_grid_mut().layouts[breakpoint] = layout;
         if let Some(resize) = &mut self.resize {
             resize.preview = preview;
         }
@@ -185,7 +314,8 @@ impl Workspace {
             pane.rect = resize.preview;
         }
         compact(&mut layout, Some(resize.id));
-        self.grid.layouts[resize.breakpoint] = layout;
+        self.active_grid_mut().layouts[resize.breakpoint] = layout;
+        self.persist();
         cx.notify();
     }
 }
@@ -196,7 +326,7 @@ impl Render for Workspace {
         let width = f32::from(window.viewport_size().width) - 16.;
         let bp = breakpoint(width);
         let step = column_step(width, columns(bp));
-        let layout = &self.grid.layouts[bp];
+        let layout = &self.active_grid().layouts[bp];
         let height = layout
             .iter()
             .map(|pane| pane.rect.y + pane.rect.h)
@@ -259,8 +389,7 @@ impl Render for Workspace {
                                     .border_r_1()
                                     .border_color(color(theme::BORDER))
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.grid.activate_tab(id, tab_id);
-                                        cx.notify();
+                                        this.activate_tab(id, tab_id, cx);
                                     }))
                                     .child(tab.title.clone())
                                     .child(
@@ -269,9 +398,8 @@ impl Render for Workspace {
                                             .text_color(color(theme::TEXT_TERTIARY))
                                             .cursor_pointer()
                                             .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.grid.close_tab(id, tab_id);
+                                                this.close_tab(id, tab_id, cx);
                                                 cx.stop_propagation();
-                                                cx.notify();
                                             }))
                                             .child("×"),
                                     )
@@ -292,8 +420,7 @@ impl Render for Workspace {
                                     .cursor_pointer()
                                     .hover(|this| this.bg(color(theme::WINDOW_BACKGROUND)))
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.grid.add_tab(id);
-                                        cx.notify();
+                                        this.add_tab(id, cx);
                                     }))
                                     .child("+"),
                             )
@@ -337,9 +464,8 @@ impl Render for Workspace {
                                             .text_color(color(theme::TEXT_PRIMARY))
                                     })
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.grid.remove_pane(id);
+                                        this.remove_pane(id, cx);
                                         cx.stop_propagation();
-                                        cx.notify();
                                     }))
                                     .child("×"),
                             ),
@@ -394,7 +520,7 @@ impl Render for Workspace {
                     let id = drag.id;
                     let bp = drag.breakpoint;
                     if this.resize.is_none() {
-                        let preview = this.grid.layouts[bp]
+                        let preview = this.active_grid().layouts[bp]
                             .iter()
                             .find(|pane| pane.id == id)
                             .expect("resize target")
@@ -404,7 +530,7 @@ impl Render for Workspace {
                             breakpoint: bp,
                             start: event.event.position,
                             scroll_y: this.scroll.offset().y,
-                            before: this.grid.layouts[bp].clone(),
+                            before: this.active_grid().layouts[bp].clone(),
                             preview,
                         });
                     }
@@ -422,7 +548,7 @@ impl Render for Workspace {
                     let id = drag.id;
                     let bp = drag.breakpoint;
                     if this.pane_move.is_none() {
-                        let preview = this.grid.layouts[bp]
+                        let preview = this.active_grid().layouts[bp]
                             .iter()
                             .find(|pane| pane.id == id)
                             .expect("move target")
@@ -432,7 +558,7 @@ impl Render for Workspace {
                             breakpoint: bp,
                             start: event.event.position,
                             scroll_y: this.scroll.offset().y,
-                            before: this.grid.layouts[bp].clone(),
+                            before: this.active_grid().layouts[bp].clone(),
                             preview,
                         });
                     }

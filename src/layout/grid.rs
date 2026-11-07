@@ -1,10 +1,12 @@
 //! Integer grid geometry, independent of GPUI. Row height and gaps match lattice-pro.
 
+use serde::{Deserialize, Serialize};
+
 pub const GAP: f32 = 8.;
 pub const ROW: f32 = 8.;
 pub const ROW_STEP: f32 = ROW + GAP;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rect {
     pub x: u32,
     pub y: u32,
@@ -12,13 +14,13 @@ pub struct Rect {
     pub h: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tab {
     pub id: usize,
     pub title: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Pane {
     pub id: usize,
     pub rect: Rect,
@@ -96,7 +98,7 @@ pub fn resized(rect: Rect, dx: f32, dy: f32, width: f32, cols: u32) -> Rect {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Grid {
     pub layouts: [Vec<Pane>; 5],
     next_id: usize,
@@ -104,6 +106,30 @@ pub struct Grid {
 }
 
 impl Grid {
+    /// Repair counters after loading a workspace written by an older build.
+    /// Layout contents remain authoritative; IDs are only advanced, never
+    /// regenerated, so saved tabs keep their identity.
+    pub fn repair_counters(&mut self) {
+        self.next_id = self
+            .layouts
+            .iter()
+            .flat_map(|layout| layout.iter().map(|pane| pane.id))
+            .max()
+            .unwrap_or(0)
+            .max(self.next_id);
+        self.next_tab_id = self
+            .layouts
+            .iter()
+            .flat_map(|layout| {
+                layout
+                    .iter()
+                    .flat_map(|pane| pane.tabs.iter().map(|tab| tab.id))
+            })
+            .max()
+            .unwrap_or(0)
+            .max(self.next_tab_id);
+    }
+
     pub fn spawn(&mut self) -> usize {
         self.next_id += 1;
         let id = self.next_id;

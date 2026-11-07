@@ -3,10 +3,12 @@
 Native Rust trading terminal rewrite using **GPUI Kit 0.9.0 with GPUI Fast 0.1.13**.
 One Cargo package, with one root `Cargo.toml` and a reproducible dependency lockfile.
 
-The first slice is a startable Windows desktop shell: an empty workspace and the
-Everything Bar. Product controls are deliberately disabled. There are no sample
-markets, menus, widgets, backend connections, persistence, or update checks.
-Only native window management is enabled. See [the shell contract](docs/initial-shell.md).
+The current slice is a startable Windows desktop shell with a working multi-page
+workspace. Panes, tabs, responsive grid geometry, the active page, and page
+creation are persisted locally so the terminal reopens where it was left. The
+trading widgets and backend connections are still migration scaffolds; profile
+keys, preset imports, and the layout-clear manager are intentionally not in this
+slice. See [the shell contract](docs/initial-shell.md).
 
 ## Run (Windows)
 
@@ -47,8 +49,8 @@ systems are not validated by this first Windows slice.
 - `assets/`: embedded fonts/icons and their license/provenance notes.
 - `src/widgets/`: named product surfaces to assess during migration.
 - `src/data/`: backend communication, market identity, acquisition, subscriptions, and shared data ownership.
-- `src/layout/`: workspace, tabs, widget placement, linking, and presets.
-- `src/storage/`: persisted settings/workspaces and migration of saved state.
+- `src/layout.rs`, `src/layout/grid.rs`: workspace pages, tabs, widget placement, and responsive grid geometry.
+- `src/storage.rs`: versioned local workspace persistence with atomic replacement.
 - `src/platform/`: native integration such as dialogs, external links, and updates.
 
 These folders are navigation hints, not mandatory architecture boundaries.

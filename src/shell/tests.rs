@@ -32,9 +32,10 @@ fn shell_keeps_chrome_reachable_and_placeholders_disabled(cx: &mut TestAppContex
             assert_eq!(bar.bounds().size.height, px(40.));
             assert_eq!(bar.bounds().size.width, px(width - 16.));
 
-            for id in ["layout", "page-1", "add-page", "connections", "settings"] {
+            for id in ["layout", "connections", "settings"] {
                 assert_eq!(window.find(id).disabled(), Some(true), "{id}");
             }
+            assert_ne!(window.find("page-1").disabled(), Some(true));
             assert_eq!(window.find("clock").label(), Some("Clock unavailable"));
             assert_eq!(window.find("symbol-search").role(), Some(Role::TextInput));
             let search = window.find("symbol-search");
@@ -117,17 +118,21 @@ fn shell_keeps_chrome_reachable_and_placeholders_disabled(cx: &mut TestAppContex
                 assert_eq!(window.find(id).label(), Some(label));
                 assert_ne!(window.find(id).disabled(), Some(true));
             }
-            window.click("layout", cx);
-            window.click("add-page", cx);
-            window.click("new-widget", cx);
-            window.click("settings", cx);
-            window.render_frame(cx);
-            assert!(window.try_find(("pane", 1usize)).is_some());
             assert_eq!(cx.windows().len(), 1);
-            assert!(window.try_find("page-2").is_none());
         })
         .expect("inspect shell");
     }
+
+    // Pages are real workspace switches now. Adding a page starts empty, and
+    // New Widget writes into that page rather than the page left behind.
+    cx.update_window(handle, |_, window, cx| {
+        window.click("add-page", cx);
+        window.click("new-widget", cx);
+        window.render_frame(cx);
+        assert!(window.try_find(("pane", 1usize)).is_some());
+        assert!(window.try_find("page-2").is_some());
+    })
+    .expect("exercise page creation");
 }
 
 #[gpui_kit::test]
