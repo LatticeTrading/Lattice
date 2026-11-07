@@ -1,63 +1,51 @@
-//! Application lifecycle and native window configuration, not product state.
+//! Native Shell lifecycle for the desktop Cargo launcher.
+//!
+//! `nsh run` and `nsh package` generate the corresponding NSH runner and web
+//! runtime from the same `crate::App` root. This module only exists so
+//! `cargo run` remains a useful local desktop smoke check.
 
-use std::{cell::RefCell, rc::Rc};
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+pub fn run() -> impl std::process::Termination {
+    #[cfg(target_os = "linux")]
+    use nsh_platform_linux as platform;
+    #[cfg(target_os = "macos")]
+    use nsh_platform_macos as platform;
+    #[cfg(target_os = "windows")]
+    use nsh_platform_windows as platform;
 
-use anyhow::Context as _;
-use gpui_kit::{App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
-
-use crate::{assets::AppAssets, shell::Shell, theme};
-
-pub fn window_options(cx: &App) -> WindowOptions {
-    WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-            None,
-            size(px(1280.), px(800.)),
-            cx,
-        ))),
-        titlebar: Some(TitlebarOptions {
-            title: Some("Lattice".into()),
-            appears_transparent: true,
+    env_logger::init();
+    platform::set_ui_sets(vec![nsh_base::registry(), crate::registry()]);
+    platform::run_app(
+        platform::AppSource::Rust(
+            platform::Root::of::<crate::App>()
+                .app_id("com.latticetrading.lattice")
+                .tokens(crate::theme::tokens())
+                .font(
+                    include_bytes!("../assets/fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf")
+                        .to_vec(),
+                )
+                .font(
+                    include_bytes!("../assets/fonts/ibm-plex-mono/IBMPlexMono-Medium.ttf").to_vec(),
+                )
+                .font(
+                    include_bytes!("../assets/fonts/ibm-plex-mono/IBMPlexMono-SemiBold.ttf")
+                        .to_vec(),
+                )
+                .font(include_bytes!("../assets/fonts/ibm-plex-mono/IBMPlexMono-Bold.ttf").to_vec())
+                .appearance(nsh_core::platform::Appearance::Dark),
+        ),
+        platform::AppOptions {
+            title: "Lattice".to_owned(),
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            app_id: "com.latticetrading.lattice".to_owned(),
+            size: (1280, 800),
+            appearance: platform::Appearance::Dark,
             ..Default::default()
-        }),
-        window_min_size: Some(size(px(640.), px(360.))),
-        app_id: Some("Lattice".into()),
-        ..Default::default()
-    }
+        },
+    )
 }
 
-fn start(cx: &mut App) -> anyhow::Result<()> {
-    gpui_kit::init(cx);
-    theme::init(cx)?;
-    // A single-window app must also quit when the OS closes its last window.
-    cx.on_window_closed(|cx, _| {
-        if cx.windows().is_empty() {
-            cx.quit();
-        }
-    })
-    .detach();
-    gpui_kit::open_window(window_options(cx), cx, |window, cx| {
-        cx.new(|cx| Shell::new(window, cx))
-    })
-    .context("opening the Lattice window")?;
-    cx.activate(true);
-    Ok(())
-}
-
-pub fn run() -> anyhow::Result<()> {
-    // Application::run requires a 'static callback. Preserve startup errors so
-    // cargo run / a launcher gets a nonzero exit rather than a silent blank app.
-    let startup_error = Rc::new(RefCell::new(None));
-    let error_slot = startup_error.clone();
-    gpui_kit::application()
-        .with_assets(AppAssets)
-        .run(move |cx| {
-            if let Err(error) = start(cx) {
-                *error_slot.borrow_mut() = Some(error);
-                cx.quit();
-            }
-        });
-    match startup_error.borrow_mut().take() {
-        Some(error) => Err(error),
-        None => Ok(()),
-    }
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+pub fn run() -> impl std::process::Termination {
+    std::process::ExitCode::SUCCESS
 }

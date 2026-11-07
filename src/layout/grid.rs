@@ -40,12 +40,14 @@ pub fn column_step(width: f32, columns: u32) -> f32 {
     ((width + GAP) / columns as f32).max(1.)
 }
 
+#[allow(dead_code)]
 pub fn overlaps(a: Rect, b: Rect) -> bool {
     a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 }
 
 /// Compact in visual order. A resized pane keeps its anchor and pushes colliding
 /// neighbours down; there are no overlapping committed panes or pixel drift.
+#[allow(dead_code)]
 pub fn compact(panes: &mut [Pane], pinned: Option<usize>) {
     let mut order: Vec<_> = (0..panes.len()).collect();
     order.sort_by_key(|&i| {
@@ -75,6 +77,7 @@ pub fn compact(panes: &mut [Pane], pinned: Option<usize>) {
     }
 }
 
+#[allow(dead_code)]
 pub fn moved(rect: Rect, dx: f32, dy: f32, width: f32, cols: u32) -> Rect {
     let step = column_step(width, cols);
     Rect {
@@ -86,6 +89,7 @@ pub fn moved(rect: Rect, dx: f32, dy: f32, width: f32, cols: u32) -> Rect {
     }
 }
 
+#[allow(dead_code)]
 pub fn resized(rect: Rect, dx: f32, dy: f32, width: f32, cols: u32) -> Rect {
     // Keep room for the future tab strip, even at the narrowest breakpoint.
     let min_w = ((160. + GAP) / column_step(width, cols)).ceil() as u32;
@@ -98,7 +102,7 @@ pub fn resized(rect: Rect, dx: f32, dy: f32, width: f32, cols: u32) -> Rect {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Grid {
     pub layouts: [Vec<Pane>; 5],
     next_id: usize,

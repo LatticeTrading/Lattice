@@ -1,0 +1,19 @@
+{
+  "cssVars": {
+    "theme": {
+      "font-sans": "IBM Plex Mono, monospace",
+      "font-mono": "IBM Plex Mono, monospace",
+      "radius": "0px"
+    },
+    "light": {
+      "background": "#0a0a0a",
+      "foreground": "#ffffff",
+      "card": "#1a1a1a",
+      "border": "#2a2a2a",
+      "muted-foreground": "#a0a0a0",
+      "tertiary": "#707070",
+      "primary": "#3b82f6",
+      "ring": "#3b82f6"
+    }
+  }
+}
