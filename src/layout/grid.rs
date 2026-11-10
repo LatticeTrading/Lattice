@@ -21,7 +21,7 @@ pub struct Tab {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Pane {
+pub(crate) struct Pane {
     pub id: usize,
     pub rect: Rect,
     pub tabs: Vec<Tab>,
@@ -40,14 +40,12 @@ pub fn column_step(width: f32, columns: u32) -> f32 {
     ((width + GAP) / columns as f32).max(1.)
 }
 
-#[allow(dead_code)]
 pub fn overlaps(a: Rect, b: Rect) -> bool {
     a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
 }
 
 /// Compact in visual order. A resized pane keeps its anchor and pushes colliding
 /// neighbours down; there are no overlapping committed panes or pixel drift.
-#[allow(dead_code)]
 pub fn compact(panes: &mut [Pane], pinned: Option<usize>) {
     let mut order: Vec<_> = (0..panes.len()).collect();
     order.sort_by_key(|&i| {
@@ -77,7 +75,6 @@ pub fn compact(panes: &mut [Pane], pinned: Option<usize>) {
     }
 }
 
-#[allow(dead_code)]
 pub fn moved(rect: Rect, dx: f32, dy: f32, width: f32, cols: u32) -> Rect {
     let step = column_step(width, cols);
     Rect {
@@ -89,7 +86,6 @@ pub fn moved(rect: Rect, dx: f32, dy: f32, width: f32, cols: u32) -> Rect {
     }
 }
 
-#[allow(dead_code)]
 pub fn resized(rect: Rect, dx: f32, dy: f32, width: f32, cols: u32) -> Rect {
     // Keep room for the future tab strip, even at the narrowest breakpoint.
     let min_w = ((160. + GAP) / column_step(width, cols)).ceil() as u32;
@@ -100,6 +96,37 @@ pub fn resized(rect: Rect, dx: f32, dy: f32, width: f32, cols: u32) -> Rect {
         h: (rect.h as f32 + dy / ROW_STEP).round().clamp(6., 4096.) as u32,
         ..rect
     }
+}
+
+/// Apply one drag from a stable snapshot. Rebuilding from the snapshot keeps
+/// pointer samples from compounding rounding or collision movement.
+pub fn dragged(
+    before: &[Pane],
+    pane_id: usize,
+    dx: f32,
+    dy: f32,
+    width: f32,
+    breakpoint: usize,
+    resize: bool,
+) -> Vec<Pane> {
+    let cols = columns(breakpoint);
+    let mut layout = before.to_vec();
+    let Some(pane) = layout.iter_mut().find(|pane| pane.id == pane_id) else {
+        return layout;
+    };
+    let rect = if resize {
+        resized(pane.rect, dx, dy, width, cols)
+    } else {
+        moved(pane.rect, dx, dy, width, cols)
+    };
+    // A click, sub-cell movement, or a return to the starting cell must
+    // restore the exact snapshot, not compact otherwise untouched panes.
+    if rect == pane.rect {
+        return layout;
+    }
+    pane.rect = rect;
+    compact(&mut layout, Some(pane_id));
+    layout
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -282,6 +309,20 @@ mod tests {
         grid.close_tab(pane_id, second_tab);
         assert!(grid.layouts[4][0].tabs.is_empty());
         assert_eq!(grid.layouts[4][0].active_tab, 0);
+    }
+
+    #[test]
+    fn drag_rebuilds_from_snapshot_and_compacts_neighbours() {
+        let mut grid = Grid::default();
+        let first = grid.spawn();
+        grid.spawn();
+        let before = grid.layouts[4].clone();
+        let moved_once = dragged(&before, first, 1000.0, 32.0, 1264.0, 4, false);
+        let moved_again = dragged(&before, first, 1000.0, 32.0, 1264.0, 4, false);
+        assert_eq!(moved_once, moved_again);
+        assert_eq!(moved_once[0].rect.x, 24);
+        assert_eq!(moved_once[0].rect.y, 2);
+        assert_eq!(moved_once[1].rect.y, 0);
     }
 
     #[test]

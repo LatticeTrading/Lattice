@@ -5,14 +5,59 @@
 //! WebAssembly runners.
 
 mod grid;
+#[cfg(test)]
+mod tests;
 pub(crate) use grid::Grid;
 
 use crate::{
     storage::{self, StoredPage, StoredWorkspace},
     theme,
 };
-use grid::{GAP, ROW_STEP, breakpoint, column_step, columns};
+use grid::{GAP, Pane, ROW_STEP, breakpoint, column_step, columns};
 use nsh_core::prelude::*;
+
+#[derive(Clone, PartialEq)]
+struct DragState {
+    id: usize,
+    page_id: usize,
+    breakpoint: usize,
+    width: f32,
+    before: Vec<Pane>,
+    preview: Vec<Pane>,
+    resize: bool,
+}
+
+impl DragState {
+    fn valid(&self, saved: &StoredWorkspace, width: f32) -> bool {
+        saved.active_page_id == self.page_id
+            && width == self.width
+            && active_grid(saved).layouts[self.breakpoint] == self.before
+    }
+
+    fn update(&mut self, dx: f32, dy: f32) {
+        self.preview = grid::dragged(
+            &self.before,
+            self.id,
+            dx,
+            dy,
+            self.width,
+            self.breakpoint,
+            self.resize,
+        );
+    }
+
+    fn commit(self, saved: &mut StoredWorkspace, width: f32) -> bool {
+        if !self.valid(saved, width) || self.preview == self.before {
+            return false;
+        }
+        active_grid_mut(saved).layouts[self.breakpoint] = self.preview;
+        true
+    }
+}
+
+fn workspace_width() -> f32 {
+    (window().width.0 - 16.0).max(1.0)
+}
 
 /// Repair a loaded workspace and ensure it always has one real page.
 pub(crate) fn normalize(workspace: &mut StoredWorkspace) {
@@ -96,6 +141,63 @@ pub(crate) fn close_tab(workspace: &mut StoredWorkspace, pane_id: usize, tab_id:
     active_grid_mut(workspace).close_tab(pane_id, tab_id);
 }
 
+/// NSH's touch responder also carries desktop mouse drags, including moves
+/// outside the handle. Share the same lifecycle for move and resize controls.
+fn drag_handle(
+    handle: View,
+    workspace: Signal<StoredWorkspace>,
+    drag: Signal<Option<DragState>>,
+    id: usize,
+    resize: bool,
+) -> View {
+    handle
+        .claim_touches(TouchClaim::on_start())
+        .keep_touches(true)
+        .on_responder_grant(move |_: &ResponderEvent| {
+            let saved = workspace.get_untracked();
+            let width = workspace_width();
+            let breakpoint = breakpoint(width);
+            let before = active_grid(&saved).layouts[breakpoint].clone();
+            if before.iter().any(|pane| pane.id == id) {
+                drag.set(Some(DragState {
+                    id,
+                    page_id: saved.active_page_id,
+                    breakpoint,
+                    width,
+                    preview: before.clone(),
+                    before,
+                    resize,
+                }));
+            }
+        })
+        .on_responder_move(move |event: &ResponderEvent| {
+            let Some(mut state) = drag.get_untracked() else {
+                return;
+            };
+            if !state.valid(&workspace.get_untracked(), workspace_width()) {
+                drag.set(None);
+                return;
+            }
+            state.update(event.gesture.delta.x.0, event.gesture.delta.y.0);
+            // Signal::set compares values: sub-cell moves do not redraw.
+            drag.set(Some(state));
+        })
+        .on_responder_release(move |_: &ResponderEvent| {
+            let Some(state) = drag.get_untracked() else {
+                return;
+            };
+            batch(|| {
+                drag.set(None);
+                let mut saved = workspace.get_untracked();
+                if state.commit(&mut saved, workspace_width()) {
+                    persist(&saved);
+                    workspace.set(saved);
+                }
+            });
+        })
+        .on_responder_terminate(move |_: &ResponderEvent| drag.set(None))
+}
+
 fn persist(workspace: &StoredWorkspace) {
     if let Err(error) = storage::save(workspace) {
         log::warn!("Lattice: unable to save workspace: {error}");
@@ -104,13 +206,31 @@ fn persist(workspace: &StoredWorkspace) {
 
 /// Render the active responsive layout.
 pub(crate) fn workspace(workspace: Signal<StoredWorkspace>) -> impl IntoElement {
+    let drag_state = signal(None::<DragState>);
+    // Invalidate rather than restoring an old snapshot over newer page/tab
+    // changes. Previews never enter the persisted workspace until release.
+    effect(move || {
+        let saved = workspace.get();
+        let width = workspace_width();
+        if drag_state
+            .get_untracked()
+            .is_some_and(|drag| !drag.valid(&saved, width))
+        {
+            drag_state.set(None);
+        }
+    });
+
     dynamic(move || {
         let saved = workspace.get();
-        let width = (window().width.0 - 16.0).max(1.0);
+        let width = workspace_width();
         let bp = breakpoint(width);
         let cols = columns(bp);
         let step = column_step(width, cols);
-        let panes = active_grid(&saved).layouts[bp].clone();
+        let panes = drag_state
+            .get()
+            .filter(|drag| drag.valid(&saved, width))
+            .map(|drag| drag.preview)
+            .unwrap_or_else(|| active_grid(&saved).layouts[bp].clone());
         let height = panes
             .iter()
             .map(|pane| pane.rect.y + pane.rect.h)
@@ -214,6 +334,9 @@ pub(crate) fn workspace(workspace: Signal<StoredWorkspace>) -> impl IntoElement 
                             .border_l_1()
                             .border_color(theme::border())
                             .label("Move pane")
+                            .test_id(&format!("pane-move-{id}"))
+                            .cursor(Cursor::Grab)
+                            .map(|handle| drag_handle(handle, workspace, drag_state, id, false))
                             .child(text("⠿")),
                     )
                     .child(
@@ -248,6 +371,28 @@ pub(crate) fn workspace(workspace: Signal<StoredWorkspace>) -> impl IntoElement 
                     .bg(theme::surface())
                     .child(header)
                     .child(view().flex_1().min_h(px(0.0)).bg(theme::background()))
+                    .child(
+                        view()
+                            .absolute()
+                            .right(px(0.0))
+                            .bottom(px(0.0))
+                            .size(px(18.0))
+                            .flex()
+                            .items_end()
+                            .justify_end()
+                            .p(px(3.0))
+                            .cursor(Cursor::NwseResize)
+                            .label("Resize pane")
+                            .test_id(&format!("pane-resize-{id}"))
+                            .map(|handle| drag_handle(handle, workspace, drag_state, id, true))
+                            .child(
+                                view()
+                                    .size(px(7.0))
+                                    .border_r_1()
+                                    .border_b_1()
+                                    .border_color(theme::tertiary()),
+                            ),
+                    )
             })
             .collect::<Vec<_>>();
 
