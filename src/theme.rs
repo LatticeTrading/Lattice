@@ -31,3 +31,15 @@ pub fn tertiary() -> AdaptiveColor {
 pub fn accent() -> AdaptiveColor {
     theme().primary
 }
+/// Floating panels (the Layout Manager), one step above the background.
+pub fn panel() -> AdaptiveColor {
+    theme().popover
+}
+pub fn danger() -> AdaptiveColor {
+    theme().destructive
+}
+pub fn success() -> AdaptiveColor {
+    theme()
+        .color("success")
+        .unwrap_or(AdaptiveColor::TRANSPARENT)
+}

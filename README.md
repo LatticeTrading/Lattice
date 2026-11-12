@@ -69,6 +69,7 @@ visual and native-caption acceptance remains a user-run check.
 - `src/lib.rs`: the registered NSH UI set and shared `App` root.
 - `src/app.rs`: optional direct Cargo desktop launcher.
 - `src/shell.rs`, `src/shell/everything_bar.rs`: shared shell and platform-aware chrome.
+- `src/ui.rs`: shared controls (text field, button, floating panel).
 - `src/layout.rs`, `src/layout/grid.rs`: workspace pages, tabs, panes, and responsive geometry.
 - `src/storage.rs`: versioned NSH storage-service persistence.
 - `src/assets.rs`, `assets/`: compile-time fonts and app assets.

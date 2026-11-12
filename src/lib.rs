@@ -6,6 +6,7 @@ mod layout;
 mod shell;
 mod storage;
 mod theme;
+mod ui;
 
 use nsh_core::prelude::*;
 

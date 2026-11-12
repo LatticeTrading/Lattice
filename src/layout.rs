@@ -112,6 +112,59 @@ pub(crate) fn add_page(workspace: &mut StoredWorkspace) {
     workspace.active_page_id = id;
 }
 
+/// The Layout Manager's "Clear": delete a page and its widgets, selecting the
+/// page before it when it was active. The last remaining page is emptied
+/// instead, since the workspace always keeps one page.
+pub(crate) fn clear_page(workspace: &mut StoredWorkspace, page_id: usize) -> bool {
+    let Some(index) = workspace.pages.iter().position(|page| page.id == page_id) else {
+        return false;
+    };
+    if workspace.pages.len() == 1 {
+        workspace.pages[0].grid = Grid::default();
+        return true;
+    }
+    workspace.pages.remove(index);
+    if workspace.active_page_id == page_id {
+        workspace.active_page_id = workspace.pages[index.saturating_sub(1)].id;
+    }
+    true
+}
+
+pub(crate) fn export_code(workspace: &StoredWorkspace) -> Result<String, String> {
+    let bytes = serde_json::to_vec(workspace).map_err(|error| error.to_string())?;
+    let mut code = String::from("LATTICE1.");
+    for byte in bytes {
+        use std::fmt::Write as _;
+        write!(&mut code, "{byte:02x}").map_err(|error| error.to_string())?;
+    }
+    Ok(code)
+}
+
+pub(crate) fn import_code(code: &str) -> Result<StoredWorkspace, String> {
+    let payload = code
+        .trim()
+        .strip_prefix("LATTICE1.")
+        .ok_or_else(|| "Code must start with LATTICE1.".to_owned())?;
+    if payload.is_empty() || payload.len() % 2 != 0 {
+        return Err("Layout code is incomplete.".to_owned());
+    }
+    let bytes = payload
+        .as_bytes()
+        .chunks(2)
+        .map(|pair| {
+            let hex = std::str::from_utf8(pair).map_err(|error| error.to_string())?;
+            u8::from_str_radix(hex, 16).map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut workspace: StoredWorkspace =
+        serde_json::from_slice(&bytes).map_err(|_| "Layout code is invalid.".to_owned())?;
+    if workspace.version != 1 {
+        return Err("This layout code version is not supported.".to_owned());
+    }
+    normalize(&mut workspace);
+    Ok(workspace)
+}
+
 pub(crate) fn spawn(workspace: &mut StoredWorkspace) {
     active_grid_mut(workspace).spawn();
 }

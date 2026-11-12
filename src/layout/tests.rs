@@ -13,6 +13,40 @@ fn saved_workspace() -> StoredWorkspace {
     saved
 }
 
+#[test]
+fn clearing_pages_deletes_them_and_empties_the_last_one() {
+    let mut saved = saved_workspace();
+    let first = saved.pages[0].id;
+    add_page(&mut saved);
+    let second = saved.active_page_id;
+    add_page(&mut saved);
+    let third = saved.active_page_id;
+    // Clearing the active page selects the one before it.
+    assert!(clear_page(&mut saved, third));
+    assert_eq!(saved.active_page_id, second);
+    // Clearing an inactive page keeps the selection.
+    assert!(clear_page(&mut saved, first));
+    assert_eq!(saved.active_page_id, second);
+    assert_eq!(saved.pages.len(), 1);
+    // The last page stays, emptied of its widgets.
+    super::spawn(&mut saved);
+    assert!(clear_page(&mut saved, second));
+    assert_eq!(saved.pages.len(), 1);
+    assert_eq!(saved.active_page_id, second);
+    assert_eq!(saved.pages[0].grid, Grid::default());
+    assert!(!clear_page(&mut saved, 999));
+}
+
+#[test]
+fn layout_codes_round_trip_and_reject_invalid_data() {
+    let saved = saved_workspace();
+    let code = export_code(&saved).unwrap();
+    assert!(code.starts_with("LATTICE1."));
+    assert_eq!(import_code(&code).unwrap(), saved);
+    assert!(import_code("not-a-layout").is_err());
+    assert!(import_code("LATTICE1.0").is_err());
+}
+
 fn gesture(saved: &StoredWorkspace, resize: bool) -> DragState {
     let before = active_grid(saved).layouts[4].clone();
     DragState {
