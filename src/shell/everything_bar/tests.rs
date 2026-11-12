@@ -1,7 +1,9 @@
+use std::sync::Arc;
+
 use super::*;
 use nsh_core::element::Root;
 use nsh_engine::EngineConfig;
-use nsh_testing::{Headless, WAIT};
+use nsh_testing::{Headless, MemoryStorage, WAIT};
 
 const CODE: &str = "id:layout-code";
 
@@ -16,7 +18,7 @@ fn Harness() -> impl IntoElement {
     view()
         .size_full()
         .flex_col()
-        .child(bar(workspace))
+        .child(bar(workspace, ActiveTheme::restore()))
         .child(text(move || {
             let state = workspace.get();
             format!(
@@ -28,8 +30,13 @@ fn Harness() -> impl IntoElement {
 }
 
 fn start() -> Headless {
+    start_with(MemoryStorage::new([]))
+}
+
+fn start_with(storage: Arc<MemoryStorage>) -> Headless {
     let mut app = Headless::start(EngineConfig {
         viewport: Size::new(px(1280.0), px(800.0)),
+        storage: Some(storage),
         ..EngineConfig::new(Root::of::<Harness>())
     })
     .unwrap();
@@ -133,4 +140,54 @@ fn the_code_field_is_editable_and_rejects_invalid_codes() {
     app.wait_for_gone("id:layout-manager", WAIT).unwrap();
     open(&mut app);
     assert_eq!(app.screen().input_text(CODE).unwrap(), Some("LATTICE1.00"));
+}
+
+/// The color the bar's "Layout" button is drawn in: the theme's muted text.
+fn muted(app: &Headless) -> nsh_core::Color {
+    app.screen().span_style("text:Layout").unwrap().color
+}
+
+#[test]
+fn settings_switch_the_theme_in_place_and_remember_it() {
+    let storage = MemoryStorage::new([]);
+    let mut app = start_with(storage.clone());
+    app.press("Application settings").unwrap();
+    app.wait_for("id:settings").unwrap();
+    assert!(app.shows("Dark"));
+    let dark = muted(&app);
+
+    // The arrows step along the list and wrap at either end; what is open
+    // repaints in place, the panel included.
+    let last = theme::all().last().unwrap().name.as_str();
+    app.press("Next theme").unwrap();
+    app.wait_for("Light").unwrap();
+    assert_ne!(muted(&app), dark);
+    assert!(app.screen().matches("id:settings").unwrap());
+    app.press("Previous theme").unwrap();
+    app.wait_for("Dark").unwrap();
+    assert_eq!(muted(&app), dark);
+    app.press("Previous theme").unwrap();
+    app.wait_for(last).unwrap();
+    app.press("Next theme").unwrap();
+    app.wait_for("Dark").unwrap();
+
+    // The dropdown chooses directly. Escape closes its list before the panel.
+    app.press("role:combobox").unwrap();
+    app.press("role:option[Nord]").unwrap();
+    app.wait_for_gone("role:option[Nord]", WAIT).unwrap();
+    app.wait_for("Nord").unwrap();
+    let nord = muted(&app);
+    assert_ne!(nord, dark);
+    app.press("role:combobox").unwrap();
+    app.wait_for("role:option[Nord]").unwrap();
+    app.press_key("Escape").unwrap();
+    app.wait_for_gone("role:option[Nord]", WAIT).unwrap();
+    assert!(app.screen().matches("id:settings").unwrap());
+    app.press_key("Escape").unwrap();
+    app.wait_for_gone("id:settings", WAIT).unwrap();
+
+    // The choice is saved, and the next launch opens in it.
+    drop(app);
+    let app = start_with(storage);
+    assert_eq!(muted(&app), nord);
 }

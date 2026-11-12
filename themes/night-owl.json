@@ -1,0 +1,16 @@
+{
+  "name": "Night Owl",
+  "appearance": "dark",
+  "colors": {
+    "background": "#011627",
+    "surface": "#0b253a",
+    "panel": "#122d42",
+    "border": "#1d3b53",
+    "text": "#d6deeb",
+    "text-muted": "#89a4bb",
+    "text-faint": "#5f7e97",
+    "accent": "#82aaff",
+    "danger": "#ef5350",
+    "success": "#addb67"
+  }
+}

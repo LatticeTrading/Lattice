@@ -1,0 +1,16 @@
+{
+  "name": "Everforest Dark",
+  "appearance": "dark",
+  "colors": {
+    "background": "#2d353b",
+    "surface": "#232a2e",
+    "panel": "#343f44",
+    "border": "#3d484d",
+    "text": "#d3c6aa",
+    "text-muted": "#9da9a0",
+    "text-faint": "#859289",
+    "accent": "#a7c080",
+    "danger": "#e67e80",
+    "success": "#83c092"
+  }
+}

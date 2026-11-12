@@ -33,11 +33,11 @@ pub fn text_field(value: Signal<String>) -> Input {
         .min_w(px(0.0))
         .px(px(10.0))
         .text_size(px(11.0))
-        .text_color(theme::foreground())
-        .bg(theme::background())
-        .placeholder_color(theme::tertiary().dark)
-        .caret_color(theme::accent().dark)
-        .selection_color(theme::accent().opacity(0.35).dark)
+        .text_color(theme::TEXT)
+        .bg(theme::BACKGROUND)
+        .placeholder_color(theme::TEXT_FAINT)
+        .caret_color(theme::ACCENT)
+        .selection_color(theme::ACCENT.opacity(0.35))
         .auto_correct(false)
         .auto_capitalize(AutoCapitalize::None)
 }
@@ -57,9 +57,9 @@ pub enum Tone {
 /// press, focus, and disabled states.
 pub fn button(label: impl Into<String>, tone: Tone) -> View {
     let color = match tone {
-        Tone::Normal => theme::foreground(),
-        Tone::Quiet => theme::secondary(),
-        Tone::Danger => theme::danger(),
+        Tone::Normal => theme::TEXT,
+        Tone::Quiet => theme::TEXT_MUTED,
+        Tone::Danger => theme::DANGER,
     };
     view()
         .h_full()
@@ -70,14 +70,14 @@ pub fn button(label: impl Into<String>, tone: Tone) -> View {
         .text_color(color)
         .role(AccessibilityRole::Button)
         .hover(move |style| {
-            let style = style.bg(theme::surface());
+            let style = style.bg(theme::SURFACE);
             if tone == Tone::Quiet {
-                style.text_color(theme::danger())
+                style.text_color(theme::DANGER)
             } else {
                 style
             }
         })
-        .active(|style| style.bg(theme::border()))
+        .active(|style| style.bg(theme::BORDER))
         .disabled_style(|style| style.opacity(0.5))
         .child(text(label.into()))
 }
@@ -98,18 +98,22 @@ struct PanelDrag {
 }
 
 impl PanelDrag {
-    /// Opens below `anchor`, `inset` in from its left edge.
-    fn below(anchor: ElementRef, inset: Points) -> Self {
+    /// Opens below `anchor`, `inset` in from its `side` edge, for a panel
+    /// `width` wide.
+    fn below(anchor: ElementRef, side: Side, width: Points, inset: Points) -> Self {
         let drag = Self {
             origin: signal(None),
             start: signal(None),
         };
         spawn(async move {
             let origin = match anchor.measure().await {
-                Some(at) => point(
-                    px(at.page.x.0 + inset.0),
-                    px(at.page.y.0 + at.frame.size.height.0),
-                ),
+                Some(at) => {
+                    let x = match side {
+                        Side::Left => at.page.x.0 + inset.0,
+                        Side::Right => at.page.x.0 + at.frame.size.width.0 - inset.0 - width.0,
+                    };
+                    point(px(x.max(0.0)), px(at.page.y.0 + at.frame.size.height.0))
+                }
                 None => point(inset, inset),
             };
             drag.origin.set(Some(origin));
@@ -162,9 +166,16 @@ impl PanelDrag {
     }
 }
 
-/// A movable floating panel (the Layout Manager, settings, pickers): a
-/// title bar that drags it and closes it, above `body`. It opens below
-/// `anchor`, aligned with its left edge; `body` sets the panel's width.
+/// Which edge of its anchor a [`floating_panel`] opens against.
+#[derive(Clone, Copy)]
+pub enum Side {
+    Left,
+    Right,
+}
+
+/// A movable floating panel (the Layout Manager, Settings, pickers): a
+/// title bar that drags it and closes it, above `body`, `width` wide. It
+/// opens below `anchor`, lined up with its `side` edge.
 ///
 /// Rendering it inside an [`overlay`] is what makes its controls clickable:
 /// an absolutely positioned child that hangs outside its parent is drawn and
@@ -174,11 +185,13 @@ impl PanelDrag {
 /// `on_close`; leaving the overlay out of the view is the caller's job.
 pub fn floating_panel(
     anchor: &ElementRef,
+    side: Side,
+    width: Points,
     title: &str,
     on_close: impl Fn() + Clone + 'static,
     body: impl IntoElement,
 ) -> Overlay {
-    let drag = PanelDrag::below(*anchor, px(8.0));
+    let drag = PanelDrag::below(*anchor, side, width, px(8.0));
 
     // Everything left of the close button grabs the panel.
     let grab = view()
@@ -199,12 +212,12 @@ pub fn floating_panel(
         .items_center()
         .justify_center()
         .border_l_1()
-        .border_color(theme::border())
-        .text_color(theme::tertiary())
+        .border_color(theme::BORDER)
+        .text_color(theme::TEXT_FAINT)
         .role(AccessibilityRole::Button)
         .label(format!("Close {title}"))
-        .hover(|style| style.bg(theme::surface()).text_color(theme::foreground()))
-        .active(|style| style.bg(theme::border()))
+        .hover(|style| style.bg(theme::SURFACE).text_color(theme::TEXT))
+        .active(|style| style.bg(theme::BORDER))
         .on_press({
             let on_close = on_close.clone();
             move || on_close()
@@ -216,9 +229,9 @@ pub fn floating_panel(
         .flex_none()
         .flex()
         .items_center()
-        .bg(theme::background())
+        .bg(theme::BACKGROUND)
         .border_b_1()
-        .border_color(theme::border())
+        .border_color(theme::BORDER)
         .font_weight(FontWeight::BOLD)
         .text_size(px(12.0))
         .child(drag.handle(grab))
@@ -226,11 +239,12 @@ pub fn floating_panel(
 
     let panel = view()
         .label(title.to_owned())
+        .w(width)
         .flex_col()
         .border_1()
-        .border_color(theme::border())
-        .bg(theme::panel())
-        .text_color(theme::foreground())
+        .border_color(theme::BORDER)
+        .bg(theme::PANEL)
+        .text_color(theme::TEXT)
         .child(header)
         .child(body);
 

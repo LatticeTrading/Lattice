@@ -63,6 +63,34 @@ pub(crate) fn save(workspace: &StoredWorkspace) -> Result<()> {
     Ok(())
 }
 
+const SETTINGS_KEY: &str = "lattice.settings.v1";
+
+/// The user's preferences from Settings. A field added later takes its
+/// default, so earlier saves keep loading.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct StoredSettings {
+    /// The chosen theme's id (its file name in `themes/`).
+    pub theme: Option<String>,
+}
+
+/// Load the saved preferences; missing or malformed ones are the defaults.
+pub(crate) fn load_settings() -> StoredSettings {
+    let Some(contents) = Storage::get_item(SETTINGS_KEY) else {
+        return StoredSettings::default();
+    };
+    serde_json::from_str(&contents).unwrap_or_else(|error| {
+        log::warn!("Lattice: ignoring malformed settings: {error}");
+        StoredSettings::default()
+    })
+}
+
+pub(crate) fn save_settings(settings: &StoredSettings) -> Result<()> {
+    let contents = serde_json::to_string(settings).context("serializing settings")?;
+    Storage::set_item(SETTINGS_KEY, contents).context("saving settings")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

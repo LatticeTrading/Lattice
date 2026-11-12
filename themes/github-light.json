@@ -1,0 +1,16 @@
+{
+  "name": "GitHub Light",
+  "appearance": "light",
+  "colors": {
+    "background": "#ffffff",
+    "surface": "#eaeef2",
+    "panel": "#f6f8fa",
+    "border": "#d0d7de",
+    "text": "#1f2328",
+    "text-muted": "#59636e",
+    "text-faint": "#818b98",
+    "accent": "#0969da",
+    "danger": "#d1242f",
+    "success": "#1a7f37"
+  }
+}

@@ -25,8 +25,7 @@ NSH uses that same root for its desktop runners and its web runtime.
   "build": 1,
   "rust": ".",
   "root": "App",
-  "appearance": "dark",
-  "theme": "theme.json"
+  "appearance": "dark"
 }
 ```
 
@@ -64,8 +63,8 @@ visual and native-caption acceptance remains a user-run check.
 
 ## Source map
 
-- `nsh.json`: NSH app identity, Rust root, appearance, and theme.
-- `theme.json`: shared NSH design tokens for desktop and web.
+- `nsh.json`: NSH app identity, Rust root, and appearance.
+- `themes/`: one JSON file per theme.
 - `src/lib.rs`: the registered NSH UI set and shared `App` root.
 - `src/app.rs`: optional direct Cargo desktop launcher.
 - `src/shell.rs`, `src/shell/everything_bar.rs`: shared shell and platform-aware chrome.

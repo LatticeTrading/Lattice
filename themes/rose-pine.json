@@ -1,0 +1,16 @@
+{
+  "name": "Rosé Pine",
+  "appearance": "dark",
+  "colors": {
+    "background": "#191724",
+    "surface": "#1f1d2e",
+    "panel": "#26233a",
+    "border": "#403d52",
+    "text": "#e0def4",
+    "text-muted": "#908caa",
+    "text-faint": "#6e6a86",
+    "accent": "#c4a7e7",
+    "danger": "#eb6f92",
+    "success": "#9ccfd8"
+  }
+}

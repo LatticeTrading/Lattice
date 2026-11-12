@@ -13,11 +13,12 @@ use nsh_core::{
     prelude::*,
 };
 
+use super::settings;
 use crate::{
     layout, storage,
     storage::StoredWorkspace,
-    theme,
-    ui::{self, Tone},
+    theme::{self, ActiveTheme},
+    ui::{self, Side, Tone},
 };
 
 #[cfg(test)]
@@ -130,8 +131,9 @@ impl Manager {
     }
 }
 
-pub fn bar(workspace: Signal<StoredWorkspace>) -> impl IntoElement {
+pub fn bar(workspace: Signal<StoredWorkspace>, active_theme: ActiveTheme) -> impl IntoElement {
     let manager = Manager::new();
+    let settings_open = signal(false);
     let bar_ref = element_ref();
     set_title("Lattice");
     if os().is_desktop() {
@@ -173,14 +175,14 @@ pub fn bar(workspace: Signal<StoredWorkspace>) -> impl IntoElement {
                         ..Default::default()
                     })
                     .text_color(if selected {
-                        theme::accent()
+                        theme::ACCENT
                     } else {
-                        theme::secondary()
+                        theme::TEXT_MUTED
                     })
                     .bg(if selected {
-                        theme::accent().opacity(0.10)
+                        theme::ACCENT.opacity(0.10)
                     } else {
-                        theme::surface()
+                        theme::SURFACE
                     })
                     .on_press(move || {
                         workspace.update(|state| {
@@ -224,7 +226,7 @@ pub fn bar(workspace: Signal<StoredWorkspace>) -> impl IntoElement {
             .disabled(true)
             .text_size(px(if compact { 11.0 } else { 12.0 }))
             .border_l_1()
-            .border_color(theme::border())
+            .border_color(theme::BORDER)
             .label("Search symbols");
 
         let new_widget = view()
@@ -236,8 +238,8 @@ pub fn bar(workspace: Signal<StoredWorkspace>) -> impl IntoElement {
             .px(px(if compact { 12.0 } else { 16.0 }))
             .border_l_1()
             .border_r_1()
-            .border_color(theme::border())
-            .text_color(theme::secondary())
+            .border_color(theme::BORDER)
+            .text_color(theme::TEXT_MUTED)
             .label("New Widget")
             .on_press({
                 let workspace = workspace;
@@ -260,7 +262,7 @@ pub fn bar(workspace: Signal<StoredWorkspace>) -> impl IntoElement {
             .text_size(px(if compact { 11.0 } else { 12.0 }))
             .font_weight(FontWeight::MEDIUM)
             .border_l_1()
-            .border_color(theme::border())
+            .border_color(theme::BORDER)
             .label("Clock unavailable")
             .child(text("--:--:--"));
 
@@ -278,8 +280,8 @@ pub fn bar(workspace: Signal<StoredWorkspace>) -> impl IntoElement {
             .label("Connection status")
             .child(connection);
         let settings = icon_segment(control_width)
-            .disabled(true)
             .label("Application settings")
+            .on_press(move || settings_open.update(|open| *open = !*open))
             .child(text("⚙"));
 
         let center = view()
@@ -329,8 +331,8 @@ pub fn bar(workspace: Signal<StoredWorkspace>) -> impl IntoElement {
         .flex_row()
         .items_center()
         .border_1()
-        .border_color(theme::border())
-        .bg(theme::surface())
+        .border_color(theme::BORDER)
+        .bg(theme::SURFACE)
         .child(controls)
         // Outside the bar's `dynamic` so the panel, and the field's focus and
         // caret, survive workspace changes such as clearing a page.
@@ -339,6 +341,11 @@ pub fn bar(workspace: Signal<StoredWorkspace>) -> impl IntoElement {
                 .open
                 .get()
                 .then(|| layout_manager(workspace, manager, &bar_ref))
+        }))
+        .child(dynamic(move || {
+            settings_open
+                .get()
+                .then(|| settings::panel(active_theme, &bar_ref, move || settings_open.set(false)))
         }))
 }
 
@@ -363,9 +370,9 @@ fn layout_manager(
                     .items_center()
                     .pl(px(10.0))
                     .text_size(px(11.0))
-                    .text_color(theme::foreground())
+                    .text_color(theme::TEXT)
                     .child(text(format!("Layout {number}")))
-                    .child(text(if active { " · active" } else { "" }).text_color(theme::accent()))
+                    .child(text(if active { " · active" } else { "" }).text_color(theme::ACCENT))
                     .child(view().flex_1())
                     .child(
                         ui::button("Clear", Tone::Quiet)
@@ -406,7 +413,7 @@ fn layout_manager(
         .flex_none()
         .px(px(12.0))
         .border_l_1()
-        .border_color(theme::border())
+        .border_color(theme::BORDER)
         .label("Import layout")
         .disabled(move || manager.code.get().trim().is_empty())
         .on_press(move || manager.request_import());
@@ -434,7 +441,7 @@ fn layout_manager(
                 .w_full()
                 .flex_col()
                 .border_t_1()
-                .border_color(theme::border())
+                .border_color(theme::BORDER)
                 .child(
                     view()
                         .p(px(10.0))
@@ -447,7 +454,7 @@ fn layout_manager(
                         .h(ui::ROW_HEIGHT)
                         .flex_row()
                         .border_t_1()
-                        .border_color(theme::border())
+                        .border_color(theme::BORDER)
                         .child(
                             ui::button("Cancel", Tone::Normal)
                                 .flex_1()
@@ -459,7 +466,7 @@ fn layout_manager(
                                 .flex_1()
                                 .justify_center()
                                 .border_l_1()
-                                .border_color(theme::border())
+                                .border_color(theme::BORDER)
                                 .on_press(move || manager.confirm(workspace)),
                         ),
                 ),
@@ -473,12 +480,12 @@ fn layout_manager(
                 .px(px(10.0))
                 .py(px(8.0))
                 .border_t_1()
-                .border_color(theme::border())
+                .border_color(theme::BORDER)
                 .text_size(px(11.0))
                 .text_color(if feedback.error {
-                    theme::danger()
+                    theme::DANGER
                 } else {
-                    theme::success()
+                    theme::SUCCESS
                 })
                 .role(AccessibilityRole::Alert)
                 .child(text(feedback.message))
@@ -487,7 +494,6 @@ fn layout_manager(
 
     let body = view()
         .test_id("layout-manager")
-        .w(PANEL_WIDTH)
         .max_h(px(520.0))
         .flex_col()
         .child(
@@ -503,7 +509,7 @@ fn layout_manager(
             view()
                 .w_full()
                 .border_t_1()
-                .border_color(theme::border())
+                .border_color(theme::BORDER)
                 .child(generate),
         )
         .child(
@@ -514,14 +520,21 @@ fn layout_manager(
                 .flex()
                 .items_center()
                 .border_t_1()
-                .border_color(theme::border())
+                .border_color(theme::BORDER)
                 .child(code_input)
                 .child(import),
         )
         .child(confirmation)
         .child(feedback);
 
-    ui::floating_panel(anchor, "Layout Manager", move || manager.close(), body)
+    ui::floating_panel(
+        anchor,
+        Side::Left,
+        PANEL_WIDTH,
+        "Layout Manager",
+        move || manager.close(),
+        body,
+    )
 }
 
 /// The 1-based number the bar shows for a page.
@@ -550,8 +563,8 @@ fn fitted_segment(label: &str) -> View {
         .justify_center()
         .px(px(12.0))
         .border_l_1()
-        .border_color(theme::border())
-        .text_color(theme::secondary())
+        .border_color(theme::BORDER)
+        .text_color(theme::TEXT_MUTED)
         .text_size(px(12.0))
         .child(text(label.to_owned()))
 }
@@ -566,7 +579,7 @@ fn icon_segment(width: f32) -> View {
         .justify_center()
         .px(px(8.0))
         .border_l_1()
-        .border_color(theme::border())
-        .text_color(theme::secondary())
+        .border_color(theme::BORDER)
+        .text_color(theme::TEXT_MUTED)
         .text_size(px(12.0))
 }

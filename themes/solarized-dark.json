@@ -1,0 +1,16 @@
+{
+  "name": "Solarized Dark",
+  "appearance": "dark",
+  "colors": {
+    "background": "#002b36",
+    "surface": "#073642",
+    "panel": "#00212b",
+    "border": "#1b444f",
+    "text": "#eee8d5",
+    "text-muted": "#93a1a1",
+    "text-faint": "#657b83",
+    "accent": "#268bd2",
+    "danger": "#dc322f",
+    "success": "#859900"
+  }
+}

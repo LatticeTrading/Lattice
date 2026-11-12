@@ -313,17 +313,17 @@ pub(crate) fn workspace(workspace: Signal<StoredWorkspace>) -> impl IntoElement 
                             .px(px(12.0))
                             .text_size(px(11.0))
                             .text_color(if selected {
-                                theme::foreground()
+                                theme::TEXT
                             } else {
-                                theme::secondary()
+                                theme::TEXT_MUTED
                             })
                             .bg(if selected {
-                                theme::background()
+                                theme::BACKGROUND
                             } else {
-                                theme::surface()
+                                theme::SURFACE
                             })
                             .border_r_1()
-                            .border_color(theme::border())
+                            .border_color(theme::BORDER)
                             .on_press(move || {
                                 workspace.update(|state| {
                                     activate_tab(state, id, tab_id);
@@ -333,7 +333,7 @@ pub(crate) fn workspace(workspace: Signal<StoredWorkspace>) -> impl IntoElement 
                             .child(text(title))
                             .child(
                                 view()
-                                    .text_color(theme::tertiary())
+                                    .text_color(theme::TEXT_FAINT)
                                     .on_press(move || {
                                         workspace.update(|state| {
                                             close_tab(state, id, tab_id);
@@ -350,9 +350,9 @@ pub(crate) fn workspace(workspace: Signal<StoredWorkspace>) -> impl IntoElement 
                     .flex_shrink_0()
                     .flex_row()
                     .items_center()
-                    .bg(theme::surface())
+                    .bg(theme::SURFACE)
                     .border_b_1()
-                    .border_color(theme::border())
+                    .border_color(theme::BORDER)
                     .children(tab_views)
                     .child(
                         view()
@@ -363,9 +363,9 @@ pub(crate) fn workspace(workspace: Signal<StoredWorkspace>) -> impl IntoElement 
                             .items_center()
                             .justify_center()
                             .text_size(px(14.0))
-                            .text_color(theme::secondary())
+                            .text_color(theme::TEXT_MUTED)
                             .border_r_1()
-                            .border_color(theme::border())
+                            .border_color(theme::BORDER)
                             .on_press(move || {
                                 workspace.update(|state| {
                                     add_tab(state, id);
@@ -383,9 +383,9 @@ pub(crate) fn workspace(workspace: Signal<StoredWorkspace>) -> impl IntoElement 
                             .flex()
                             .items_center()
                             .justify_center()
-                            .text_color(theme::tertiary())
+                            .text_color(theme::TEXT_FAINT)
                             .border_l_1()
-                            .border_color(theme::border())
+                            .border_color(theme::BORDER)
                             .label("Move pane")
                             .test_id(&format!("pane-move-{id}"))
                             .cursor(Cursor::Grab)
@@ -400,9 +400,9 @@ pub(crate) fn workspace(workspace: Signal<StoredWorkspace>) -> impl IntoElement 
                             .flex()
                             .items_center()
                             .justify_center()
-                            .text_color(theme::tertiary())
+                            .text_color(theme::TEXT_FAINT)
                             .border_l_1()
-                            .border_color(theme::border())
+                            .border_color(theme::BORDER)
                             .on_press(move || {
                                 workspace.update(|state| {
                                     remove_pane(state, id);
@@ -420,10 +420,10 @@ pub(crate) fn workspace(workspace: Signal<StoredWorkspace>) -> impl IntoElement 
                     .h(px((rect.h as f32 * ROW_STEP - GAP).max(1.0)))
                     .flex_col()
                     .border_1()
-                    .border_color(theme::border())
-                    .bg(theme::surface())
+                    .border_color(theme::BORDER)
+                    .bg(theme::SURFACE)
                     .child(header)
-                    .child(view().flex_1().min_h(px(0.0)).bg(theme::background()))
+                    .child(view().flex_1().min_h(px(0.0)).bg(theme::BACKGROUND))
                     .child(
                         view()
                             .absolute()
@@ -443,7 +443,7 @@ pub(crate) fn workspace(workspace: Signal<StoredWorkspace>) -> impl IntoElement 
                                     .size(px(7.0))
                                     .border_r_1()
                                     .border_b_1()
-                                    .border_color(theme::tertiary()),
+                                    .border_color(theme::TEXT_FAINT),
                             ),
                     )
             })

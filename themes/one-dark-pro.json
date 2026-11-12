@@ -1,0 +1,16 @@
+{
+  "name": "One Dark Pro",
+  "appearance": "dark",
+  "colors": {
+    "background": "#282c34",
+    "surface": "#21252b",
+    "panel": "#2c313a",
+    "border": "#181a1f",
+    "text": "#d7dae0",
+    "text-muted": "#abb2bf",
+    "text-faint": "#7f848e",
+    "accent": "#61afef",
+    "danger": "#e06c75",
+    "success": "#98c379"
+  }
+}
