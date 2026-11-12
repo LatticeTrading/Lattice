@@ -3,6 +3,7 @@
 //! Desktop uses the platform's normal title bar for window controls. The web
 //! build gets no title bar because the browser owns that chrome.
 
+use nsh_base::tooltip;
 use nsh_core::{
     desktop::TitleBarStyle,
     element::{
@@ -13,7 +14,10 @@ use nsh_core::{
     prelude::*,
 };
 
-use super::settings;
+use super::{
+    clock::{self, Clock},
+    settings,
+};
 use crate::{
     layout, storage,
     storage::StoredWorkspace,
@@ -131,8 +135,13 @@ impl Manager {
     }
 }
 
-pub fn bar(workspace: Signal<StoredWorkspace>, active_theme: ActiveTheme) -> impl IntoElement {
+pub fn bar(
+    workspace: Signal<StoredWorkspace>,
+    active_theme: ActiveTheme,
+    clock: Clock,
+) -> impl IntoElement {
     let manager = Manager::new();
+    let now = clock::ticking_seconds();
     let settings_open = signal(false);
     let bar_ref = element_ref();
     set_title("Lattice");
@@ -253,7 +262,9 @@ pub fn bar(workspace: Signal<StoredWorkspace>, active_theme: ActiveTheme) -> imp
             .child(text("+"))
             .child(text("New Widget").text_size(px(12.0)));
 
+        let zone = move || clock::offset_label(clock.get().offset);
         let clock = view()
+            .test_id("clock")
             .h_full()
             .flex()
             .items_center()
@@ -263,8 +274,20 @@ pub fn bar(workspace: Signal<StoredWorkspace>, active_theme: ActiveTheme) -> imp
             .font_weight(FontWeight::MEDIUM)
             .border_l_1()
             .border_color(theme::BORDER)
-            .label("Clock unavailable")
-            .child(text("--:--:--"));
+            .label(move || format!("Time, {}", zone()))
+            .tooltip(
+                tooltip()
+                    .placement(Placement::Bottom)
+                    .px(px(8.0))
+                    .py(px(4.0))
+                    .bg(theme::PANEL)
+                    .border_1()
+                    .border_color(theme::BORDER)
+                    .text_color(theme::TEXT)
+                    .text_size(px(11.0))
+                    .child(text(zone)),
+            )
+            .child(text(move || clock::format_time(now.get(), clock.get())));
 
         let connection = view()
             .size(px(14.0))
@@ -343,9 +366,11 @@ pub fn bar(workspace: Signal<StoredWorkspace>, active_theme: ActiveTheme) -> imp
                 .then(|| layout_manager(workspace, manager, &bar_ref))
         }))
         .child(dynamic(move || {
-            settings_open
-                .get()
-                .then(|| settings::panel(active_theme, &bar_ref, move || settings_open.set(false)))
+            settings_open.get().then(|| {
+                settings::panel(active_theme, clock, &bar_ref, move || {
+                    settings_open.set(false)
+                })
+            })
         }))
 }
 

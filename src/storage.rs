@@ -72,6 +72,17 @@ const SETTINGS_KEY: &str = "lattice.settings.v1";
 pub(crate) struct StoredSettings {
     /// The chosen theme's id (its file name in `themes/`).
     pub theme: Option<String>,
+    /// How the Everything Bar's clock reads.
+    pub clock: StoredClock,
+}
+
+/// The clock's saved preferences: 24-hour UTC+0 by default.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct StoredClock {
+    pub hour12: bool,
+    /// Minutes east of UTC (UTC-6 is -360).
+    pub utc_offset_minutes: i16,
 }
 
 /// Load the saved preferences; missing or malformed ones are the defaults.

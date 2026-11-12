@@ -1,5 +1,6 @@
 //! The shared Lattice shell. NSH mounts this same Rust tree on desktop and web.
 
+mod clock;
 pub(crate) mod everything_bar;
 mod settings;
 
@@ -10,6 +11,7 @@ use crate::{layout, storage, theme};
 /// The root shell: Everything Bar above the persistent workspace grid.
 pub fn shell() -> impl IntoElement {
     let active_theme = theme::ActiveTheme::restore();
+    let clock = clock::Clock::restore();
     let mut saved = storage::load();
     layout::normalize(&mut saved);
     if let Err(error) = storage::save(&saved) {
@@ -24,6 +26,6 @@ pub fn shell() -> impl IntoElement {
         .bg(theme::BACKGROUND)
         .text_color(theme::TEXT)
         .font_family("IBM Plex Mono")
-        .child(everything_bar::bar(workspace, active_theme))
+        .child(everything_bar::bar(workspace, active_theme, clock))
         .child(layout::workspace(workspace))
 }

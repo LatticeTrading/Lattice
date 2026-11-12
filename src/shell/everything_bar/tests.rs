@@ -18,7 +18,7 @@ fn Harness() -> impl IntoElement {
     view()
         .size_full()
         .flex_col()
-        .child(bar(workspace, ActiveTheme::restore()))
+        .child(bar(workspace, ActiveTheme::restore(), Clock::restore()))
         .child(text(move || {
             let state = workspace.get();
             format!(
@@ -172,13 +172,13 @@ fn settings_switch_the_theme_in_place_and_remember_it() {
     app.wait_for("Dark").unwrap();
 
     // The dropdown chooses directly. Escape closes its list before the panel.
-    app.press("role:combobox").unwrap();
+    app.press("role:combobox[Theme]").unwrap();
     app.press("role:option[Nord]").unwrap();
     app.wait_for_gone("role:option[Nord]", WAIT).unwrap();
     app.wait_for("Nord").unwrap();
     let nord = muted(&app);
     assert_ne!(nord, dark);
-    app.press("role:combobox").unwrap();
+    app.press("role:combobox[Theme]").unwrap();
     app.wait_for("role:option[Nord]").unwrap();
     app.press_key("Escape").unwrap();
     app.wait_for_gone("role:option[Nord]", WAIT).unwrap();
