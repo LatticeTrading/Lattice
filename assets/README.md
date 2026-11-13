@@ -28,3 +28,12 @@ SHA-256:
 Other icons come from `gpui-kit-assets` 0.9.0's embedded bundle (Lucide, ISC).
 The upstream notice is copied to `LICENSE-LUCIDE`; retain it in distributions.
 `src/assets.rs` composes the sources; no loose SVG files are read at runtime.
+
+## Exchange logos
+
+`exchanges/*.svg` are generated from `EXCHANGE_LOGO_ASSETS` in
+`lattice-pro/src/components/ui/exchangeLogoAssets.ts` at
+`ac999e00567b6a1558715d30f4b38730488e2e9f`: shapes, viewBoxes and colors
+unchanged, one file per exchange. One deliberate change: the Lighter mark's
+`#06060C` fill is `currentColor`, so it follows the text color instead of
+vanishing on dark themes. `src/exchanges.rs` inlines them at compile time.

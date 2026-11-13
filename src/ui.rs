@@ -1,15 +1,17 @@
 //! Shared Lattice controls: text fields, flat buttons, and movable floating
 //! panels.
 //!
-//! NSH's `input` is a complete text field on every host (on Windows NSH's own
-//! Direct2D editor, on the web an `<input>`), so typing, caret movement,
-//! selection, undo, clipboard shortcuts, and IME composition need no
+//! NSH's `input` is a complete text field on every host (on Windows the
+//! system's RichEdit text box, on the web an `<input>`), so typing, caret
+//! movement, selection, undo, clipboard shortcuts, and IME composition need no
 //! workarounds. A controlled `value` is safe while typing fast: the host drops
 //! values based on an older edit. What these helpers add is Lattice's look and
 //! one consistent way to bind a field to a signal, so the Layout Manager, the
 //! symbol search, and future widgets all behave the same way.
 
+use nsh_base::{SelectItem, select};
 use nsh_core::{
+    Checked,
     element::{Input, input},
     prelude::*,
 };
@@ -37,9 +39,167 @@ pub fn text_field(value: Signal<String>) -> Input {
         .bg(theme::BACKGROUND)
         .placeholder_color(theme::TEXT_FAINT)
         .caret_color(theme::ACCENT)
-        .selection_color(theme::ACCENT.opacity(0.35))
+        // Windows' text box takes the selection as plain RGB, dropping
+        // alpha, so the tint is laid over the field's background up front.
+        .selection_color(|| {
+            nsh_core::element::color(theme::BACKGROUND.get())
+                .blend(nsh_core::element::color(theme::ACCENT.opacity(0.35).get()))
+        })
         .auto_correct(false)
         .auto_capitalize(AutoCapitalize::None)
+}
+
+/// A settings row: its name, then the controls the caller adds.
+pub fn setting_row(name: &'static str) -> View {
+    view()
+        .h(ROW_HEIGHT)
+        .w_full()
+        .flex_row()
+        .items_center()
+        .text_size(px(11.0))
+        .child(
+            view()
+                .w(px(78.0))
+                .flex_none()
+                .px(px(10.0))
+                .text_color(theme::TEXT_MUTED)
+                .child(text(name)),
+        )
+}
+
+/// A dropdown filling the rest of a [`setting_row`]: it shows `shown`, lists `items`
+/// (as they are while it is open),
+/// marks the one whose id is `value`, and calls `on_pick` with a picked id.
+pub fn dropdown(
+    items: impl Fn() -> Vec<SelectItem> + 'static,
+    value: impl Fn() -> SharedString + 'static,
+    shown: impl Fn() -> String + 'static,
+    on_pick: impl Fn(&str) + 'static,
+    label: &'static str,
+) -> impl IntoElement {
+    let trigger = view()
+        .size_full()
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .px(px(10.0))
+        .text_color(theme::TEXT)
+        .hover(|style| style.bg(theme::SURFACE))
+        .active(|style| style.bg(theme::BORDER))
+        .child(view().flex_1().min_w(px(0.0)).child(text(shown)))
+        .child(text("▾").text_color(theme::TEXT_FAINT));
+
+    select()
+        .items(items)
+        .value(value)
+        .on_change(move |id: &Option<SharedString>| {
+            if let Some(id) = id {
+                on_pick(id);
+            }
+        })
+        .accessibility_label(label)
+        .trigger(trigger)
+        .popup_style(|style| {
+            style
+                .py(px(4.0))
+                .max_h(px(320.0))
+                .bg(theme::PANEL)
+                .border_1()
+                .border_color(theme::BORDER)
+                .text_color(theme::TEXT)
+                .text_size(px(11.0))
+        })
+        .item_style(|style| style.h(px(30.0)).px(px(10.0)).flex().items_center())
+        // The rows' states are classes; every role is a Tailwind color.
+        .item_class("focus:bg-surface selected:text-accent")
+        .flex_1()
+        .min_w(px(0.0))
+        .h_full()
+        .border_l_1()
+        .border_color(theme::BORDER)
+}
+
+/// A row that checks and unchecks an option: its name, then a box with a
+/// check mark while `checked`. Pressing it calls `on_toggle`; while
+/// `disabled` it takes no presses (an option that must stay on).
+pub fn check_row(
+    name: &'static str,
+    checked: impl Fn() -> bool + Copy + 'static,
+    disabled: impl Fn() -> bool + Copy + 'static,
+    on_toggle: impl Fn() + 'static,
+) -> View {
+    let mark = view()
+        .size(px(12.0))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .border_1()
+        .border_color(move || {
+            if checked() {
+                theme::ACCENT.get()
+            } else {
+                theme::TEXT_FAINT.get()
+            }
+        })
+        .bg(move || {
+            if checked() {
+                theme::ACCENT.get()
+            } else {
+                theme::BACKGROUND.get()
+            }
+        })
+        .text_size(px(9.0))
+        .font_weight(FontWeight::BOLD)
+        .text_color(theme::BACKGROUND)
+        .child(text(move || if checked() { "✓" } else { "" }.to_owned()));
+    view()
+        .h(px(28.0))
+        .w_full()
+        .flex_row()
+        .items_center()
+        .gap(px(8.0))
+        .px(px(10.0))
+        .text_size(px(11.0))
+        .text_color(theme::TEXT)
+        .role(AccessibilityRole::Checkbox)
+        .label(name)
+        .disabled(disabled)
+        .accessibility_state(move || AccessibilityState {
+            checked: Some(if checked() {
+                Checked::True
+            } else {
+                Checked::False
+            }),
+            disabled: disabled(),
+            ..Default::default()
+        })
+        .hover(|style| style.bg(theme::SURFACE))
+        .active(|style| style.bg(theme::BORDER))
+        .disabled_style(|style| style.opacity(0.5))
+        .on_press(on_toggle)
+        .child(
+            view()
+                .flex_1()
+                .min_w(px(0.0))
+                .child(text(name).number_of_lines(1)),
+        )
+        .child(mark)
+}
+
+/// A tooltip's box: `content` in small text on a panel (an element's
+/// `.tooltip(..)`).
+pub fn hint(content: impl Fn() -> String + 'static) -> View {
+    view()
+        .max_w(px(420.0))
+        .px(px(6.0))
+        .py(px(4.0))
+        .bg(theme::PANEL)
+        .border_1()
+        .border_color(theme::BORDER)
+        .text_size(px(10.0))
+        .text_color(theme::TEXT)
+        .child(text(content))
 }
 
 /// How a [`button`] reads.

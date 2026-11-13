@@ -6,10 +6,13 @@ mod settings;
 
 use nsh_core::prelude::*;
 
-use crate::{layout, storage, theme};
+use crate::{data::DataServices, layout, storage, theme};
 
 /// The root shell: Everything Bar above the persistent workspace grid.
 pub fn shell() -> impl IntoElement {
+    // Before anything that renders: every widget below finds the data
+    // services in its context. Nothing connects until one asks for data.
+    let services = DataServices::provide();
     let active_theme = theme::ActiveTheme::restore();
     let clock = clock::Clock::restore();
     let mut saved = storage::load();
@@ -18,6 +21,12 @@ pub fn shell() -> impl IntoElement {
         log::warn!("Lattice: unable to save workspace: {error}");
     }
     let workspace = signal(saved);
+    // A widget's session lasts while the widget is anywhere in the
+    // workspace: closing its tab, removing its pane, clearing or deleting
+    // its page, or importing a layout releases it.
+    services
+        .sessions
+        .follow(move || layout::widget_ids(&workspace.get()));
 
     view()
         .flex_1()

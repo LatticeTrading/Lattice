@@ -107,6 +107,12 @@ roles! {
     DANGER = "danger",
     /// Confirmations.
     SUCCESS = "success",
+    /// Values above zero: a positive funding rate.
+    POSITIVE = "positive",
+    /// Values below zero: a negative funding rate.
+    NEGATIVE = "negative",
+    /// Data that needs a second look: a value past its freshness window.
+    WARNING = "warning",
 }
 
 /// NSH's standard token names (shadcn/ui's) and the role each is drawn

@@ -11,6 +11,9 @@
     "text-faint": "#6272a4",
     "accent": "#bd93f9",
     "danger": "#ff5555",
-    "success": "#50fa7b"
+    "success": "#50fa7b",
+    "positive": "var(--success)",
+    "negative": "var(--danger)",
+    "warning": "#f1fa8c"
   }
 }

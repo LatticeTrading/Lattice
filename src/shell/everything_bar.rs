@@ -5,12 +5,8 @@
 
 use nsh_base::tooltip;
 use nsh_core::{
-    desktop::TitleBarStyle,
-    element::{
-        ImageSrc,
-        desktop::{set_title, set_title_bar},
-        input,
-    },
+    desktop::{TitleBarOptions, WindowAttributes},
+    element::{ImageSrc, desktop::current_window, input},
     prelude::*,
 };
 
@@ -144,12 +140,13 @@ pub fn bar(
     let now = clock::ticking_seconds();
     let settings_open = signal(false);
     let bar_ref = element_ref();
-    set_title("Lattice");
-    if os().is_desktop() {
-        // Keep minimize, maximize/restore, and close in the real desktop
-        // title bar. The Everything Bar should contain only app controls.
-        set_title_bar(TitleBarStyle::Default, None);
-    }
+    // Keep minimize, maximize/restore, and close in the real desktop title
+    // bar; the Everything Bar holds only app controls. Off desktops (the
+    // browser owns the chrome on web) this does nothing.
+    let mut window_attributes = WindowAttributes::default();
+    window_attributes.title = Some("Lattice".to_owned());
+    window_attributes.title_bar = Some(TitleBarOptions::default());
+    current_window().set(window_attributes);
 
     let controls = dynamic(move || {
         let saved = workspace.get();

@@ -3,17 +3,36 @@
 //! Grid geometry remains in `layout/grid.rs`; this module adapts that model to
 //! NSH elements and signals. The same component tree is used by desktop and
 //! WebAssembly runners.
+//!
+//! The grid is keyed, so a change rebuilds only what it changed: panes are
+//! rows of an `each` by page and pane id, whose geometry follows the layout
+//! and window width as bindings; a pane's tab strip is made again when its
+//! tabs or active tab change; and its tabs' contents are rows by widget id,
+//! every tab of the pane mounted, the inactive ones hidden. Tab switches,
+//! drags (every pointer sample), resizes and breakpoint changes therefore
+//! keep every widget's view. Each content view attaches to its widget's
+//! data session ([`crate::data::Sessions`]), visible while its tab is the
+//! active one; other pages are not mounted, so their widgets' sessions keep
+//! their data with no view attached.
+//!
+//! A widget's view also gets its tab ([`TabContext`]): the settings saved in
+//! the tab record, a way to save new ones, and the settings panel its pane's
+//! gear opens for the active tab.
 
 mod grid;
 #[cfg(test)]
 mod tests;
 pub(crate) use grid::Grid;
 
+use std::{collections::HashSet, rc::Rc};
+
 use crate::{
+    data::{DataServices, Sessions, WidgetId, WidgetView},
     storage::{self, StoredPage, StoredWorkspace},
     theme,
+    widgets::{self, market_screener::ScreenerSettings},
 };
-use grid::{GAP, Pane, ROW_STEP, breakpoint, column_step, columns};
+use grid::{GAP, Pane, ROW_STEP, Tab, breakpoint, column_step, columns};
 use nsh_core::prelude::*;
 
 #[derive(Clone, PartialEq)]
@@ -84,7 +103,32 @@ pub(crate) fn normalize(workspace: &mut StoredWorkspace) {
         .max(workspace.next_page_id);
     for page in &mut workspace.pages {
         page.grid.repair_counters();
+        page.grid.retitle_blank_tabs();
+        page.grid.unify_widgets();
     }
+}
+
+/// Every widget in the workspace, on every page: what keeps a session.
+pub(crate) fn widget_ids(workspace: &StoredWorkspace) -> HashSet<WidgetId> {
+    workspace
+        .pages
+        .iter()
+        .flat_map(|page| page.grid.layouts.iter().flatten())
+        .flat_map(|pane| pane.tabs.iter().map(|tab| tab.widget))
+        .collect()
+}
+
+/// Saves `settings` in `widget`'s tab record, whichever page it is on;
+/// false when no tab is that widget.
+pub(crate) fn set_tab_settings(
+    workspace: &mut StoredWorkspace,
+    widget: WidgetId,
+    settings: &ScreenerSettings,
+) -> bool {
+    workspace
+        .pages
+        .iter_mut()
+        .any(|page| page.grid.set_settings(widget, settings))
 }
 
 fn active_grid(workspace: &StoredWorkspace) -> &Grid {
@@ -259,6 +303,10 @@ fn persist(workspace: &StoredWorkspace) {
 
 /// Render the active responsive layout.
 pub(crate) fn workspace(workspace: Signal<StoredWorkspace>) -> impl IntoElement {
+    // Standalone (some tests), the grid keeps its own registry.
+    let sessions = DataServices::try_get()
+        .map(|services| services.sessions)
+        .unwrap_or_default();
     let drag_state = signal(None::<DragState>);
     // Invalidate rather than restoring an old snapshot over newer page/tab
     // changes. Previews never enter the persisted workspace until release.
@@ -273,193 +321,374 @@ pub(crate) fn workspace(workspace: Signal<StoredWorkspace>) -> impl IntoElement 
         }
     });
 
-    dynamic(move || {
+    let width = computed(workspace_width);
+    let step = computed(move || {
+        let width = width.get();
+        column_step(width, columns(breakpoint(width)))
+    });
+    // The panes on screen, with their page: a pane id is unique only within
+    // its page, so the page is part of the row key.
+    let panes = computed(move || {
         let saved = workspace.get();
-        let width = workspace_width();
-        let bp = breakpoint(width);
-        let cols = columns(bp);
-        let step = column_step(width, cols);
-        let panes = drag_state
+        let width = width.get();
+        let page = saved.active_page_id;
+        drag_state
             .get()
             .filter(|drag| drag.valid(&saved, width))
             .map(|drag| drag.preview)
-            .unwrap_or_else(|| active_grid(&saved).layouts[bp].clone());
-        let height = panes
-            .iter()
-            .map(|pane| pane.rect.y + pane.rect.h)
-            .max()
-            .unwrap_or(0) as f32
-            * ROW_STEP
-            + GAP;
-
-        let rendered = panes
+            .unwrap_or_else(|| active_grid(&saved).layouts[breakpoint(width)].clone())
             .into_iter()
-            .map(|pane| {
-                let id = pane.id;
-                let rect = pane.rect;
-                let active_tab = pane.active_tab;
-                let tabs = pane.tabs;
-                let tab_views = tabs
-                    .into_iter()
-                    .map(|tab| {
-                        let tab_id = tab.id;
-                        let selected = tab_id == active_tab;
-                        let title = tab.title;
-                        view()
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.0))
-                            .px(px(12.0))
-                            .text_size(px(11.0))
-                            .text_color(if selected {
-                                theme::TEXT
-                            } else {
-                                theme::TEXT_MUTED
-                            })
-                            .bg(if selected {
-                                theme::BACKGROUND
-                            } else {
-                                theme::SURFACE
-                            })
-                            .border_r_1()
-                            .border_color(theme::BORDER)
-                            .on_press(move || {
-                                workspace.update(|state| {
-                                    activate_tab(state, id, tab_id);
-                                    persist(state);
-                                });
-                            })
-                            .child(text(title))
-                            .child(
-                                view()
-                                    .text_color(theme::TEXT_FAINT)
-                                    .on_press(move || {
-                                        workspace.update(|state| {
-                                            close_tab(state, id, tab_id);
-                                            persist(state);
-                                        });
-                                    })
-                                    .child(text("×")),
-                            )
-                    })
-                    .collect::<Vec<_>>();
+            .map(|pane| (page, pane))
+            .collect::<Vec<_>>()
+    });
+    let height = computed(move || {
+        panes.with(|panes| {
+            panes
+                .iter()
+                .map(|(_, pane)| pane.rect.y + pane.rect.h)
+                .max()
+                .unwrap_or(0) as f32
+                * ROW_STEP
+                + GAP
+        })
+    });
 
-                let header = view()
-                    .h(px(32.0))
-                    .flex_shrink_0()
-                    .flex_row()
-                    .items_center()
-                    .bg(theme::SURFACE)
-                    .border_b_1()
-                    .border_color(theme::BORDER)
-                    .children(tab_views)
-                    .child(
-                        view()
-                            .h_full()
-                            .w(px(32.0))
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_size(px(14.0))
-                            .text_color(theme::TEXT_MUTED)
-                            .border_r_1()
-                            .border_color(theme::BORDER)
-                            .on_press(move || {
-                                workspace.update(|state| {
-                                    add_tab(state, id);
-                                    persist(state);
-                                });
-                            })
-                            .child(text("+")),
-                    )
-                    .child(view().flex_1())
-                    .child(
-                        view()
-                            .h_full()
-                            .w(px(32.0))
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_color(theme::TEXT_FAINT)
-                            .border_l_1()
-                            .border_color(theme::BORDER)
-                            .label("Move pane")
-                            .test_id(&format!("pane-move-{id}"))
-                            .cursor(Cursor::Grab)
-                            .map(|handle| drag_handle(handle, workspace, drag_state, id, false))
-                            .child(text("⠿")),
-                    )
-                    .child(
-                        view()
-                            .h_full()
-                            .w(px(32.0))
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .text_color(theme::TEXT_FAINT)
-                            .border_l_1()
-                            .border_color(theme::BORDER)
-                            .on_press(move || {
-                                workspace.update(|state| {
-                                    remove_pane(state, id);
-                                    persist(state);
-                                });
-                            })
-                            .child(text("×")),
-                    );
+    scroll()
+        .flex_1()
+        .min_h(px(0.0))
+        .w_full()
+        .scrollbar(true)
+        .child(
+            view()
+                .relative()
+                .w_full()
+                .h(move || px(height.get().max(1.0)))
+                .child(each(
+                    panes,
+                    |(page, pane)| (*page, pane.id),
+                    move |pane, _| pane_view(pane, step, workspace, drag_state, sessions.clone()),
+                )),
+        )
+}
 
-                view()
-                    .absolute()
-                    .left(px(rect.x as f32 * step))
-                    .top(px(GAP + rect.y as f32 * ROW_STEP))
-                    .w(px((rect.w as f32 * step - GAP).max(1.0)))
-                    .h(px((rect.h as f32 * ROW_STEP - GAP).max(1.0)))
-                    .flex_col()
-                    .border_1()
-                    .border_color(theme::BORDER)
-                    .bg(theme::SURFACE)
-                    .child(header)
-                    .child(view().flex_1().min_h(px(0.0)).bg(theme::BACKGROUND))
-                    .child(
-                        view()
-                            .absolute()
-                            .right(px(0.0))
-                            .bottom(px(0.0))
-                            .size(px(18.0))
-                            .flex()
-                            .items_end()
-                            .justify_end()
-                            .p(px(3.0))
-                            .cursor(Cursor::NwseResize)
-                            .label("Resize pane")
-                            .test_id(&format!("pane-resize-{id}"))
-                            .map(|handle| drag_handle(handle, workspace, drag_state, id, true))
-                            .child(
-                                view()
-                                    .size(px(7.0))
-                                    .border_r_1()
-                                    .border_b_1()
-                                    .border_color(theme::TEXT_FAINT),
-                            ),
-                    )
-            })
-            .collect::<Vec<_>>();
+/// One pane: its geometry follows the layout as bindings, its tab strip is
+/// made again only when its tabs or active tab change, and each tab's
+/// content is a row of its own.
+fn pane_view(
+    pane: ReadSignal<(usize, Pane)>,
+    step: Memo<f32>,
+    workspace: Signal<StoredWorkspace>,
+    drag_state: Signal<Option<DragState>>,
+    sessions: Sessions,
+) -> impl IntoElement {
+    // The row's key: the same for as long as the row lives.
+    let id = pane.with_untracked(|(_, pane)| pane.id);
+    let rect = computed(move || pane.with(|(_, pane)| pane.rect));
+    let tabs = computed(move || pane.with(|(_, pane)| pane.tabs.clone()));
+    let active_tab = computed(move || pane.with(|(_, pane)| pane.active_tab));
+    // The active tab's settings panel, which the gear toggles; switching
+    // tabs closes it, as the old app did.
+    let settings_open = signal(false);
+    let gear = element_ref();
+    effect(move || {
+        active_tab.get();
+        settings_open.set(false);
+    });
 
-        scroll()
-            .flex_1()
-            .min_h(px(0.0))
-            .w_full()
-            .scrollbar(true)
-            .child(
-                view()
-                    .relative()
-                    .w_full()
-                    .h(px(height.max(1.0)))
-                    .children(rendered),
-            )
-    })
+    let header = view()
+        .h(px(32.0))
+        .flex_shrink_0()
+        .flex_row()
+        .items_center()
+        .bg(theme::SURFACE)
+        .border_b_1()
+        .border_color(theme::BORDER)
+        .child(dynamic(move || {
+            tab_strip(id, &tabs.get(), active_tab.get(), workspace)
+        }))
+        .child(
+            view()
+                .h_full()
+                .w(px(32.0))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(14.0))
+                .text_color(theme::TEXT_MUTED)
+                .border_r_1()
+                .border_color(theme::BORDER)
+                .on_press(move || {
+                    workspace.update(|state| {
+                        add_tab(state, id);
+                        persist(state);
+                    });
+                })
+                .child(text("+")),
+        )
+        .child(view().flex_1())
+        .child(
+            view()
+                .element_ref(&gear)
+                .h_full()
+                .w(px(32.0))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(move || {
+                    if settings_open.get() {
+                        theme::ACCENT.get()
+                    } else {
+                        theme::TEXT_FAINT.get()
+                    }
+                })
+                .border_l_1()
+                .border_color(theme::BORDER)
+                .role(AccessibilityRole::Button)
+                .label("Widget settings")
+                .test_id(&format!("pane-settings-{id}"))
+                .accessibility_state(move || AccessibilityState {
+                    expanded: Some(settings_open.get()),
+                    has_popup: true,
+                    ..Default::default()
+                })
+                .hover(|s| s.bg(theme::BACKGROUND))
+                .active(|s| s.bg(theme::BORDER))
+                .on_press(move || settings_open.update(|open| *open = !*open))
+                .child(text("⚙")),
+        )
+        .child(
+            view()
+                .h_full()
+                .w(px(32.0))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(theme::TEXT_FAINT)
+                .border_l_1()
+                .border_color(theme::BORDER)
+                .label("Move pane")
+                .test_id(&format!("pane-move-{id}"))
+                .cursor(Cursor::Grab)
+                .map(|handle| drag_handle(handle, workspace, drag_state, id, false))
+                .child(text("⠿")),
+        )
+        .child(
+            view()
+                .h_full()
+                .w(px(32.0))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(theme::TEXT_FAINT)
+                .border_l_1()
+                .border_color(theme::BORDER)
+                .on_press(move || {
+                    workspace.update(|state| {
+                        remove_pane(state, id);
+                        persist(state);
+                    });
+                })
+                .child(text("×")),
+        );
+
+    let content = view()
+        .flex_1()
+        .min_h(px(0.0))
+        .flex_col()
+        .bg(theme::BACKGROUND)
+        .child(each(
+            tabs,
+            |tab: &Tab| tab.widget,
+            move |tab, _| {
+                let panel = Panel {
+                    open: settings_open,
+                    anchor: gear,
+                };
+                tab_content(tab, active_tab, &sessions, workspace, panel)
+            },
+        ));
+
+    view()
+        .absolute()
+        .left(move || px(rect.get().x as f32 * step.get()))
+        .top(move || px(GAP + rect.get().y as f32 * ROW_STEP))
+        .w(move || px((rect.get().w as f32 * step.get() - GAP).max(1.0)))
+        .h(move || px((rect.get().h as f32 * ROW_STEP - GAP).max(1.0)))
+        .flex_col()
+        .border_1()
+        .border_color(theme::BORDER)
+        .bg(theme::SURFACE)
+        .child(header)
+        .child(content)
+        .child(
+            view()
+                .absolute()
+                .right(px(0.0))
+                .bottom(px(0.0))
+                .size(px(18.0))
+                .flex()
+                .items_end()
+                .justify_end()
+                .p(px(3.0))
+                .cursor(Cursor::NwseResize)
+                .label("Resize pane")
+                .test_id(&format!("pane-resize-{id}"))
+                .map(|handle| drag_handle(handle, workspace, drag_state, id, true))
+                .child(
+                    view()
+                        .size(px(7.0))
+                        .border_r_1()
+                        .border_b_1()
+                        .border_color(theme::TEXT_FAINT),
+                ),
+        )
+}
+
+/// A pane's tabs: stateless buttons, cheap to make again.
+fn tab_strip(
+    id: usize,
+    tabs: &[Tab],
+    active_tab: usize,
+    workspace: Signal<StoredWorkspace>,
+) -> Vec<View> {
+    tabs.iter()
+        .map(|tab| {
+            let tab_id = tab.id;
+            let selected = tab_id == active_tab;
+            view()
+                .h_full()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .px(px(12.0))
+                .text_size(px(11.0))
+                .text_color(if selected {
+                    theme::TEXT
+                } else {
+                    theme::TEXT_MUTED
+                })
+                .bg(if selected {
+                    theme::BACKGROUND
+                } else {
+                    theme::SURFACE
+                })
+                .border_r_1()
+                .border_color(theme::BORDER)
+                .on_press(move || {
+                    workspace.update(|state| {
+                        activate_tab(state, id, tab_id);
+                        persist(state);
+                    });
+                })
+                .child(text(tab.title.clone()))
+                .child(
+                    view()
+                        .text_color(theme::TEXT_FAINT)
+                        .on_press(move || {
+                            workspace.update(|state| {
+                                close_tab(state, id, tab_id);
+                                persist(state);
+                            });
+                        })
+                        .child(text("×")),
+                )
+        })
+        .collect()
+}
+
+/// A pane's settings panel: whether it is open, and the gear it opens
+/// below.
+#[derive(Clone, Copy)]
+struct Panel {
+    open: Signal<bool>,
+    anchor: ElementRef,
+}
+
+/// What a widget's view gets from its tab, besides its session: the
+/// settings saved in the tab record, and its pane's settings panel.
+#[derive(Clone)]
+pub(crate) struct TabContext {
+    /// The tab's saved settings.
+    pub settings: Memo<ScreenerSettings>,
+    /// Whether the tab is its pane's active one (its view shows).
+    pub shown: Memo<bool>,
+    save: Rc<dyn Fn(&ScreenerSettings)>,
+    panel: Panel,
+}
+
+impl TabContext {
+    /// Saves `settings` in the tab record (every breakpoint's copy of the
+    /// tab) and persists the workspace.
+    pub fn save(&self, settings: &ScreenerSettings) {
+        (self.save)(settings);
+    }
+
+    /// Whether the widget's settings panel is open: the pane's gear opened
+    /// it while this tab is the active one (tracked).
+    pub fn settings_open(&self) -> bool {
+        self.shown.get() && self.panel.open.get()
+    }
+
+    pub fn close_settings(&self) {
+        self.panel.open.set(false);
+    }
+
+    /// The gear the settings panel opens below.
+    pub fn settings_anchor(&self) -> &ElementRef {
+        &self.panel.anchor
+    }
+}
+
+/// One tab's content: mounted while its pane is, hidden while another tab
+/// of the pane is active, and attached to its widget's session meanwhile.
+fn tab_content(
+    tab: ReadSignal<Tab>,
+    active_tab: Memo<usize>,
+    sessions: &Sessions,
+    workspace: Signal<StoredWorkspace>,
+    panel: Panel,
+) -> View {
+    // The row is keyed by widget, whose tab id never changes.
+    let (tab_id, widget) = tab.with_untracked(|tab| (tab.id, tab.widget));
+    let shown = computed(move || active_tab.get() == tab_id);
+    let context = TabContext {
+        settings: computed(move || tab.with(|tab| tab.settings.clone())),
+        shown,
+        save: Rc::new(move |settings: &ScreenerSettings| {
+            // Nothing when unchanged, or when the tab is gone.
+            let changed = workspace.with_untracked(|state| {
+                widget_ids(state).contains(&widget)
+                    && tab.with_untracked(|tab| tab.settings != *settings)
+            });
+            if changed {
+                workspace.update(|state| {
+                    if set_tab_settings(state, widget, settings) {
+                        persist(state);
+                    }
+                });
+            }
+        }),
+        panel,
+    };
+    let attached = sessions.attach(widget, shown);
+    let body = widget_body(&attached, &context);
+    attached.release_on_cleanup();
+    view()
+        .flex_1()
+        .min_h(px(0.0))
+        .flex_col()
+        .test_id(&format!("widget-{widget}"))
+        .style_when(move || !shown.get(), |s| s.hidden())
+        .child(body)
+}
+
+/// What a widget shows, from its session (`attached.state(..)` holds its
+/// data) and its tab. The Market Screener is the only widget so far, so
+/// every tab is one.
+fn widget_body(attached: &WidgetView, tab: &TabContext) -> View {
+    widgets::market_screener::market_screener(attached, tab)
 }

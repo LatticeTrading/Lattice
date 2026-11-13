@@ -42,7 +42,8 @@ fn layout_codes_round_trip_and_reject_invalid_data() {
     let saved = saved_workspace();
     let code = export_code(&saved).unwrap();
     assert!(code.starts_with("LATTICE1."));
-    assert_eq!(import_code(&code).unwrap(), saved);
+    // The saved form round-trips; an imported tab is a new widget.
+    assert_eq!(export_code(&import_code(&code).unwrap()).unwrap(), code);
     assert!(import_code("not-a-layout").is_err());
     assert!(import_code("LATTICE1.0").is_err());
 }
@@ -76,10 +77,8 @@ fn preview_is_transient_and_commit_changes_only_its_breakpoint() {
         active_grid(&original).layouts[..4]
     );
     let json = serde_json::to_string(&saved).unwrap();
-    assert_eq!(
-        serde_json::from_str::<StoredWorkspace>(&json).unwrap(),
-        saved
-    );
+    let restored: StoredWorkspace = serde_json::from_str(&json).unwrap();
+    assert_eq!(serde_json::to_string(&restored).unwrap(), json);
 }
 
 #[test]

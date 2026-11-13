@@ -8,27 +8,49 @@ publish = false
 [dependencies]
 anyhow = "1.0"
 log = "0.4"
-nsh-core = "=0.4.0"
-nsh-base = { version = "=0.4.0", default-features = false }
+nsh-core = "=0.5.0"
+nsh-base = { version = "=0.5.0", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+url = "2.5"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 dirs = "6.0"
 env_logger = "0.11"
+# The native WebSocket transport (`src/data/net/socket/native.rs`); the same
+# stack and TLS setup nsh-core already uses for its own native sockets.
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio = { version = "1", default-features = false, features = ["macros", "sync"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+
+# Native TLS trusts the system's certificate store, as nsh-core does; Android
+# uses the bundled webpki roots instead.
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
+rustls-platform-verifier = "0.7"
+
+[target.'cfg(target_os = "android")'.dependencies]
+webpki-roots = "1"
+
+# The browser WebSocket transport (`src/data/net/socket/web.rs`). NSH packages
+# wasm-bindgen glue for it, which needs the matching `wasm-bindgen` CLI.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["BinaryType", "CloseEvent", "Event", "MessageEvent", "WebSocket"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-nsh-platform-windows = { version = "=0.4.0", default-features = false }
+nsh-platform-windows = { version = "=0.5.0", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-nsh-platform-macos = { version = "=0.4.0", default-features = false }
+nsh-platform-macos = { version = "=0.5.0", default-features = false }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nsh-platform-linux = { version = "=0.4.0", default-features = false }
+nsh-platform-linux = { version = "=0.5.0", default-features = false }
 
 [dev-dependencies]
-nsh-engine = { version = "=0.4.0", default-features = false }
-nsh-testing = { version = "=0.4.0", default-features = false }
+nsh-engine = { version = "=0.5.0", default-features = false }
+nsh-testing = { version = "=0.5.0", default-features = false }
 
 [lints.rust]
 unsafe_code = "forbid"

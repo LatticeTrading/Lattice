@@ -1,13 +1,13 @@
 # Lattice
 
-Native Rust trading terminal shell built with **Native Shell (NSH) 0.4.0**.
-Lattice has one shared Rust UI for native desktop and WebAssembly web targets;
-trading widgets and backend connections are intentionally out of scope for this
-migration slice.
+Native Rust trading terminal shell built with **Native Shell (NSH) 0.5.0**.
+Lattice has one shared Rust UI for native desktop and WebAssembly web targets.
+The data layer for backend connections is in place, and the first widget, the
+Market Screener, is ported.
 
 The current shell preserves the multi-page workspace, responsive grid geometry,
 pane/tab model, and versioned persistence. It renders an empty dark workspace
-until the user creates a blank widget. On desktop, NSH's hidden title bar puts
+until the user creates a widget. On desktop, NSH's hidden title bar puts
 minimize, maximize/restore, and close controls in the Everything Bar and makes
 its background a window-drag region. The web target omits those controls and
 drag behavior because the browser owns the window chrome.
@@ -46,7 +46,8 @@ nsh package . --target windows --run
 `cargo run` remains a direct desktop smoke launcher and mounts the same `App`
 root. NSH's Rust app workflow requires its platform toolchain; web packaging
 also requires the WebAssembly toolchain and `clang`/`llvm-ar` as described in
-the NSH documentation.
+the NSH documentation, plus the `wasm-bindgen` CLI at the version in
+`Cargo.lock` (the browser WebSocket goes through `web-sys`).
 
 ## Checks
 
@@ -71,11 +72,11 @@ visual and native-caption acceptance remains a user-run check.
 - `src/ui.rs`: shared controls (text field, button, floating panel).
 - `src/layout.rs`, `src/layout/grid.rs`: workspace pages, tabs, panes, and responsive geometry.
 - `src/storage.rs`: versioned NSH storage-service persistence.
-- `src/assets.rs`, `assets/`: compile-time fonts and app assets.
-- `src/platform/`, `src/widgets/`, and `src/data/`: future native integrations, widgets, and data services.
-
-The grid remains intentionally widget-free. It is a migration foundation, not a
-trading demo; no trading widgets are implemented yet.
+- `src/assets.rs`, `assets/`: compile-time fonts and app assets (icons, exchange logos).
+- `src/data.rs`, `src/data/`: the data layer (shared HTTP, WebSocket, and polling plumbing; the Ferris integration; per-widget data sessions).
+- `src/widgets.rs`, `src/widgets/`: widgets (the Market Screener).
+- `src/exchanges.rs`, `src/format.rs`: exchange names and logos; number formatting.
+- `src/platform/`: future native integrations.
 
 ## NSH documentation used for this migration
 

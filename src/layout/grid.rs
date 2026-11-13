@@ -1,6 +1,10 @@
 //! Integer grid geometry, independent of GPUI. Row height and gaps match lattice-pro.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
+
+use crate::{data::WidgetId, widgets::market_screener::ScreenerSettings};
 
 pub const GAP: f32 = 8.;
 pub const ROW: f32 = 8.;
@@ -16,8 +20,37 @@ pub struct Rect {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tab {
+    /// Unique within its page's grid only; the same in every breakpoint.
     pub id: usize,
     pub title: String,
+    /// The widget this tab is, which keys its data session. Not saved: a
+    /// tab that is loaded, imported or created is a new widget with a fresh
+    /// id, whatever page and tab ids it reuses ([`Grid::unify_widgets`]
+    /// makes a loaded tab's breakpoint copies share one).
+    #[serde(skip, default = "WidgetId::fresh")]
+    pub widget: WidgetId,
+    /// The widget's settings (a Market Screener's: every tab is one), the
+    /// same in every breakpoint's copy. Left out of the saved form while
+    /// they are the defaults, so a tab nobody configured saves as it did
+    /// before settings existed.
+    #[serde(default, skip_serializing_if = "ScreenerSettings::is_default")]
+    pub settings: ScreenerSettings,
+}
+
+/// A new tab's title: the Market Screener is the only widget so far.
+pub const NEW_TAB_TITLE: &str = "Market Screener";
+/// What tabs were called before widgets existed.
+const BLANK_TAB_TITLE: &str = "Blank Widget";
+
+impl Tab {
+    fn new(id: usize) -> Self {
+        Self {
+            id,
+            title: NEW_TAB_TITLE.into(),
+            widget: WidgetId::fresh(),
+            settings: ScreenerSettings::default(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,14 +194,64 @@ impl Grid {
             .max(self.next_tab_id);
     }
 
+    /// Tabs saved before widgets existed were blank widgets; they are
+    /// Market Screeners now, and say so.
+    pub fn retitle_blank_tabs(&mut self) {
+        for tab in self
+            .layouts
+            .iter_mut()
+            .flatten()
+            .flat_map(|pane| &mut pane.tabs)
+        {
+            if tab.title == BLANK_TAB_TITLE {
+                NEW_TAB_TITLE.clone_into(&mut tab.title);
+            }
+        }
+    }
+
+    /// Gives each tab one widget id and one set of settings in every
+    /// breakpoint's copy of it. A deserialized tab's copies each got a
+    /// fresh id; the first copy's id and settings are kept for all of them
+    /// (the settings differ only in a save edited by hand). A tab is known
+    /// by its pane and tab ids, as the tab operations find it.
+    pub fn unify_widgets(&mut self) {
+        let mut first: HashMap<(usize, usize), (WidgetId, ScreenerSettings)> = HashMap::new();
+        for pane in self.layouts.iter_mut().flatten() {
+            let pane_id = pane.id;
+            for tab in &mut pane.tabs {
+                let (widget, settings) = first
+                    .entry((pane_id, tab.id))
+                    .or_insert_with(|| (tab.widget, tab.settings.clone()));
+                tab.widget = *widget;
+                if tab.settings != *settings {
+                    tab.settings = settings.clone();
+                }
+            }
+        }
+    }
+
+    /// Saves `settings` in every copy of `widget`'s tab; false when no tab
+    /// of this grid is that widget.
+    pub fn set_settings(&mut self, widget: WidgetId, settings: &ScreenerSettings) -> bool {
+        let mut found = false;
+        for tab in self
+            .layouts
+            .iter_mut()
+            .flatten()
+            .flat_map(|pane| &mut pane.tabs)
+            .filter(|tab| tab.widget == widget)
+        {
+            settings.clone_into(&mut tab.settings);
+            found = true;
+        }
+        found
+    }
+
     pub fn spawn(&mut self) -> usize {
         self.next_id += 1;
         let id = self.next_id;
         self.next_tab_id += 1;
-        let tab = Tab {
-            id: self.next_tab_id,
-            title: "Blank Widget".into(),
-        };
+        let tab = Tab::new(self.next_tab_id);
         for (bp, layout) in self.layouts.iter_mut().enumerate() {
             let y = layout
                 .iter()
@@ -198,10 +281,7 @@ impl Grid {
 
     pub fn add_tab(&mut self, pane_id: usize) {
         self.next_tab_id += 1;
-        let tab = Tab {
-            id: self.next_tab_id,
-            title: "Blank Widget".into(),
-        };
+        let tab = Tab::new(self.next_tab_id);
         for layout in &mut self.layouts {
             if let Some(pane) = layout.iter_mut().find(|pane| pane.id == pane_id) {
                 pane.tabs.push(tab.clone());
