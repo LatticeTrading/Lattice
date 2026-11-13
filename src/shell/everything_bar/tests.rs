@@ -18,7 +18,12 @@ fn Harness() -> impl IntoElement {
     view()
         .size_full()
         .flex_col()
-        .child(bar(workspace, ActiveTheme::restore(), Clock::restore()))
+        .child(bar(
+            workspace,
+            ActiveTheme::restore(),
+            Clock::restore(),
+            crate::widgets::picker::Picker::new(),
+        ))
         .child(text(move || {
             let state = workspace.get();
             format!(

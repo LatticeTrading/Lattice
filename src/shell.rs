@@ -6,7 +6,7 @@ mod settings;
 
 use nsh_core::prelude::*;
 
-use crate::{data::DataServices, layout, storage, theme};
+use crate::{data::DataServices, layout, storage, theme, widgets::picker::Picker};
 
 /// The root shell: Everything Bar above the persistent workspace grid.
 pub fn shell() -> impl IntoElement {
@@ -21,6 +21,8 @@ pub fn shell() -> impl IntoElement {
         log::warn!("Lattice: unable to save workspace: {error}");
     }
     let workspace = signal(saved);
+    // One widget picker, which panes' `+` and the bar's New Widget open.
+    let picker = Picker::new();
     // A widget's session lasts while the widget is anywhere in the
     // workspace: closing its tab, removing its pane, clearing or deleting
     // its page, or importing a layout releases it.
@@ -35,6 +37,7 @@ pub fn shell() -> impl IntoElement {
         .bg(theme::BACKGROUND)
         .text_color(theme::TEXT)
         .font_family("IBM Plex Mono")
-        .child(everything_bar::bar(workspace, active_theme, clock))
-        .child(layout::workspace(workspace))
+        .child(everything_bar::bar(workspace, active_theme, clock, picker))
+        .child(layout::workspace(workspace, picker))
+        .child(picker.view(workspace))
 }

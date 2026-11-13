@@ -17,7 +17,8 @@
 //!
 //! A widget's view also gets its tab ([`TabContext`]): the settings saved in
 //! the tab record, a way to save new ones, and the settings panel its pane's
-//! gear opens for the active tab.
+//! gear opens for the active tab. A pane's `+` opens the app's widget picker
+//! ([`Picker`]) for that pane, which adds a tab of the widget picked.
 
 mod grid;
 #[cfg(test)]
@@ -30,7 +31,11 @@ use crate::{
     data::{DataServices, Sessions, WidgetId, WidgetView},
     storage::{self, StoredPage, StoredWorkspace},
     theme,
-    widgets::{self, market_screener::ScreenerSettings},
+    widgets::{
+        self, WidgetKind,
+        market_screener::ScreenerSettings,
+        picker::{Picker, Target},
+    },
 };
 use grid::{GAP, Pane, ROW_STEP, Tab, breakpoint, column_step, columns};
 use nsh_core::prelude::*;
@@ -209,8 +214,18 @@ pub(crate) fn import_code(code: &str) -> Result<StoredWorkspace, String> {
     Ok(workspace)
 }
 
-pub(crate) fn spawn(workspace: &mut StoredWorkspace) {
-    active_grid_mut(workspace).spawn();
+/// Adds a pane holding one `kind` widget to the active page.
+pub(crate) fn spawn(workspace: &mut StoredWorkspace, kind: WidgetKind) {
+    active_grid_mut(workspace).spawn(kind);
+}
+
+/// Whether the active page has the pane `pane_id`.
+pub(crate) fn has_pane(workspace: &StoredWorkspace, pane_id: usize) -> bool {
+    active_grid(workspace)
+        .layouts
+        .iter()
+        .flatten()
+        .any(|pane| pane.id == pane_id)
 }
 
 fn active_grid_mut(workspace: &mut StoredWorkspace) -> &mut Grid {
@@ -226,8 +241,8 @@ pub(crate) fn remove_pane(workspace: &mut StoredWorkspace, pane_id: usize) {
     active_grid_mut(workspace).remove_pane(pane_id);
 }
 
-pub(crate) fn add_tab(workspace: &mut StoredWorkspace, pane_id: usize) {
-    active_grid_mut(workspace).add_tab(pane_id);
+pub(crate) fn add_tab(workspace: &mut StoredWorkspace, pane_id: usize, kind: WidgetKind) {
+    active_grid_mut(workspace).add_tab(pane_id, kind);
 }
 
 pub(crate) fn activate_tab(workspace: &mut StoredWorkspace, pane_id: usize, tab_id: usize) {
@@ -295,14 +310,14 @@ fn drag_handle(
         .on_responder_terminate(move |_: &ResponderEvent| drag.set(None))
 }
 
-fn persist(workspace: &StoredWorkspace) {
+pub(crate) fn persist(workspace: &StoredWorkspace) {
     if let Err(error) = storage::save(workspace) {
         log::warn!("Lattice: unable to save workspace: {error}");
     }
 }
 
 /// Render the active responsive layout.
-pub(crate) fn workspace(workspace: Signal<StoredWorkspace>) -> impl IntoElement {
+pub(crate) fn workspace(workspace: Signal<StoredWorkspace>, picker: Picker) -> impl IntoElement {
     // Standalone (some tests), the grid keeps its own registry.
     let sessions = DataServices::try_get()
         .map(|services| services.sessions)
@@ -366,7 +381,9 @@ pub(crate) fn workspace(workspace: Signal<StoredWorkspace>) -> impl IntoElement 
                 .child(each(
                     panes,
                     |(page, pane)| (*page, pane.id),
-                    move |pane, _| pane_view(pane, step, workspace, drag_state, sessions.clone()),
+                    move |pane, _| {
+                        pane_view(pane, step, workspace, drag_state, picker, sessions.clone())
+                    },
                 )),
         )
 }
@@ -379,10 +396,13 @@ fn pane_view(
     step: Memo<f32>,
     workspace: Signal<StoredWorkspace>,
     drag_state: Signal<Option<DragState>>,
+    picker: Picker,
     sessions: Sessions,
 ) -> impl IntoElement {
     // The row's key: the same for as long as the row lives.
-    let id = pane.with_untracked(|(_, pane)| pane.id);
+    let (page, id) = pane.with_untracked(|(page, pane)| (*page, pane.id));
+    // What the `+` opens the picker for.
+    let add_here = Target::Tab { page, pane: id };
     let rect = computed(move || pane.with(|(_, pane)| pane.rect));
     let tabs = computed(move || pane.with(|(_, pane)| pane.tabs.clone()));
     let active_tab = computed(move || pane.with(|(_, pane)| pane.active_tab));
@@ -415,15 +435,26 @@ fn pane_view(
                 .items_center()
                 .justify_center()
                 .text_size(px(14.0))
-                .text_color(theme::TEXT_MUTED)
+                .text_color(move || {
+                    if picker.is_open_for(add_here) {
+                        theme::ACCENT.get()
+                    } else {
+                        theme::TEXT_MUTED.get()
+                    }
+                })
                 .border_r_1()
                 .border_color(theme::BORDER)
-                .on_press(move || {
-                    workspace.update(|state| {
-                        add_tab(state, id);
-                        persist(state);
-                    });
+                .role(AccessibilityRole::Button)
+                .label("Add widget tab")
+                .test_id(&format!("pane-add-{id}"))
+                .accessibility_state(move || AccessibilityState {
+                    expanded: Some(picker.is_open_for(add_here)),
+                    has_popup: true,
+                    ..Default::default()
                 })
+                .hover(|s| s.bg(theme::BACKGROUND))
+                .active(|s| s.bg(theme::BORDER))
+                .on_press(move || picker.toggle(add_here))
                 .child(text("+")),
         )
         .child(view().flex_1())

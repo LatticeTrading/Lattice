@@ -8,8 +8,8 @@ const WIDTH: f32 = 1264.0;
 fn saved_workspace() -> StoredWorkspace {
     let mut saved = StoredWorkspace::default();
     normalize(&mut saved);
-    super::spawn(&mut saved);
-    super::spawn(&mut saved);
+    super::spawn(&mut saved, WidgetKind::MarketScreener);
+    super::spawn(&mut saved, WidgetKind::MarketScreener);
     saved
 }
 
@@ -29,7 +29,7 @@ fn clearing_pages_deletes_them_and_empties_the_last_one() {
     assert_eq!(saved.active_page_id, second);
     assert_eq!(saved.pages.len(), 1);
     // The last page stays, emptied of its widgets.
-    super::spawn(&mut saved);
+    super::spawn(&mut saved, WidgetKind::MarketScreener);
     assert!(clear_page(&mut saved, second));
     assert_eq!(saved.pages.len(), 1);
     assert_eq!(saved.active_page_id, second);
@@ -85,9 +85,9 @@ fn preview_is_transient_and_commit_changes_only_its_breakpoint() {
 fn stale_gestures_cannot_overwrite_pages_tabs_or_removed_panes() {
     for change in [
         add_page as fn(&mut StoredWorkspace),
-        |s| add_tab(s, 1),
+        |s| add_tab(s, 1, WidgetKind::MarketScreener),
         |s| remove_pane(s, 1),
-        super::spawn,
+        |s| super::spawn(s, WidgetKind::MarketScreener),
     ] {
         let mut saved = saved_workspace();
         let mut drag = gesture(&saved, true);
@@ -133,7 +133,7 @@ fn Harness() -> impl IntoElement {
             let rect = active_grid(&state).layouts[4][0].rect;
             format!("Saved {} {} {} {}", rect.x, rect.y, rect.w, rect.h)
         }))
-        .child(workspace(saved))
+        .child(workspace(saved, crate::widgets::picker::Picker::new()))
 }
 
 #[test]

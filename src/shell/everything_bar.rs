@@ -19,6 +19,7 @@ use crate::{
     storage::StoredWorkspace,
     theme::{self, ActiveTheme},
     ui::{self, Side, Tone},
+    widgets::picker::{Picker, Target},
 };
 
 #[cfg(test)]
@@ -135,6 +136,7 @@ pub fn bar(
     workspace: Signal<StoredWorkspace>,
     active_theme: ActiveTheme,
     clock: Clock,
+    picker: Picker,
 ) -> impl IntoElement {
     let manager = Manager::new();
     let now = clock::ticking_seconds();
@@ -245,17 +247,22 @@ pub fn bar(
             .border_l_1()
             .border_r_1()
             .border_color(theme::BORDER)
-            .text_color(theme::TEXT_MUTED)
-            .label("New Widget")
-            .on_press({
-                let workspace = workspace;
-                move || {
-                    workspace.update(|state| {
-                        layout::spawn(state);
-                        let _ = persist(state);
-                    });
+            .text_color(move || {
+                if picker.is_open_for(Target::NewPane) {
+                    theme::ACCENT.get()
+                } else {
+                    theme::TEXT_MUTED.get()
                 }
             })
+            .role(AccessibilityRole::Button)
+            .label("New Widget")
+            .test_id("new-widget")
+            .accessibility_state(move || AccessibilityState {
+                expanded: Some(picker.is_open_for(Target::NewPane)),
+                has_popup: true,
+                ..Default::default()
+            })
+            .on_press(move || picker.toggle(Target::NewPane))
             .child(text("+"))
             .child(text("New Widget").text_size(px(12.0)));
 

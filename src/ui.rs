@@ -258,27 +258,51 @@ struct PanelDrag {
 }
 
 impl PanelDrag {
-    /// Opens below `anchor`, `inset` in from its `side` edge, for a panel
-    /// `width` wide.
-    fn below(anchor: ElementRef, side: Side, width: Points, inset: Points) -> Self {
-        let drag = Self {
+    fn new() -> Self {
+        Self {
             origin: signal(None),
             start: signal(None),
-        };
+        }
+    }
+
+    /// Places the panel where `opening` says, once what that needs is laid
+    /// out; `panel` is the panel's own box, `width` its width. Called once
+    /// the panel's view is made, so `panel` is on it.
+    fn open(self, opening: Opening, panel: ElementRef, width: Points) {
+        const INSET: f32 = 8.0;
         spawn(async move {
-            let origin = match anchor.measure().await {
-                Some(at) => {
+            let window = window();
+            let origin = match opening {
+                Opening::Below(anchor, side) => anchor.measure().await.map(|at| {
                     let x = match side {
-                        Side::Left => at.page.x.0 + inset.0,
-                        Side::Right => at.page.x.0 + at.frame.size.width.0 - inset.0 - width.0,
+                        Side::Left => at.page.x.0 + INSET,
+                        Side::Right => at.page.x.0 + at.frame.size.width.0 - INSET - width.0,
                     };
-                    point(px(x.max(0.0)), px(at.page.y.0 + at.frame.size.height.0))
+                    // Kept inside the window: an anchor near its right edge
+                    // would push a left-aligned panel past it.
+                    let x = x.min(window.width.0 - width.0).max(0.0);
+                    point(px(x), px(at.page.y.0 + at.frame.size.height.0))
+                }),
+                Opening::Centered => {
+                    // The overlay is mounted after this task starts; until
+                    // then the ref reaches nothing to measure.
+                    for _ in 0..10 {
+                        if panel.node().is_some() {
+                            break;
+                        }
+                        next_frame().await;
+                    }
+                    panel.measure().await.map(|at| {
+                        point(
+                            px(((window.width.0 - at.frame.size.width.0) / 2.0).max(INSET)),
+                            px(((window.height.0 - at.frame.size.height.0) / 2.0).max(INSET)),
+                        )
+                    })
                 }
-                None => point(inset, inset),
             };
-            drag.origin.set(Some(origin));
+            self.origin
+                .set(Some(origin.unwrap_or(point(px(INSET), px(INSET)))));
         });
-        drag
     }
 
     /// Makes `handle` move the panel. The pointer is kept inside the window,
@@ -320,10 +344,19 @@ impl PanelDrag {
         self.origin.get().map_or(px(0.0), |origin| origin.y)
     }
 
-    /// Hidden for the frame before the anchor is measured.
+    /// Hidden until it is placed.
     fn placed(self) -> bool {
         self.origin.get().is_some()
     }
+}
+
+/// Where a floating panel opens.
+#[derive(Clone, Copy)]
+enum Opening {
+    /// Below the anchor, lined up with its side edge.
+    Below(ElementRef, Side),
+    /// In the middle of the window.
+    Centered,
 }
 
 /// Which edge of its anchor a [`floating_panel`] opens against.
@@ -351,7 +384,30 @@ pub fn floating_panel(
     on_close: impl Fn() + Clone + 'static,
     body: impl IntoElement,
 ) -> Overlay {
-    let drag = PanelDrag::below(*anchor, side, width, px(8.0));
+    panel_overlay(Opening::Below(*anchor, side), width, title, on_close, body)
+}
+
+/// A [`floating_panel`] that opens in the middle of the window instead of
+/// below an anchor (the widget picker).
+pub fn centered_panel(
+    width: Points,
+    title: &str,
+    on_close: impl Fn() + Clone + 'static,
+    body: impl IntoElement,
+) -> Overlay {
+    panel_overlay(Opening::Centered, width, title, on_close, body)
+}
+
+/// A floating panel's overlay, opening where `opening` says.
+fn panel_overlay(
+    opening: Opening,
+    width: Points,
+    title: &str,
+    on_close: impl Fn() + Clone + 'static,
+    body: impl IntoElement,
+) -> Overlay {
+    let drag = PanelDrag::new();
+    let panel_ref = element_ref();
 
     // Everything left of the close button grabs the panel.
     let grab = view()
@@ -398,6 +454,7 @@ pub fn floating_panel(
         .child(close);
 
     let panel = view()
+        .element_ref(&panel_ref)
         .label(title.to_owned())
         .w(width)
         .flex_col()
@@ -409,10 +466,12 @@ pub fn floating_panel(
         .child(body);
 
     // Without an anchor an overlay is a `position: fixed` box of the window.
-    overlay()
+    let overlay = overlay()
         .left(move || drag.x())
         .top(move || drag.y())
         .opacity(move || if drag.placed() { 1.0_f32 } else { 0.0 })
         .on_cancel(on_close)
-        .child(panel)
+        .child(panel);
+    drag.open(opening, panel_ref, width);
+    overlay
 }

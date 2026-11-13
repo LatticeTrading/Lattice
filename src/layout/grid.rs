@@ -4,7 +4,10 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{data::WidgetId, widgets::market_screener::ScreenerSettings};
+use crate::{
+    data::WidgetId,
+    widgets::{WidgetKind, market_screener::ScreenerSettings},
+};
 
 pub const GAP: f32 = 8.;
 pub const ROW: f32 = 8.;
@@ -37,16 +40,15 @@ pub struct Tab {
     pub settings: ScreenerSettings,
 }
 
-/// A new tab's title: the Market Screener is the only widget so far.
-pub const NEW_TAB_TITLE: &str = "Market Screener";
 /// What tabs were called before widgets existed.
 const BLANK_TAB_TITLE: &str = "Blank Widget";
 
 impl Tab {
-    fn new(id: usize) -> Self {
+    /// A new tab of `kind`, titled with its name.
+    fn new(id: usize, kind: WidgetKind) -> Self {
         Self {
             id,
-            title: NEW_TAB_TITLE.into(),
+            title: kind.title().into(),
             widget: WidgetId::fresh(),
             settings: ScreenerSettings::default(),
         }
@@ -204,7 +206,9 @@ impl Grid {
             .flat_map(|pane| &mut pane.tabs)
         {
             if tab.title == BLANK_TAB_TITLE {
-                NEW_TAB_TITLE.clone_into(&mut tab.title);
+                WidgetKind::MarketScreener
+                    .title()
+                    .clone_into(&mut tab.title);
             }
         }
     }
@@ -247,11 +251,12 @@ impl Grid {
         found
     }
 
-    pub fn spawn(&mut self) -> usize {
+    /// Adds a pane holding one tab of `kind`, below every other pane.
+    pub fn spawn(&mut self, kind: WidgetKind) -> usize {
         self.next_id += 1;
         let id = self.next_id;
         self.next_tab_id += 1;
-        let tab = Tab::new(self.next_tab_id);
+        let tab = Tab::new(self.next_tab_id, kind);
         for (bp, layout) in self.layouts.iter_mut().enumerate() {
             let y = layout
                 .iter()
@@ -279,9 +284,10 @@ impl Grid {
         }
     }
 
-    pub fn add_tab(&mut self, pane_id: usize) {
+    /// Adds a tab of `kind` to the pane and makes it the active one.
+    pub fn add_tab(&mut self, pane_id: usize, kind: WidgetKind) {
         self.next_tab_id += 1;
-        let tab = Tab::new(self.next_tab_id);
+        let tab = Tab::new(self.next_tab_id, kind);
         for layout in &mut self.layouts {
             if let Some(pane) = layout.iter_mut().find(|pane| pane.id == pane_id) {
                 pane.tabs.push(tab.clone());
@@ -328,7 +334,7 @@ mod tests {
     fn responsive_spawn_is_bounded_and_unique() {
         let mut grid = Grid::default();
         for id in 1..=100 {
-            assert_eq!(grid.spawn(), id);
+            assert_eq!(grid.spawn(WidgetKind::MarketScreener), id);
         }
         for (bp, layout) in grid.layouts.iter().enumerate() {
             for (index, pane) in layout.iter().enumerate() {
@@ -361,8 +367,8 @@ mod tests {
     #[test]
     fn remove_pane_removes_it_from_every_breakpoint() {
         let mut grid = Grid::default();
-        let pane_id = grid.spawn();
-        grid.spawn();
+        let pane_id = grid.spawn(WidgetKind::MarketScreener);
+        grid.spawn(WidgetKind::MarketScreener);
         grid.remove_pane(pane_id);
         assert!(
             grid.layouts
@@ -375,9 +381,9 @@ mod tests {
     #[test]
     fn tabs_add_activate_and_close_without_removing_the_pane() {
         let mut grid = Grid::default();
-        let pane_id = grid.spawn();
+        let pane_id = grid.spawn(WidgetKind::MarketScreener);
         let first_tab = grid.layouts[4][0].active_tab;
-        grid.add_tab(pane_id);
+        grid.add_tab(pane_id, WidgetKind::MarketScreener);
         let second_tab = grid.layouts[4][0].active_tab;
         assert_ne!(first_tab, second_tab);
         assert_eq!(grid.layouts[4][0].tabs.len(), 2);
@@ -394,8 +400,8 @@ mod tests {
     #[test]
     fn drag_rebuilds_from_snapshot_and_compacts_neighbours() {
         let mut grid = Grid::default();
-        let first = grid.spawn();
-        grid.spawn();
+        let first = grid.spawn(WidgetKind::MarketScreener);
+        grid.spawn(WidgetKind::MarketScreener);
         let before = grid.layouts[4].clone();
         let moved_once = dragged(&before, first, 1000.0, 32.0, 1264.0, 4, false);
         let moved_again = dragged(&before, first, 1000.0, 32.0, 1264.0, 4, false);
@@ -408,8 +414,8 @@ mod tests {
     #[test]
     fn resize_snaps_clamps_and_compacts_neighbours() {
         let mut grid = Grid::default();
-        grid.spawn();
-        grid.spawn();
+        grid.spawn(WidgetKind::MarketScreener);
+        grid.spawn(WidgetKind::MarketScreener);
         let layout = &mut grid.layouts[4];
         let original = layout[0].rect;
         layout[0].rect = resized(original, 10000., 32., 1264., 48);

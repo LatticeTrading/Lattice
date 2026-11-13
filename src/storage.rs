@@ -109,8 +109,8 @@ mod tests {
     #[test]
     fn workspace_round_trips_layout_and_repairs_ids() {
         let mut grid = Grid::default();
-        grid.spawn();
-        grid.add_tab(1);
+        grid.spawn(crate::widgets::WidgetKind::MarketScreener);
+        grid.add_tab(1, crate::widgets::WidgetKind::MarketScreener);
         let storage = StoredWorkspace {
             pages: vec![StoredPage { id: 1, grid }],
             ..StoredWorkspace::default()
@@ -121,6 +121,11 @@ mod tests {
         restored.pages[0].grid.repair_counters();
         assert_eq!(restored.version, STORAGE_VERSION);
         assert_eq!(restored.pages[0].grid.layouts[4][0].tabs.len(), 2);
-        assert_eq!(restored.pages[0].grid.spawn(), 2);
+        assert_eq!(
+            restored.pages[0]
+                .grid
+                .spawn(crate::widgets::WidgetKind::MarketScreener),
+            2
+        );
     }
 }
