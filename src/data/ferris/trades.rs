@@ -8,7 +8,9 @@
 //! trade history, Perpl and Variational today, are never asked). Later
 //! leases of the same market share it: one topic, one snapshot, one
 //! buffer. The last lease dropping ends it (the socket unsubscribes after
-//! its grace).
+//! its grace). The sharing, leases and listeners are the generic
+//! [`FeedHub`](crate::data::net::FeedHub)'s; this module is the trade
+//! logic only.
 //!
 //! The feed keeps the newest [`MAX_ROWS`] prints in time order, drops
 //! prints it has seen (by id, the last [`MAX_SEEN`]), and counts live
@@ -22,17 +24,19 @@
 //! a frame.
 
 use std::{
-    cell::{Cell, RefCell},
-    collections::{HashMap, HashSet, VecDeque},
-    rc::{Rc, Weak},
+    cell::RefCell,
+    collections::{HashSet, VecDeque},
+    rc::Rc,
     time::Duration,
 };
 
 use nsh_core::{prelude::*, time::unix_ms};
 use serde_json::{Value, json};
 
-use super::{Availability, Channel, Ferris, FerrisPush, FerrisTopic, MarketSelection, Operation};
-use crate::data::net::{TaskHandle, TopicPhase};
+use super::{
+    Availability, Channel, Ferris, FerrisPush, FerrisTopic, MarketKey, MarketSelection, Operation,
+};
+use crate::data::net::{FeedLease, FeedNode, TaskHandle, TopicPhase};
 
 /// The prints a feed keeps, and the snapshot it asks for.
 pub const MAX_ROWS: usize = 200;
@@ -246,30 +250,22 @@ impl State {
     }
 }
 
-type Listener = Rc<dyn Fn()>;
+/// A market's feed, shared by its leases.
+type Feed = FeedNode<MarketKey, Prints>;
 
-/// One market's feed, shared by its leases.
-struct Feed {
-    key: String,
+/// What a market's feed keeps: the market, its buffer and status, and what
+/// streams into them.
+struct Prints {
     market: MarketSelection,
     state: RefCell<State>,
-    listeners: RefCell<Vec<(u64, Listener)>>,
-    next_listener: Cell<u64>,
     subscription: RefCell<Option<super::Subscription>>,
     /// The snapshot and the loading deadline.
     tasks: RefCell<Vec<TaskHandle>>,
-    hub: Weak<RefCell<HashMap<String, Weak<Feed>>>>,
 }
 
-impl Feed {
-    fn start(
-        ferris: &Ferris,
-        key: String,
-        market: &MarketSelection,
-        hub: Weak<RefCell<HashMap<String, Weak<Self>>>>,
-    ) -> Rc<Self> {
-        let feed = Rc::new(Self {
-            key,
+impl Prints {
+    fn new(market: &MarketSelection) -> Self {
+        Self {
             market: market.clone(),
             state: RefCell::new(State {
                 rows: VecDeque::new(),
@@ -281,159 +277,136 @@ impl Feed {
                 loading: true,
                 failed: false,
             }),
-            listeners: RefCell::new(Vec::new()),
-            next_listener: Cell::new(0),
             subscription: RefCell::new(None),
             tasks: RefCell::new(Vec::new()),
-            hub,
-        });
-        let label = format!("{} {}", market.exchange, market.request_symbol);
-        match market.topic(Channel::Trades) {
-            Ok(topic) => {
-                let (on_data, on_phase) = (Rc::downgrade(&feed), Rc::downgrade(&feed));
-                let subscription = ferris.subscribe_with_phase(
-                    topic,
-                    move |push: &FerrisPush| {
-                        if let Some(feed) = on_data.upgrade() {
-                            feed.receive(push.data(), true);
-                        }
-                    },
-                    move |phase| {
-                        if let Some(feed) = on_phase.upgrade() {
-                            feed.phase(phase);
-                        }
-                    },
-                );
-                *feed.subscription.borrow_mut() = Some(subscription);
-            }
-            Err(error) => {
-                log::error!("Trades: cannot stream {label}: {}", error.message);
-                let mut state = feed.state.borrow_mut();
-                state.loading = false;
-                state.failed = true;
-            }
-        }
-        let snapshot = {
-            let (ferris, weak, market) = (ferris.clone(), Rc::downgrade(&feed), market.clone());
-            TaskHandle::spawn(async move {
-                let Some(payload) = snapshot(&ferris, &market, &label).await else {
-                    if let Some(feed) = weak.upgrade() {
-                        feed.settle();
-                    }
-                    return;
-                };
-                if let Some(feed) = weak.upgrade() {
-                    feed.receive(&payload, false);
-                }
-            })
-        };
-        let deadline = {
-            let weak = Rc::downgrade(&feed);
-            TaskHandle::spawn(async move {
-                timer(LOADING_FOR).await;
-                if let Some(feed) = weak.upgrade() {
-                    feed.settle();
-                }
-            })
-        };
-        feed.tasks.borrow_mut().extend([snapshot, deadline]);
-        feed
-    }
-
-    /// Takes in a snapshot (`live: false`) or a live frame's prints, the
-    /// ones beyond the [`Seam`].
-    fn receive(&self, payload: &Value, live: bool) {
-        let now = unix_ms();
-        let changed = {
-            let mut state = self.state.borrow_mut();
-            // Only live data says the topic streams; a snapshot does not.
-            let mut changed = state.loading || (live && state.failed);
-            state.loading = false;
-            if live {
-                state.failed = false;
-            }
-            let trades: Vec<Trade> = trades_in(payload)
-                .iter()
-                .filter_map(|trade| Trade::from_value(trade, now))
-                .collect();
-            let seam = state.seam;
-            if let Some((oldest, newest)) = span(&trades) {
-                state.seam = seam.after(live, oldest, newest);
-            }
-            for trade in trades
-                .into_iter()
-                .filter(|trade| seam.admits(trade.timestamp, live))
-            {
-                if state.keep(trade) {
-                    changed = true;
-                    if live {
-                        state.arrivals.push_back(now);
-                    }
-                }
-            }
-            if live {
-                state.prune_arrivals(now);
-            }
-            changed
-        };
-        if changed {
-            self.notify();
-        }
-    }
-
-    fn phase(&self, phase: TopicPhase) {
-        let changed = {
-            let mut state = self.state.borrow_mut();
-            match phase {
-                TopicPhase::Failed if !state.failed => {
-                    state.failed = true;
-                    state.loading = false;
-                    true
-                }
-                TopicPhase::Subscribed | TopicPhase::Live if state.failed => {
-                    state.failed = false;
-                    true
-                }
-                _ => false,
-            }
-        };
-        if changed {
-            self.notify();
-        }
-    }
-
-    /// No longer loading (the snapshot failed or the deadline passed),
-    /// whether or not a print came.
-    fn settle(&self) {
-        let changed = std::mem::replace(&mut self.state.borrow_mut().loading, false);
-        if changed {
-            self.notify();
-        }
-    }
-
-    fn notify(&self) {
-        let listeners: Vec<Listener> = self
-            .listeners
-            .borrow()
-            .iter()
-            .map(|(_, listener)| listener.clone())
-            .collect();
-        for listener in listeners {
-            listener();
         }
     }
 }
 
-impl Drop for Feed {
-    fn drop(&mut self) {
-        if let Some(hub) = self.hub.upgrade()
-            && let Ok(mut feeds) = hub.try_borrow_mut()
-            && feeds
-                .get(&self.key)
-                .is_some_and(|feed| feed.strong_count() == 0)
-        {
-            feeds.remove(&self.key);
+/// Starts a new feed: subscribes to its market's topic, asks for the
+/// snapshot, and sets the loading deadline.
+fn start(ferris: &Ferris, feed: &Rc<Feed>) {
+    let market = &feed.state().market;
+    let label = format!("{} {}", market.exchange, market.request_symbol);
+    match market.topic(Channel::Trades) {
+        Ok(topic) => {
+            let (on_data, on_phase) = (Rc::downgrade(feed), Rc::downgrade(feed));
+            let subscription = ferris.subscribe_with_phase(
+                topic,
+                move |push: &FerrisPush| {
+                    if let Some(feed) = on_data.upgrade() {
+                        receive(&feed, push.data(), true);
+                    }
+                },
+                move |phase| {
+                    if let Some(feed) = on_phase.upgrade() {
+                        phase_changed(&feed, phase);
+                    }
+                },
+            );
+            *feed.state().subscription.borrow_mut() = Some(subscription);
         }
+        Err(error) => {
+            log::error!("Trades: cannot stream {label}: {}", error.message);
+            let mut state = feed.state().state.borrow_mut();
+            state.loading = false;
+            state.failed = true;
+        }
+    }
+    let snapshot = {
+        let (ferris, weak, market) = (ferris.clone(), Rc::downgrade(feed), market.clone());
+        TaskHandle::spawn(async move {
+            let Some(payload) = snapshot(&ferris, &market, &label).await else {
+                if let Some(feed) = weak.upgrade() {
+                    settle(&feed);
+                }
+                return;
+            };
+            if let Some(feed) = weak.upgrade() {
+                receive(&feed, &payload, false);
+            }
+        })
+    };
+    let deadline = {
+        let weak = Rc::downgrade(feed);
+        TaskHandle::spawn(async move {
+            timer(LOADING_FOR).await;
+            if let Some(feed) = weak.upgrade() {
+                settle(&feed);
+            }
+        })
+    };
+    feed.state().tasks.borrow_mut().extend([snapshot, deadline]);
+}
+
+/// Takes in a snapshot (`live: false`) or a live frame's prints, the ones
+/// beyond the [`Seam`].
+fn receive(feed: &Feed, payload: &Value, live: bool) {
+    let now = unix_ms();
+    let changed = {
+        let mut state = feed.state().state.borrow_mut();
+        // Only live data says the topic streams; a snapshot does not.
+        let mut changed = state.loading || (live && state.failed);
+        state.loading = false;
+        if live {
+            state.failed = false;
+        }
+        let trades: Vec<Trade> = trades_in(payload)
+            .iter()
+            .filter_map(|trade| Trade::from_value(trade, now))
+            .collect();
+        let seam = state.seam;
+        if let Some((oldest, newest)) = span(&trades) {
+            state.seam = seam.after(live, oldest, newest);
+        }
+        for trade in trades
+            .into_iter()
+            .filter(|trade| seam.admits(trade.timestamp, live))
+        {
+            if state.keep(trade) {
+                changed = true;
+                if live {
+                    state.arrivals.push_back(now);
+                }
+            }
+        }
+        if live {
+            state.prune_arrivals(now);
+        }
+        changed
+    };
+    if changed {
+        feed.notify();
+    }
+}
+
+fn phase_changed(feed: &Feed, phase: TopicPhase) {
+    let changed = {
+        let mut state = feed.state().state.borrow_mut();
+        match phase {
+            TopicPhase::Failed if !state.failed => {
+                state.failed = true;
+                state.loading = false;
+                true
+            }
+            TopicPhase::Subscribed | TopicPhase::Live if state.failed => {
+                state.failed = false;
+                true
+            }
+            _ => false,
+        }
+    };
+    if changed {
+        feed.notify();
+    }
+}
+
+/// No longer loading (the snapshot failed or the deadline passed), whether
+/// or not a print came.
+fn settle(feed: &Feed) {
+    let changed = std::mem::replace(&mut feed.state().state.borrow_mut().loading, false);
+    if changed {
+        feed.notify();
     }
 }
 
@@ -478,78 +451,52 @@ async fn snapshot(ferris: &Ferris, market: &MarketSelection, label: &str) -> Opt
     }
 }
 
-/// Every market's feed, by [`MarketSelection::identity`]. Cloning is
-/// cheap: every clone is the same feeds.
-#[derive(Clone, Default)]
-pub(crate) struct TradeFeeds(Rc<RefCell<HashMap<String, Weak<Feed>>>>);
-
-impl TradeFeeds {
-    fn acquire(&self, ferris: &Ferris, market: &MarketSelection) -> Rc<Feed> {
-        let key = market.identity();
-        let running = self.0.borrow().get(&key).and_then(Weak::upgrade);
-        running.unwrap_or_else(|| {
-            let feed = Feed::start(ferris, key.clone(), market, Rc::downgrade(&self.0));
-            self.0.borrow_mut().insert(key, Rc::downgrade(&feed));
-            feed
-        })
-    }
-}
-
 impl Ferris {
-    /// A lease on `market`'s trades: its shared feed, started if no lease
-    /// holds it. `on_change` is told each time the feed's prints or status
-    /// change, until the lease drops.
+    /// A lease on `market`'s trades: its shared feed (by
+    /// [`MarketSelection::identity`]), started if no lease holds it.
+    /// `on_change` is told each time the feed's prints or status change,
+    /// until the lease drops.
     pub fn trades(&self, market: &MarketSelection, on_change: impl Fn() + 'static) -> TradeFeed {
-        let feed = self.feeds.acquire(self, market);
-        let id = feed.next_listener.get();
-        feed.next_listener.set(id + 1);
-        feed.listeners.borrow_mut().push((id, Rc::new(on_change)));
-        TradeFeed { feed, id }
+        let lease = self.feeds.hub::<MarketKey, Prints>().lease(
+            market.identity(),
+            || Prints::new(market),
+            |feed| start(self, feed),
+            on_change,
+        );
+        TradeFeed(lease)
     }
 }
 
 /// One consumer's lease on a market's trades (see [`Ferris::trades`]).
 /// Dropping it stops its `on_change`, and the last lease ends the feed.
 #[must_use = "dropping a trade feed releases it"]
-pub struct TradeFeed {
-    feed: Rc<Feed>,
-    id: u64,
-}
+pub struct TradeFeed(FeedLease<MarketKey, Prints>);
 
 impl TradeFeed {
     /// The market, as the first lease selected it.
     pub fn market(&self) -> &MarketSelection {
-        &self.feed.market
+        &self.0.state().market
     }
 
     /// The prints kept, oldest first.
     pub fn with_rows<R>(&self, f: impl FnOnce(&VecDeque<Rc<TradeRow>>) -> R) -> R {
-        f(&self.feed.state.borrow().rows)
+        f(&self.0.state().state.borrow().rows)
     }
 
     /// Waiting for its first snapshot or print (at most a few seconds).
     pub fn loading(&self) -> bool {
-        self.feed.state.borrow().loading
+        self.0.state().state.borrow().loading
     }
 
     /// The server refused its topic, or it could not be asked for.
     pub fn failed(&self) -> bool {
-        self.feed.state.borrow().failed
+        self.0.state().state.borrow().failed
     }
 
     /// Live prints per second over the last five seconds.
     pub fn trades_per_second(&self, now: f64) -> f64 {
-        let mut state = self.feed.state.borrow_mut();
+        let mut state = self.0.state().state.borrow_mut();
         state.prune_arrivals(now);
         state.arrivals.len() as f64 / (RATE_WINDOW_MS / 1_000.0)
-    }
-}
-
-impl Drop for TradeFeed {
-    fn drop(&mut self) {
-        self.feed
-            .listeners
-            .borrow_mut()
-            .retain(|(id, _)| *id != self.id);
     }
 }

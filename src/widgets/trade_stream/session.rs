@@ -10,7 +10,7 @@ use super::TradeStreamSettings;
 use crate::{
     data::{
         SessionScope,
-        ferris::{Ferris, MarketSelection, TradeFeed, TradeRow},
+        ferris::{Ferris, MarketKey, MarketSelection, TradeFeed, TradeRow},
     },
     widgets::common::{Keyed, Shared},
 };
@@ -78,7 +78,7 @@ impl Stream {
             ..Shown::default()
         })));
         let rate = signal(0.0_f64);
-        let watched: Rc<Keyed<String, Watched>> = Rc::default();
+        let watched: Rc<Keyed<MarketKey, Watched>> = Rc::default();
         // Prints arrived (or the markets changed) since the rows were made.
         let dirty = Rc::new(Cell::new(true));
         // Bumped when `dirty` is set, so the visible view schedules a frame.
@@ -160,7 +160,7 @@ impl Stream {
 /// that marks the session dirty on each change, and the rest are let go.
 fn follow_markets(
     ferris: &Ferris,
-    watched: &Keyed<String, Watched>,
+    watched: &Keyed<MarketKey, Watched>,
     markets: &[MarketSelection],
     mark: &Rc<dyn Fn()>,
     next_slot: &Cell<u64>,
@@ -186,7 +186,7 @@ fn follow_markets(
 
 /// The newest `max` prints across `watched`, newest first (ties in the
 /// markets' order, then arrival).
-fn merge(watched: &[(String, Watched)], max: usize) -> Shown {
+fn merge(watched: &[(MarketKey, Watched)], max: usize) -> Shown {
     let mut shown = Shown::default();
     for (_, market) in watched {
         shown.loading |= market.feed.loading();

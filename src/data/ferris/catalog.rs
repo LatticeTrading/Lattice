@@ -30,11 +30,13 @@ use std::{collections::HashSet, rc::Rc, time::Duration};
 
 use serde_json::{Map, Value, json};
 
-use super::{Availability, Capabilities, MarketSelection, MarketType, Operation, Product, Venue};
-use crate::data::net::{ApiError, canonical_json};
+use super::{
+    Availability, Capabilities, Ferris, MarketSelection, MarketType, Operation, Product, Venue,
+};
+use crate::data::net::{ApiError, QuerySpec, canonical_json};
 
 /// How long a catalog is fresh, and how often a watched one is refetched.
-pub(super) const REFRESH: Duration = Duration::from_secs(60);
+const REFRESH: Duration = Duration::from_secs(60);
 
 /// One catalog request: an exchange and the params of one of its listing
 /// profiles, with the products it lists.
@@ -63,13 +65,29 @@ impl CatalogScope {
     }
 
     /// The request's body.
-    pub(super) fn body(&self) -> Value {
+    fn body(&self) -> Value {
         json!({ "exchange": self.exchange, "params": self.params })
     }
 
     /// Its deadline ([`Venue::catalog_timeout`]).
-    pub(super) fn timeout(&self) -> Duration {
+    fn timeout(&self) -> Duration {
         Venue::of(&self.exchange).catalog_timeout
+    }
+}
+
+impl Ferris {
+    /// The market catalog of `scope`: one shared request per scope,
+    /// refetched every minute while watched.
+    pub fn catalog_query(&self, scope: &CatalogScope) -> QuerySpec<Catalog> {
+        let exchange = scope.exchange.clone();
+        self.post_query(
+            scope.key.clone(),
+            Operation::FetchMarkets,
+            &scope.body(),
+            scope.timeout(),
+            REFRESH,
+            move |payload: Value| parse(&payload, &exchange),
+        )
     }
 }
 

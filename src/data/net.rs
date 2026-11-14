@@ -1,7 +1,7 @@
 //! Networking that every integration shares and none owns.
 //!
 //! An integration (Ferris today; an exchange or news API later) is built
-//! from four parts, each usable on its own:
+//! from five parts, each usable on its own:
 //!
 //! - [`HttpClient`]: one API origin, JSON in and out, a deadline on every
 //!   request and one [`ApiError`] model. It runs on NSH's `fetch`, so it is
@@ -16,6 +16,9 @@
 //! - [`Queries`]: shared, keyed requests. However many consumers watch a
 //!   key, one request is in flight; a watched key is refetched on its
 //!   interval and the value is kept for the next consumer.
+//! - [`FeedHub`]: shared live feeds, one per key (a market's trades),
+//!   started by the first lease and ended by the last; [`FeedHubs`] holds
+//!   one hub per feed type.
 //! - [`StatusBoard`]: each socket and query hub reports its health there,
 //!   which is what the connection indicator shows.
 //!
@@ -28,6 +31,7 @@
 //! panic aborts the module, see `guard.rs`).
 
 mod error;
+mod feed;
 mod guard;
 mod http;
 mod json;
@@ -37,6 +41,7 @@ mod status;
 mod task;
 
 pub use error::{ApiError, ErrorKind};
+pub use feed::{FeedHub, FeedHubs, FeedLease, FeedNode};
 pub use http::{ErrorDecoder, HttpClient, HttpOptions, Request};
 pub use json::canonical_json;
 pub use query::{Queries, QuerySpec, QueryState, Watch};

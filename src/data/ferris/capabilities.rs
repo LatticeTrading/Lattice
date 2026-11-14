@@ -8,12 +8,13 @@
 //! client cannot read is skipped, so a newer backend does not break the
 //! whole document.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, rc::Rc, time::Duration};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{Channel, Operation};
+use super::{Channel, Ferris, Operation};
+use crate::data::net::{ApiError, QuerySpec, Watch};
 
 /// The whole capabilities document.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -236,5 +237,31 @@ impl Requirement {
             (Availability::Unknown, _) | (_, Availability::Unknown) => Availability::Unknown,
             _ => Availability::Supported,
         }
+    }
+}
+
+/// How often capabilities are refetched while something watches them.
+const REFRESH: Duration = Duration::from_secs(5 * 60);
+
+impl Ferris {
+    /// The capabilities request: shared, cached and refreshed every five
+    /// minutes while watched.
+    pub fn capabilities_query(&self) -> QuerySpec<Capabilities> {
+        let http = self.http.clone();
+        QuerySpec::new("ferris:capabilities", move || {
+            let http = http.clone();
+            async move { http.get::<Capabilities>("/v1/capabilities").await }
+        })
+        .refresh_every(REFRESH)
+    }
+
+    /// The capabilities: the cached copy while fresh, else fetched.
+    pub async fn capabilities(&self) -> Result<Rc<Capabilities>, ApiError> {
+        self.queries.get(self.capabilities_query()).await
+    }
+
+    /// Watches the capabilities (refreshed while watched).
+    pub fn watch_capabilities(&self) -> Watch<Capabilities> {
+        self.queries.watch(self.capabilities_query())
     }
 }

@@ -27,7 +27,7 @@ use super::{
     settings::{MAX_TRADES, MIN_TRADES},
 };
 use crate::{
-    data::ferris::{Channel, MarketSelection, Requirement},
+    data::ferris::{Channel, MarketKey, MarketSelection, Requirement},
     exchanges, theme,
     ui::{self, Side},
     widgets::{
@@ -59,8 +59,8 @@ const LOGO: LogoStyle = LogoStyle {
 enum Picking {
     /// A market to add.
     Add,
-    /// A market to put in place of this one.
-    Replace(Rc<MarketSelection>),
+    /// A market to put in place of this one, with its identity.
+    Replace(Rc<MarketSelection>, MarketKey),
 }
 
 /// The settings panel of the stream's tab, below the pane's gear.
@@ -104,14 +104,14 @@ fn picker(
     let saved = tab.settings;
     let current = match &picking_for {
         Picking::Add => None,
-        Picking::Replace(market) => Some(MarketSelection::clone(market)),
+        Picking::Replace(market, _) => Some(MarketSelection::clone(market)),
     };
     let tab = tab.clone();
     MarketPicker::new(move |picked| {
         let settings = saved.get_untracked();
         tab.save(&match &picking_for {
             Picking::Add => settings.adding(picked),
-            Picking::Replace(replaced) => settings.replacing(replaced, picked),
+            Picking::Replace(replaced, _) => settings.replacing(replaced, picked),
         });
     })
     .requires(Requirement::realtime(Channel::Trades))
@@ -181,10 +181,13 @@ fn market_entry(
         market.tags()
     );
     let identity = market.identity();
-    let replacing = move || {
-        picking.with(
-            |picking| matches!(picking, Some(Picking::Replace(m)) if m.identity() == identity),
-        )
+    let replacing = {
+        let identity = identity.clone();
+        move || {
+            picking.with(
+                |picking| matches!(picking, Some(Picking::Replace(_, key)) if *key == identity),
+            )
+        }
     };
     // The old `.market-tag` segments: no box of their own, a divider
     // before each.
@@ -218,7 +221,7 @@ fn market_entry(
         .hover(|s| s.bg(theme::PANEL).border_color(theme::ACCENT).z_index(1))
         .on_press({
             let picked = Rc::new(market.clone());
-            move || picking.set(Some(Picking::Replace(picked.clone())))
+            move || picking.set(Some(Picking::Replace(picked.clone(), identity.clone())))
         })
         .child(
             view()

@@ -90,13 +90,7 @@ impl TradeStreamSettings {
 
     /// These settings watching `markets` (each once).
     pub fn with_markets(mut self, markets: Vec<MarketSelection>) -> Self {
-        let mut kept: Vec<MarketSelection> = Vec::new();
-        for market in markets {
-            let identity = market.identity();
-            if !kept.iter().any(|other| other.identity() == identity) {
-                kept.push(market);
-            }
-        }
+        let kept = MarketSelection::dedup(markets);
         self.markets = (kept != [default_market()]).then_some(kept);
         self
     }

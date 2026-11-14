@@ -22,8 +22,10 @@ use std::{collections::HashMap, rc::Rc, time::Duration};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 
-use super::{Capabilities, CapabilityState, ExchangeCapabilities, Product, Venue};
-use crate::data::net::canonical_json;
+use super::{
+    Capabilities, CapabilityState, ExchangeCapabilities, Ferris, Operation, Product, Venue,
+};
+use crate::data::net::{QuerySpec, canonical_json};
 
 /// A statistics field, as the API names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -351,11 +353,7 @@ fn request_params(exchange: &str, params: Map<String, Value>) -> Map<String, Val
     params
 }
 
-pub(super) fn request_body(
-    exchange: &str,
-    params: &Map<String, Value>,
-    fields: &[StatsFieldName],
-) -> Value {
+fn request_body(exchange: &str, params: &Map<String, Value>, fields: &[StatsFieldName]) -> Value {
     serde_json::json!({
         "exchange": exchange,
         "params": params,
@@ -368,17 +366,28 @@ pub(super) fn request_body(
 /// Some venues' typed scopes are large whatever they ask for, and some
 /// allow a large request longer ([`Venue::stats_typed_scopes_large`],
 /// [`Venue::stats_large_timeout`]: Hyperliquid).
-pub(super) fn request_timeout(
-    exchange: &str,
-    params: &Map<String, Value>,
-    fields: usize,
-) -> Duration {
+fn request_timeout(exchange: &str, params: &Map<String, Value>, fields: usize) -> Duration {
     let venue = Venue::of(exchange);
     let large = fields >= 5 || (venue.stats_typed_scopes_large && params.contains_key("type"));
     if large {
         venue.stats_large_timeout
     } else {
         Duration::from_secs(15)
+    }
+}
+
+impl Ferris {
+    /// The statistics of `scope`: one shared request per scope, refetched on
+    /// the scope's poll interval while watched.
+    pub fn market_stats_query(&self, scope: &MarketStatsScope) -> QuerySpec<StatsSnapshot> {
+        self.post_query(
+            scope.key.clone(),
+            Operation::FetchMarketStats,
+            &request_body(&scope.exchange, &scope.params, &scope.fields),
+            request_timeout(&scope.exchange, &scope.params, scope.fields.len()),
+            scope.capability.poll_interval,
+            Ok::<StatsSnapshot, _>,
+        )
     }
 }
 

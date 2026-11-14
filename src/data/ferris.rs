@@ -44,24 +44,21 @@ pub use capabilities::{
 pub use catalog::{
     Catalog, CatalogMarket, CatalogScope, SymbolQuery, catalog_scopes, merge as merge_catalogs,
 };
-pub use market::{MarketSelection, MarketType};
+pub use market::{MarketKey, MarketSelection, MarketType};
 pub use market_stats::{MarketStatsScope, StatsFieldName, StatsSnapshot, stats_scopes};
 pub use protocol::{Channel, FerrisProtocol, FerrisPush, FerrisTopic};
 pub use trades::{Side, Trade, TradeFeed, TradeRow};
 pub use venues::{CatalogProfile, SettlementVolume, StatsProfile, VENUES, Venue};
 
 use super::net::{
-    ApiError, HttpClient, HttpOptions, Queries, QuerySpec, Request, SharedSocket, SocketConfig,
-    StatusBoard, Subscription, TopicPhase, Watch,
+    ApiError, FeedHubs, HttpClient, HttpOptions, Queries, QuerySpec, Request, SharedSocket,
+    SocketConfig, StatusBoard, Subscription, TopicPhase,
 };
 
 /// The production API.
 pub const PRODUCTION_HTTP: &str = "https://api.latticeterminal.com";
 /// The production WebSocket.
 pub const PRODUCTION_WS: &str = "wss://api.latticeterminal.com/v1/ws";
-
-/// How often capabilities are refetched while something watches them.
-const CAPABILITIES_REFRESH: Duration = Duration::from_secs(5 * 60);
 
 /// Where Ferris is and how long to wait for it.
 #[derive(Clone, Debug)]
@@ -139,14 +136,20 @@ impl Operation {
 }
 
 /// The Ferris client. Cloning is cheap: every clone shares one HTTP
-/// client, one socket, one query hub and one set of trade feeds.
+/// client, one socket, one query hub and one set of feed hubs.
+///
+/// Each service module owns its part of the client (`impl Ferris` in
+/// `capabilities.rs`, `catalog.rs`, `market_stats.rs`, `trades.rs`): a
+/// polled one makes its queries with [`Self::post_query`], a streaming one
+/// keeps its feeds in its own hub of `feeds`, so a new service adds no
+/// field here.
 #[derive(Clone)]
 pub struct Ferris {
     config: Rc<FerrisConfig>,
     http: HttpClient,
     socket: SharedSocket<FerrisProtocol>,
     queries: Queries,
-    feeds: trades::TradeFeeds,
+    feeds: FeedHubs,
 }
 
 impl Ferris {
@@ -182,7 +185,7 @@ impl Ferris {
             http,
             socket,
             queries,
-            feeds: trades::TradeFeeds::default(),
+            feeds: FeedHubs::default(),
         })
     }
 
@@ -226,58 +229,32 @@ impl Ferris {
         self.http.send(request).await
     }
 
-    /// The capabilities request: shared, cached and refreshed every five
-    /// minutes while watched.
-    pub fn capabilities_query(&self) -> QuerySpec<Capabilities> {
+    /// A shared `POST` of `body` to `operation` under `key`, within
+    /// `timeout`, its reply read as `R` and turned into the value by
+    /// `decode`, refetched every `refresh` while watched: what every polled
+    /// service's query is (statistics, catalogs).
+    fn post_query<R, T>(
+        &self,
+        key: impl Into<String>,
+        operation: Operation,
+        body: &(impl Serialize + ?Sized),
+        timeout: Duration,
+        refresh: Duration,
+        decode: impl Fn(R) -> Result<T, ApiError> + 'static,
+    ) -> QuerySpec<T>
+    where
+        R: DeserializeOwned + 'static,
+        T: 'static,
+    {
         let http = self.http.clone();
-        QuerySpec::new("ferris:capabilities", move || {
-            let http = http.clone();
-            async move { http.get::<Capabilities>("/v1/capabilities").await }
+        let request =
+            Request::post_json(operation.path(), body).map(|request| request.timeout(timeout));
+        let decode = Rc::new(decode);
+        QuerySpec::new(key, move || {
+            let (http, request, decode) = (http.clone(), request.clone(), decode.clone());
+            async move { decode(http.send::<R>(request?).await?) }
         })
-        .refresh_every(CAPABILITIES_REFRESH)
-    }
-
-    /// The capabilities: the cached copy while fresh, else fetched.
-    pub async fn capabilities(&self) -> Result<Rc<Capabilities>, ApiError> {
-        self.queries.get(self.capabilities_query()).await
-    }
-
-    /// Watches the capabilities (refreshed while watched).
-    pub fn watch_capabilities(&self) -> Watch<Capabilities> {
-        self.queries.watch(self.capabilities_query())
-    }
-
-    /// The statistics of `scope`: one shared request per scope, refetched on
-    /// the scope's poll interval while watched.
-    pub fn market_stats_query(&self, scope: &MarketStatsScope) -> QuerySpec<StatsSnapshot> {
-        let http = self.http.clone();
-        let body = market_stats::request_body(&scope.exchange, &scope.params, &scope.fields);
-        let timeout =
-            market_stats::request_timeout(&scope.exchange, &scope.params, scope.fields.len());
-        QuerySpec::new(scope.key.clone(), move || {
-            let http = http.clone();
-            let request = Request::post_json(Operation::FetchMarketStats.path(), &body)
-                .map(|request| request.timeout(timeout));
-            async move { http.send::<StatsSnapshot>(request?).await }
-        })
-        .refresh_every(scope.capability.poll_interval)
-    }
-
-    /// The market catalog of `scope`: one shared request per scope,
-    /// refetched every minute while watched.
-    pub fn catalog_query(&self, scope: &CatalogScope) -> QuerySpec<Catalog> {
-        let http = self.http.clone();
-        let exchange = scope.exchange.clone();
-        let request = Request::post_json(Operation::FetchMarkets.path(), &scope.body())
-            .map(|request| request.timeout(scope.timeout()));
-        QuerySpec::new(scope.key.clone(), move || {
-            let (http, exchange, request) = (http.clone(), exchange.clone(), request.clone());
-            async move {
-                let payload: serde_json::Value = http.send(request?).await?;
-                catalog::parse(&payload, &exchange)
-            }
-        })
-        .refresh_every(catalog::REFRESH)
+        .refresh_every(refresh)
     }
 
     /// Subscribes to a live topic on the shared socket.
