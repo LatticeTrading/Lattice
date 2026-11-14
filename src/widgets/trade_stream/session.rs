@@ -1,30 +1,6 @@
-//! The Trade Stream: the latest prints of one or more markets, newest
-//! first, with each market's buys and sells and the trades-per-second
-//! rate (the old app's `TradeStream` and `TradeStreamController`).
-//!
-//! Data (the widget's session, [`Stream`]):
-//!
-//! - It holds one lease per market its settings watch on the market's
-//!   shared trade feed ([`Ferris::trades`]): two streams of one market
-//!   share one topic, one snapshot and one buffer. A market the settings
-//!   drop is let go; one they keep keeps its feed and prints. A hidden
-//!   stream keeps streaming, so showing it again is instant.
-//! - Feeds tell it of each change from the socket's callback; it only
-//!   marks itself dirty there. While it shows, it merges the feeds' prints
-//!   into the rows its view shows at most once a frame, and samples the
-//!   rate four times a second. A hidden stream does none of it.
-//!
-//! Settings ([`TradeStreamSettings`]: the markets, how many prints show)
-//! are saved in its tab record; the session keeps a copy the view brings
-//! up to date, so what it streams follows them while no view shows it.
-//! The pane's gear opens its settings panel ([`panel`]), whose markets
-//! come from the market picker.
-
-mod panel;
-mod settings;
-mod view;
-
-pub(crate) use settings::TradeStreamSettings;
+//! The Trade Stream's session ([`Stream`]): one feed lease per market its
+//! settings watch, and the rows its view shows (the widget's data,
+//! described in the parent module).
 
 use std::{
     cell::{Cell, RefCell},
@@ -34,70 +10,30 @@ use std::{
 
 use nsh_core::{prelude::*, time::unix_ms};
 
+use super::TradeStreamSettings;
 use crate::{
     data::{
-        DataServices, SessionScope, WidgetView,
+        SessionScope,
         ferris::{Ferris, MarketSelection, TradeFeed, TradeRow},
     },
-    layout::TabContext,
+    widgets::common::Shared,
 };
 
 /// How often the trades-per-second rate is sampled while shown.
 const RATE_EVERY: Duration = Duration::from_millis(250);
 
-/// The stream's view of `widget`: its rows, from its session, for the
-/// markets its tab's settings watch.
-pub(crate) fn trade_stream(widget: &WidgetView, tab: &TabContext<TradeStreamSettings>) -> View {
-    let Some(services) = DataServices::try_get() else {
-        log::error!("Trade Stream: no data services above the widget");
-        return view().flex_1();
-    };
-    let saved = tab.settings;
-    let stream =
-        widget.state(|scope| Stream::new(scope, services.ferris.clone(), saved.get_untracked()));
-    // The tab record is where the settings live; the session follows it.
-    let session = stream.settings;
-    effect(move || {
-        let next = saved.get();
-        if session.with_untracked(|current| *current != next) {
-            session.set(next);
-        }
-    });
-    let panel = {
-        let tab = tab.clone();
-        dynamic(move || tab.settings_open().then(|| panel::panel(tab.clone())))
-    };
-    view::stream_view(&stream, saved).child(panel)
-}
-
-/// A value shared by reference, equal only to itself: what a signal of a
-/// value rebuilt whole (the rows shown) holds.
-struct Shared<T>(Rc<T>);
-
-impl<T> Clone for Shared<T> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl<T> PartialEq for Shared<T> {
-    fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
-    }
-}
-
 /// One print the view shows, and its market.
 #[derive(Clone)]
-struct Row {
+pub(super) struct Row {
     /// The market's slot in the session (what keys the row with the
     /// print's sequence: two markets' prints never share a key).
     slot: u64,
-    market: Rc<MarketSelection>,
-    trade: Rc<TradeRow>,
+    pub market: Rc<MarketSelection>,
+    pub trade: Rc<TradeRow>,
 }
 
 impl Row {
-    fn key(&self) -> (u64, u64) {
+    pub fn key(&self) -> (u64, u64) {
         (self.slot, self.trade.sequence)
     }
 }
@@ -110,12 +46,12 @@ impl PartialEq for Row {
 
 /// What the view shows: the newest prints of every market, newest first.
 #[derive(Default)]
-struct Shown {
-    rows: Vec<Row>,
+pub(super) struct Shown {
+    pub rows: Vec<Row>,
     /// Some market has had no snapshot and no print yet.
-    loading: bool,
+    pub loading: bool,
     /// The markets whose topic the server refused.
-    failed: Vec<Rc<MarketSelection>>,
+    pub failed: Vec<Rc<MarketSelection>>,
 }
 
 /// One market the session watches.
@@ -128,17 +64,17 @@ struct Watched {
 
 /// A stream's session state: its feeds and settings, and what its view
 /// shows.
-struct Stream {
+pub(crate) struct Stream {
     /// The tab's settings, as the view last saw them.
-    settings: Signal<TradeStreamSettings>,
+    pub(super) settings: Signal<TradeStreamSettings>,
     /// The rows the view shows, updated while the widget is visible.
-    shown: Signal<Shared<Shown>>,
+    pub(super) shown: Signal<Shared<Shown>>,
     /// Live prints per second across the markets, while visible.
-    rate: Signal<f64>,
+    pub(super) rate: Signal<f64>,
 }
 
 impl Stream {
-    fn new(scope: SessionScope, ferris: Ferris, saved: TradeStreamSettings) -> Self {
+    pub(super) fn new(scope: SessionScope, ferris: Ferris, saved: TradeStreamSettings) -> Self {
         let settings = signal(saved);
         let shown = signal(Shared(Rc::new(Shown {
             loading: true,

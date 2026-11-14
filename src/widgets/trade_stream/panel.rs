@@ -20,7 +20,7 @@
 
 use std::rc::Rc;
 
-use nsh_core::{keymap::When, prelude::*};
+use nsh_core::prelude::*;
 
 use super::{
     TradeStreamSettings,
@@ -28,10 +28,12 @@ use super::{
 };
 use crate::{
     data::ferris::{Channel, MarketSelection, Requirement},
-    exchanges,
-    layout::TabContext,
-    theme,
-    ui::{self, Side, market_picker::MarketPicker},
+    exchanges, theme,
+    ui::{self, Side},
+    widgets::{
+        TabContext,
+        common::{LogoStyle, MarketPicker, exchange_logo, number_field},
+    },
 };
 
 /// The old panel's width.
@@ -43,7 +45,14 @@ const LIST_WIDTH: f32 = 260.0;
 /// A market box's height, and its logo segment's width.
 const ENTRY_HEIGHT: f32 = 28.0;
 const LOGO_SEGMENT: f32 = 24.0;
-const LOGO: f32 = 14.0;
+/// How a market's box draws its exchange's logo: initials without a box,
+/// the segment is one.
+const LOGO: LogoStyle = LogoStyle {
+    size: 14.0,
+    color: theme::TEXT_MUTED,
+    initials_size: 7.0,
+    boxed: false,
+};
 
 /// What the market picker is open for.
 #[derive(Clone, Debug, PartialEq)]
@@ -244,7 +253,7 @@ fn market_entry(
                 .border_r_1()
                 .border_color(theme::BORDER)
                 .overflow_hidden()
-                .child(logo(&market.exchange)),
+                .child(exchange_logo(&market.exchange, LOGO)),
         )
         .child(
             view()
@@ -303,109 +312,17 @@ fn market_entry(
     view().w_full().flex_row().child(chooser).child(remove)
 }
 
-/// An exchange's logo, or its initials when Lattice has none.
-fn logo(exchange: &str) -> View {
-    match exchanges::logo(exchange) {
-        Some(logo) => view()
-            .flex_none()
-            .child(svg(logo).size(px(LOGO)).text_color(theme::TEXT_MUTED)),
-        None => view().flex_none().child(
-            text(exchanges::initials(exchange))
-                .size(px(LOGO))
-                .text_center()
-                .text_size(px(7.0))
-                .font_weight(FontWeight::BOLD)
-                .text_color(theme::TEXT_MUTED),
-        ),
-    }
-}
-
 /// "Max Trades": the old compact number field.
 fn max_trades(tab: TabContext<TradeStreamSettings>) -> View {
     let saved = tab.settings;
-    let count = computed(move || saved.with(TradeStreamSettings::max_trades) as u16);
-    // What the field shows: the saved count, unless something else is
-    // being typed.
-    let draft = signal(count.get_untracked().to_string());
-    effect(move || draft.set(count.get().to_string()));
-    let typed = move || {
-        draft
-            .get_untracked()
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|typed| typed.is_finite())
-            .map(|typed| typed.round().clamp(0.0, f64::from(u16::MAX)) as u16)
-    };
-    let save: Rc<dyn Fn(u16)> = Rc::new(move |next: u16| {
-        tab.save(&saved.get_untracked().with_max_trades(next));
-        draft.set(count.get_untracked().to_string());
-    });
-    // Kept on Enter or leaving the field; what is not a number goes back
-    // to the saved count.
-    let commit = {
-        let save = save.clone();
-        move || match typed() {
-            Some(next) => save(next),
-            None => draft.set(count.get_untracked().to_string()),
-        }
-    };
-    // Up and Down while it has the focus land on the next multiple of ten
-    // (the old field's step from its minimum).
-    let focused = signal(false);
-    {
-        let save = save.clone();
-        effect(move || {
-            if !focused.get() {
-                return;
-            }
-            let keys = KeyOptions {
-                when: When::Always,
-                repeat: true,
-                ..KeyOptions::default()
-            };
-            for (key, up) in [("up", true), ("down", false)] {
-                let save = save.clone();
-                on_key_with(key, keys, move |_| {
-                    let from = typed().unwrap_or_else(|| count.get_untracked());
-                    let next = if up {
-                        (from / STEP + 1) * STEP
-                    } else {
-                        from.div_ceil(STEP).saturating_sub(1) * STEP
-                    };
-                    save(next.clamp(MIN_TRADES, MAX_TRADES));
-                });
-            }
-        });
-    }
-    let field = {
-        let (submit, blur) = (commit.clone(), commit);
-        ui::text_field(draft)
-            .w(px(60.0))
-            .h(px(24.0))
-            .flex_none()
-            .px(px(6.0))
-            .text_size(px(11.0))
-            .text_right()
-            .bg(theme::SURFACE)
-            .border_1()
-            .border_color(theme::BORDER)
-            .hover(|s| s.border_color(theme::TEXT_FAINT))
-            .focus(|s| s.border_color(theme::ACCENT))
-            .selection_color(|| {
-                nsh_core::element::color(theme::SURFACE.get())
-                    .blend(nsh_core::element::color(theme::ACCENT.opacity(0.35).get()))
-            })
-            .keyboard_type(KeyboardType::Number)
-            .label("Max Trades")
-            .hint("10 to 200 trades")
-            .test_id("trade-stream-max-trades")
-            .on_focus(move || focused.set(true))
-            .on_submit(move |_: &str| submit())
-            .on_blur(move || {
-                focused.set(false);
-                blur();
-            })
-    };
+    let field = number_field(
+        move || saved.with(TradeStreamSettings::max_trades) as u16,
+        MIN_TRADES..=MAX_TRADES,
+        STEP,
+        move |next| tab.save(&saved.get_untracked().with_max_trades(next)),
+    )
+    .label("Max Trades")
+    .hint("10 to 200 trades")
+    .test_id("trade-stream-max-trades");
     ui::form_row("Max Trades").child(field)
 }

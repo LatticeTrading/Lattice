@@ -1,6 +1,5 @@
 //! Shared Lattice controls: text fields, flat buttons, movable floating
-//! panels, engine-driven list scrolling ([`RowScroll`]) and the market
-//! picker ([`market_picker`]).
+//! panels and engine-driven list scrolling ([`RowScroll`]).
 //!
 //! NSH's `input` is a complete text field on every host (on Windows the
 //! system's RichEdit text box, on the web an `<input>`), so typing, caret
@@ -10,7 +9,6 @@
 //! one consistent way to bind a field to a signal, so the Layout Manager, the
 //! symbol search, and future widgets all behave the same way.
 
-pub mod market_picker;
 mod row_scroll;
 
 pub use row_scroll::RowScroll;
@@ -110,42 +108,6 @@ fn form_label(name: &'static str) -> Text {
         .number_of_lines(1)
         .text_size(px(11.0))
         .text_color(theme::TEXT)
-}
-
-/// A market's tags as the old `MarketTags` drew them: its type (`PERP`),
-/// then its detail (`USDT-M`, an expiry) in the warning color, each in a
-/// small bordered box; the detail's box is left out while it has none.
-pub fn market_tags(
-    kind: impl Fn() -> String + 'static,
-    detail: impl Fn() -> Option<String> + Clone + 'static,
-) -> View {
-    let tag = |content: Text| {
-        content
-            .flex_none()
-            .min_h(px(16.0))
-            .px(px(5.0))
-            .py(px(1.0))
-            .border_1()
-            .border_color(theme::BORDER)
-            .bg(theme::BACKGROUND)
-            .text_size(px(9.0))
-            .font_weight(FontWeight::SEMIBOLD)
-            .letter_spacing(px(0.4))
-            .uppercase()
-            .number_of_lines(1)
-    };
-    let shown = detail.clone();
-    view()
-        .flex_none()
-        .flex_row()
-        .items_center()
-        .gap(px(4.0))
-        .child(tag(text(kind)).text_color(theme::TEXT_FAINT))
-        .child(
-            tag(text(move || detail().unwrap_or_default()))
-                .text_color(theme::WARNING)
-                .style_when(move || shown().is_none(), |s| s.hidden()),
-        )
 }
 
 /// A dropdown filling the rest of a [`setting_row`]: it shows `shown`, lists `items`

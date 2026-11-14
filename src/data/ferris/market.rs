@@ -108,28 +108,6 @@ pub struct MarketSelection {
 }
 
 impl MarketSelection {
-    /// The old app's default Trade Stream market: Bybit's BTC/USDT linear
-    /// perpetual.
-    pub fn bybit_btc_usdt() -> Self {
-        Self {
-            exchange: "bybit".into(),
-            symbol: "BTC/USDT".into(),
-            base: "BTC".into(),
-            quote: "USDT".into(),
-            request_symbol: "BTC/USDT:USDT".into(),
-            exchange_symbol: "BTCUSDT".into(),
-            kind: MarketType::Perp,
-            category: Some("linear".into()),
-            expiry: None,
-            market_id: None,
-            exchange_market_id: None,
-            dex: None,
-            contract_type: None,
-            settle: None,
-            settlement_asset_id: None,
-        }
-    }
-
     /// A saved selection, read leniently: the exchange, display pair,
     /// request symbol and a known type are required (the old app's
     /// `sanitizeSavedMarketSelection` cleared a selection without them);

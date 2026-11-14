@@ -8,12 +8,12 @@ use std::rc::Rc;
 use nsh_base::SelectItem;
 use nsh_core::{Checked, prelude::*};
 
-use super::{Screener, ScreenerSettings, columns::METRICS, settings::PRODUCT_CHOICES};
+use super::{ScreenerSettings, columns::METRICS, session::Screener, settings::PRODUCT_CHOICES};
 use crate::{
     data::ferris::Product,
-    layout::TabContext,
     theme,
     ui::{self, Side, Tone},
+    widgets::TabContext,
 };
 
 const PANEL_WIDTH: Points = px(300.0);

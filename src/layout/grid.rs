@@ -75,10 +75,10 @@ struct TabRecord {
 impl From<TabRecord> for Tab {
     fn from(record: TabRecord) -> Self {
         let kind = match record.kind.as_deref() {
-            None => WidgetKind::MarketScreener,
+            None => WidgetKind::UNNAMED,
             Some(id) => WidgetKind::from_id(id).unwrap_or_else(|| {
                 log::warn!("Lattice: tab {} has unknown widget {id:?}", record.id);
-                WidgetKind::MarketScreener
+                WidgetKind::UNNAMED
             }),
         };
         Self {
@@ -96,7 +96,7 @@ impl From<Tab> for TabRecord {
         Self {
             id: tab.id,
             title: tab.title,
-            kind: (kind != WidgetKind::MarketScreener).then(|| kind.id().to_owned()),
+            kind: (kind != WidgetKind::UNNAMED).then(|| kind.id().to_owned()),
             settings: (!tab.settings.is_default()).then(|| tab.settings.to_value()),
         }
     }
@@ -253,9 +253,7 @@ impl Grid {
             .flat_map(|pane| &mut pane.tabs)
         {
             if tab.title == BLANK_TAB_TITLE {
-                WidgetKind::MarketScreener
-                    .title()
-                    .clone_into(&mut tab.title);
+                WidgetKind::UNNAMED.title().clone_into(&mut tab.title);
             }
         }
     }

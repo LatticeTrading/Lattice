@@ -138,11 +138,6 @@ pub(super) enum Side {
 }
 
 impl ScreenerSettings {
-    /// Nothing set: what a new screener has, and what is not saved.
-    pub(crate) fn is_default(&self) -> bool {
-        *self == Self::default()
-    }
-
     /// The scope shown, `None` for every exchange.
     pub(super) fn scope(&self) -> Option<&str> {
         self.scope.as_deref()

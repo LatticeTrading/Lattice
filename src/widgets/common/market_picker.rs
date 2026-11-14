@@ -31,6 +31,7 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use nsh_core::{keymap::When, prelude::*};
 
+use super::{LogoStyle, Shared, exchange_logo, market_tags};
 use crate::{
     data::{
         DataServices,
@@ -49,8 +50,13 @@ const PANEL_WIDTH: Points = px(450.0);
 const LIST_HEIGHT: f32 = 400.0;
 /// A result's height.
 const ROW_HEIGHT: f32 = 36.0;
-/// An exchange logo's size.
-const LOGO: f32 = 14.0;
+/// How the exchange tabs draw logos.
+const LOGO: LogoStyle = LogoStyle {
+    size: 14.0,
+    color: theme::TEXT,
+    initials_size: 7.0,
+    boxed: true,
+};
 /// The current selection's mark at a row's left edge.
 const CURRENT_EDGE: f32 = 3.0;
 
@@ -138,7 +144,7 @@ impl MarketPicker {
             computed(move || {
                 let got = sources.results.get();
                 sources.capabilities.with(|state| {
-                    ByPtr(Rc::new(Listing::new(
+                    Shared(Rc::new(Listing::new(
                         state,
                         &got,
                         requirement,
@@ -154,7 +160,7 @@ impl MarketPicker {
         let shown = computed(move || {
             let query = SymbolQuery::new(&query.get());
             let tab = tab.get();
-            listing.with(|listing| ByPtr(Rc::new(listing.0.shown(tab.as_deref(), &query))))
+            listing.with(|listing| Shared(Rc::new(listing.0.shown(tab.as_deref(), &query))))
         });
         // A tab whose exchange has nothing on offer any more shows "All".
         effect(move || {
@@ -272,21 +278,6 @@ impl MarketPicker {
                 list, scroll, shown, listing, highlight, names, current, pick,
             ));
         ui::modal_panel(PANEL_WIDTH, title, actions, on_close, body)
-    }
-}
-
-/// A value shared by reference, equal only to itself.
-struct ByPtr<T>(Rc<T>);
-
-impl<T> Clone for ByPtr<T> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone())
-    }
-}
-
-impl<T> PartialEq for ByPtr<T> {
-    fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.0, &other.0)
     }
 }
 
@@ -518,7 +509,7 @@ const TOGGLE_WIDTH: f32 = 34.0;
 /// evenly among them. Collapsed (every opening) it shows one row, the one
 /// holding the selected tab, so the selection is always in view; the
 /// button at its right expands it to every row and collapses it again.
-fn tabs(listing: Memo<ByPtr<Listing>>, tab: Signal<Option<String>>) -> View {
+fn tabs(listing: Memo<Shared<Listing>>, tab: Signal<Option<String>>) -> View {
     let ids = computed(move || {
         listing.with(|listing| {
             std::iter::once(None)
@@ -666,7 +657,7 @@ fn tab_button(exchange: Option<String>, tab: Signal<Option<String>>, last: bool)
         button = button.border_r_1().border_color(theme::BORDER);
     }
     if let Some(id) = &exchange {
-        button = button.child(logo(id));
+        button = button.child(exchange_logo(id, LOGO));
     }
     button
         .on_press(move || tab.set(exchange.clone()))
@@ -683,32 +674,8 @@ fn tab_button(exchange: Option<String>, tab: Signal<Option<String>>, last: bool)
         )
 }
 
-/// An exchange's logo, or its initials in a box when Lattice has none.
-fn logo(exchange: &str) -> View {
-    match exchanges::logo(exchange) {
-        Some(logo) => view()
-            .flex_none()
-            .child(svg(logo).size(px(LOGO)).text_color(theme::TEXT)),
-        None => initials_box(text(exchanges::initials(exchange))),
-    }
-}
-
-fn initials_box(initials: Text) -> View {
-    view().flex_none().child(
-        initials
-            .size(px(LOGO))
-            .text_center()
-            .bg(theme::SURFACE)
-            .border_1()
-            .border_color(theme::BORDER)
-            .text_size(px(7.0))
-            .font_weight(FontWeight::BOLD)
-            .text_color(theme::TEXT_MUTED),
-    )
-}
-
 /// What could not load, with Retry; hidden while everything did.
-fn failures(listing: Memo<ByPtr<Listing>>, sources: Sources) -> View {
+fn failures(listing: Memo<Shared<Listing>>, sources: Sources) -> View {
     let message = computed(move || {
         listing.with(|listing| {
             let failed = &listing.0.failed;
@@ -761,8 +728,8 @@ fn failures(listing: Memo<ByPtr<Listing>>, sources: Sources) -> View {
 fn results(
     list: ElementRef,
     scroll: RowScroll,
-    shown: Memo<ByPtr<Vec<Rc<CatalogMarket>>>>,
-    listing: Memo<ByPtr<Listing>>,
+    shown: Memo<Shared<Vec<Rc<CatalogMarket>>>>,
+    listing: Memo<Shared<Listing>>,
     highlight: Signal<usize>,
     names: Memo<bool>,
     current: Option<Rc<MarketSelection>>,
@@ -825,13 +792,13 @@ fn results(
 /// divider under it.
 fn result_row(
     at: Position,
-    shown: Memo<ByPtr<Vec<Rc<CatalogMarket>>>>,
+    shown: Memo<Shared<Vec<Rc<CatalogMarket>>>>,
     highlight: Signal<usize>,
     names: Memo<bool>,
     current: Option<Rc<MarketSelection>>,
     pick: Rc<dyn Fn(usize)>,
 ) -> View {
-    let market = computed(move || shown.with(|s| s.0.get(at.index()).cloned().map(ByPtr)));
+    let market = computed(move || shown.with(|s| s.0.get(at.index()).cloned().map(Shared)));
     let field = move |read: fn(&CatalogMarket) -> String| {
         move || market.with(|m| m.as_ref().map(|m| read(&m.0)).unwrap_or_default())
     };
@@ -938,5 +905,5 @@ fn result_row(
             .text_size(px(11.0))
             .text_color(theme::TEXT_MUTED),
         )
-        .child(ui::market_tags(kind, detail))
+        .child(market_tags(kind, detail))
 }

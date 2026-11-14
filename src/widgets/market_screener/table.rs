@@ -41,15 +41,17 @@ use nsh_core::{
 };
 
 use super::{
-    Screener, Shared, Table,
     columns::{self, Column, NumberCell, Tone},
+    session::{Screener, Table},
     settings::{self, MAX_WIDTH, MIN_WIDTH, ScreenerSettings, Side},
 };
 use crate::{
-    exchanges,
-    layout::TabContext,
     theme,
     ui::{self, RowScroll},
+    widgets::{
+        TabContext,
+        common::{LogoStyle, Shared, bound_exchange_logo},
+    },
 };
 
 /// A row's height, and the title row's: the old app's Trade Stream density
@@ -57,8 +59,13 @@ use crate::{
 const ROW_HEIGHT: f32 = 30.0;
 /// Cells' side padding.
 const CELL_PADDING: f32 = 8.0;
-/// The exchange logo's size.
-const LOGO: f32 = 12.0;
+/// How the exchange column draws logos.
+const LOGO: LogoStyle = LogoStyle {
+    size: 12.0,
+    color: theme::TEXT,
+    initials_size: 6.0,
+    boxed: true,
+};
 /// Panes narrower than this scroll the symbol column with the others (the
 /// old app's container query): pinned, it would cover most of the table.
 const PIN_MIN_WIDTH: f32 = 420.0;
@@ -933,12 +940,7 @@ fn exchange_cell(
     });
     let exchange = move || shown.with(|shown| shown.as_ref().map(|(id, _)| id.clone()));
     let label = move || shown.with(|shown| shown.as_ref().map(|(_, label)| label.clone()));
-    let logo = computed(move || exchange().and_then(|id| exchanges::logo(&id)));
-    let initials = move || {
-        exchange()
-            .map(|id| exchanges::initials(&id))
-            .unwrap_or_default()
-    };
+    let (logo, initials) = bound_exchange_logo(exchange, LOGO);
     let geometry = layout.geometry;
     let cell = view()
         .h_full()
@@ -952,27 +954,9 @@ fn exchange_cell(
         .border_color(theme::BORDER)
         .role(AccessibilityRole::Image)
         .label(move || label().unwrap_or_default())
-        .child(
-            svg(move || logo.get().unwrap_or_else(exchanges::blank_logo))
-                .size(px(LOGO))
-                .flex_none()
-                .text_color(theme::TEXT)
-                .style_when(move || logo.with(Option::is_none), |s| s.hidden()),
-        )
-        .child(
-            text(initials)
-                .size(px(LOGO))
-                .flex_none()
-                .text_center()
-                .inline_style(middle())
-                .bg(theme::SURFACE)
-                .border_1()
-                .border_color(theme::BORDER)
-                .text_size(px(6.0))
-                .font_weight(FontWeight::BOLD)
-                .text_color(theme::TEXT_MUTED)
-                .style_when(move || logo.with(Option::is_some), |s| s.hidden()),
-        );
+        .child(logo)
+        // The initials sit mid-height, as every cell's text does.
+        .child(initials.inline_style(middle()));
     let cell = if last { cell } else { cell.border_r_1() };
     tips.watch(cell, Column::Exchange, at).into_element()
 }

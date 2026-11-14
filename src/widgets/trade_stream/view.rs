@@ -11,12 +11,16 @@ use std::rc::Rc;
 
 use nsh_core::prelude::*;
 
-use super::{Row, Shared, Shown, Stream, TradeStreamSettings};
+use super::{
+    TradeStreamSettings,
+    session::{Row, Shown, Stream},
+};
 use crate::{
     data::ferris::{MarketSelection, Side},
     exchanges,
     shell::clock::Clock,
     theme, ui,
+    widgets::common::{LogoStyle, Shared, exchange_logo},
 };
 
 /// A print's row height (the old app's).
@@ -25,8 +29,13 @@ const ROW_HEIGHT: f32 = 20.0;
 const PADDING: f32 = 12.0;
 /// The left edge a row marks its side with while hovered.
 const SIDE_EDGE: f32 = 2.0;
-/// The exchange logo's size.
-const LOGO: f32 = 12.0;
+/// How the header and rows draw exchange logos.
+const LOGO: LogoStyle = LogoStyle {
+    size: 12.0,
+    color: theme::TEXT_MUTED,
+    initials_size: 6.0,
+    boxed: true,
+};
 
 /// At or under this width the rate hides and the prints' text shrinks.
 const TINY_WIDTH: f32 = 250.0;
@@ -241,7 +250,7 @@ fn pair(market: &MarketSelection, divided: bool) -> View {
         .items_center()
         .gap(px(6.0))
         .label(full_name(market))
-        .child(logo(&market.exchange))
+        .child(exchange_logo(&market.exchange, LOGO))
         .child(
             text(market.symbol.clone())
                 .text_size(px(11.0))
@@ -281,28 +290,8 @@ fn stacked_pair(market: &MarketSelection, overlapped: bool) -> View {
         .rounded_full()
         .bg(theme::SURFACE)
         .label(full_name(market))
-        .child(logo(&market.exchange));
+        .child(exchange_logo(&market.exchange, LOGO));
     if overlapped { chip.ml(px(-5.0)) } else { chip }
-}
-
-/// An exchange's logo, or its initials in a box when Lattice has none.
-fn logo(exchange: &str) -> View {
-    match exchanges::logo(exchange) {
-        Some(logo) => view()
-            .flex_none()
-            .child(svg(logo).size(px(LOGO)).text_color(theme::TEXT_MUTED)),
-        None => view().flex_none().child(
-            text(exchanges::initials(exchange))
-                .size(px(LOGO))
-                .text_center()
-                .bg(theme::SURFACE)
-                .border_1()
-                .border_color(theme::BORDER)
-                .text_size(px(6.0))
-                .font_weight(FontWeight::BOLD)
-                .text_color(theme::TEXT_MUTED),
-        ),
-    }
 }
 
 /// The markets the server refused, while there are any; the others keep
@@ -459,7 +448,7 @@ fn market_cell(market: &MarketSelection, column: Column) -> View {
         .gap(px(5.0))
         .overflow_hidden()
         .label(full_name(market))
-        .child(logo(&market.exchange))
+        .child(exchange_logo(&market.exchange, LOGO))
         .child(
             text(market.symbol.clone())
                 .min_w(px(0.0))

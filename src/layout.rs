@@ -15,9 +15,11 @@
 //! active one; other pages are not mounted, so their widgets' sessions keep
 //! their data with no view attached.
 //!
-//! A widget's view also gets its tab ([`TabContext`]): the settings saved in
-//! the tab record, a way to save new ones, and the settings panel its pane's
-//! gear opens for the active tab. A pane's `+` opens the app's widget picker
+//! A widget's view also gets its tab ([`TabHandle`], which the widgets'
+//! host makes its kind's `TabContext` of): the settings saved in the tab
+//! record, a way to save new ones, and the settings panel its pane's gear
+//! opens for the active tab. Which widget a tab shows is the widgets'
+//! business ([`widgets::view`]); layout names none. A pane's `+` opens the app's widget picker
 //! ([`Picker`]) for that pane, which adds a tab of the widget picked.
 
 mod grid;
@@ -28,11 +30,11 @@ pub(crate) use grid::Grid;
 use std::{collections::HashSet, rc::Rc};
 
 use crate::{
-    data::{DataServices, Sessions, WidgetId, WidgetView},
+    data::{DataServices, Sessions, WidgetId},
     storage::{self, StoredPage, StoredWorkspace},
     theme,
     widgets::{
-        self, KindSettings, WidgetKind, WidgetSettings,
+        self, SettingsPanel, TabHandle, WidgetKind, WidgetSettings,
         picker::{Picker, Target},
     },
 };
@@ -534,7 +536,7 @@ fn pane_view(
             tabs,
             |tab: &Tab| tab.widget,
             move |tab, _| {
-                let panel = Panel {
+                let panel = SettingsPanel {
                     open: settings_open,
                     anchor: gear,
                 };
@@ -630,92 +632,6 @@ fn tab_strip(
         .collect()
 }
 
-/// A pane's settings panel: whether it is open, and the gear it opens
-/// below.
-#[derive(Clone, Copy)]
-struct Panel {
-    open: Signal<bool>,
-    anchor: ElementRef,
-}
-
-/// What a widget's view gets from its tab, besides its session: the
-/// settings saved in the tab record (`S`, its kind's settings type), and
-/// its pane's settings panel.
-pub(crate) struct TabContext<S: KindSettings> {
-    /// The tab's saved settings.
-    pub settings: Memo<S>,
-    /// Whether the tab is its pane's active one (its view shows).
-    pub shown: Memo<bool>,
-    save: Rc<dyn Fn(&S)>,
-    panel: Panel,
-}
-
-impl<S: KindSettings> Clone for TabContext<S> {
-    fn clone(&self) -> Self {
-        Self {
-            settings: self.settings,
-            shown: self.shown,
-            save: self.save.clone(),
-            panel: self.panel,
-        }
-    }
-}
-
-impl<S: KindSettings> TabContext<S> {
-    /// The context of `tab`, whose kind's settings are `S`.
-    fn new(
-        tab: ReadSignal<Tab>,
-        shown: Memo<bool>,
-        workspace: Signal<StoredWorkspace>,
-        panel: Panel,
-    ) -> Self {
-        let widget = tab.with_untracked(|tab| tab.widget);
-        Self {
-            settings: computed(move || {
-                tab.with(|tab| S::of(&tab.settings).cloned().unwrap_or_default())
-            }),
-            shown,
-            save: Rc::new(move |settings: &S| {
-                let next = settings.clone().wrap();
-                // Nothing when unchanged, or when the tab is gone.
-                let changed = workspace.with_untracked(|state| {
-                    widget_ids(state).contains(&widget)
-                        && tab.with_untracked(|tab| tab.settings != next)
-                });
-                if changed {
-                    workspace.update(|state| {
-                        if set_tab_settings(state, widget, &next) {
-                            persist(state);
-                        }
-                    });
-                }
-            }),
-            panel,
-        }
-    }
-
-    /// Saves `settings` in the tab record (every breakpoint's copy of the
-    /// tab) and persists the workspace.
-    pub fn save(&self, settings: &S) {
-        (self.save)(settings);
-    }
-
-    /// Whether the widget's settings panel is open: the pane's gear opened
-    /// it while this tab is the active one (tracked).
-    pub fn settings_open(&self) -> bool {
-        self.shown.get() && self.panel.open.get()
-    }
-
-    pub fn close_settings(&self) {
-        self.panel.open.set(false);
-    }
-
-    /// The gear the settings panel opens below.
-    pub fn settings_anchor(&self) -> &ElementRef {
-        &self.panel.anchor
-    }
-}
-
 /// One tab's content: mounted while its pane is, hidden while another tab
 /// of the pane is active, and attached to its widget's session meanwhile.
 fn tab_content(
@@ -723,13 +639,13 @@ fn tab_content(
     active_tab: Memo<usize>,
     sessions: &Sessions,
     workspace: Signal<StoredWorkspace>,
-    panel: Panel,
+    panel: SettingsPanel,
 ) -> View {
     // The row is keyed by widget, whose tab id and kind never change.
     let (tab_id, widget) = tab.with_untracked(|tab| (tab.id, tab.widget));
     let shown = computed(move || active_tab.get() == tab_id);
     let attached = sessions.attach(widget, shown);
-    let body = widget_body(&attached, tab, shown, workspace, panel);
+    let body = widgets::view(&attached, tab_handle(tab, shown, workspace, panel));
     attached.release_on_cleanup();
     view()
         .flex_1()
@@ -740,23 +656,33 @@ fn tab_content(
         .child(body)
 }
 
-/// What a widget shows, from its session (`attached.state(..)` holds its
-/// data) and its tab, by the tab's kind.
-fn widget_body(
-    attached: &WidgetView,
+/// What `tab`'s widget gets from it: its saved settings, a way to save
+/// new ones (every breakpoint's copy of the tab, then the workspace), and
+/// its pane's settings panel.
+fn tab_handle(
     tab: ReadSignal<Tab>,
     shown: Memo<bool>,
     workspace: Signal<StoredWorkspace>,
-    panel: Panel,
-) -> View {
-    match tab.with_untracked(Tab::kind) {
-        WidgetKind::MarketScreener => widgets::market_screener::market_screener(
-            attached,
-            &TabContext::new(tab, shown, workspace, panel),
-        ),
-        WidgetKind::TradeStream => widgets::trade_stream::trade_stream(
-            attached,
-            &TabContext::new(tab, shown, workspace, panel),
-        ),
+    panel: SettingsPanel,
+) -> TabHandle {
+    let widget = tab.with_untracked(|tab| tab.widget);
+    TabHandle {
+        settings: computed(move || tab.with(|tab| tab.settings.clone())),
+        shown,
+        save: Rc::new(move |next: &WidgetSettings| {
+            // Nothing when unchanged, or when the tab is gone.
+            let changed = workspace.with_untracked(|state| {
+                widget_ids(state).contains(&widget)
+                    && tab.with_untracked(|tab| tab.settings != *next)
+            });
+            if changed {
+                workspace.update(|state| {
+                    if set_tab_settings(state, widget, next) {
+                        persist(state);
+                    }
+                });
+            }
+        }),
+        panel,
     }
 }

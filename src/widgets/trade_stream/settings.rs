@@ -11,12 +11,34 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::data::ferris::MarketSelection;
+use crate::data::ferris::{MarketSelection, MarketType};
 
 /// The fewest and most prints the stream shows, and its default.
 pub(super) const MIN_TRADES: u16 = 10;
 pub(super) const MAX_TRADES: u16 = 200;
 const DEFAULT_TRADES: u16 = 50;
+
+/// The old app's default Trade Stream market: Bybit's BTC/USDT linear
+/// perpetual.
+fn default_market() -> MarketSelection {
+    MarketSelection {
+        exchange: "bybit".into(),
+        symbol: "BTC/USDT".into(),
+        base: "BTC".into(),
+        quote: "USDT".into(),
+        request_symbol: "BTC/USDT:USDT".into(),
+        exchange_symbol: "BTCUSDT".into(),
+        kind: MarketType::Perp,
+        category: Some("linear".into()),
+        expiry: None,
+        market_id: None,
+        exchange_market_id: None,
+        dex: None,
+        contract_type: None,
+        settle: None,
+        settlement_asset_id: None,
+    }
+}
 
 /// One Trade Stream's settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -54,16 +76,11 @@ impl From<Value> for TradeStreamSettings {
 }
 
 impl TradeStreamSettings {
-    /// Whether every member is its default (the tab saves none of them).
-    pub fn is_default(&self) -> bool {
-        *self == Self::default()
-    }
-
     /// The markets watched, in order.
     pub fn markets(&self) -> Vec<MarketSelection> {
         self.markets
             .clone()
-            .unwrap_or_else(|| vec![MarketSelection::bybit_btc_usdt()])
+            .unwrap_or_else(|| vec![default_market()])
     }
 
     /// How many prints show.
@@ -80,7 +97,7 @@ impl TradeStreamSettings {
                 kept.push(market);
             }
         }
-        self.markets = (kept != [MarketSelection::bybit_btc_usdt()]).then_some(kept);
+        self.markets = (kept != [default_market()]).then_some(kept);
         self
     }
 
