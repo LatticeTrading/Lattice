@@ -135,7 +135,7 @@ macro_rules! registry {
             widget: &$crate::data::WidgetView,
             tab: $crate::widgets::host::TabHandle,
         ) -> ::nsh_core::prelude::View {
-            match tab.kind() {
+            match tab.kind {
                 $(WidgetKind::$kind => $crate::widgets::host::build::<$module::$kind>(widget, tab),)+
             }
         }

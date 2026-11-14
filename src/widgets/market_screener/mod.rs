@@ -53,13 +53,9 @@ impl Widget for MarketScreener {
     fn session(
         scope: SessionScope,
         services: &DataServices,
-        settings: ScreenerSettings,
+        settings: Signal<ScreenerSettings>,
     ) -> Screener {
         Screener::new(scope, services.ferris.clone(), settings)
-    }
-
-    fn settings(screener: &Screener) -> Signal<ScreenerSettings> {
-        screener.settings
     }
 
     /// Its rows, as its tab's settings say.

@@ -138,7 +138,8 @@ pub(crate) struct Screener {
     /// Every scope the capabilities offer, of either product, whether
     /// polled or not; `None` until they are known.
     pub(super) offered: Signal<Option<Rc<Vec<ScopeChoice>>>>,
-    /// The tab's settings, as the view last saw them.
+    /// The session's copy of the tab's settings, which the host keeps
+    /// equal to the tab's.
     pub(super) settings: Signal<ScreenerSettings>,
     pub(super) search: Signal<String>,
     /// `None` until the user picks a column.
@@ -148,12 +149,15 @@ pub(crate) struct Screener {
 }
 
 impl Screener {
-    pub(super) fn new(scope: SessionScope, ferris: Ferris, saved: ScreenerSettings) -> Self {
+    pub(super) fn new(
+        scope: SessionScope,
+        ferris: Ferris,
+        settings: Signal<ScreenerSettings>,
+    ) -> Self {
         let discovery = ferris.watch_capabilities();
         let watches: Watches = Rc::default();
         let feeds = signal(Vec::<Feed>::new());
         let offered = signal(None::<Rc<Vec<ScopeChoice>>>);
-        let settings = signal(saved);
         let search = signal(String::new());
         let sort = signal(None::<Sort>);
         let table = signal(Shared::new(Table {

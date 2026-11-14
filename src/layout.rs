@@ -665,9 +665,12 @@ fn tab_handle(
     workspace: Signal<StoredWorkspace>,
     panel: SettingsPanel,
 ) -> TabHandle {
-    let widget = tab.with_untracked(|tab| tab.widget);
+    let (widget, kind) = tab.with_untracked(|tab| (tab.widget, tab.settings.kind()));
     TabHandle {
-        settings: computed(move || tab.with(|tab| tab.settings.clone())),
+        kind,
+        read: Rc::new(move |read: &mut dyn FnMut(&WidgetSettings)| {
+            tab.with(|tab| read(&tab.settings));
+        }),
         shown,
         save: Rc::new(move |next: &WidgetSettings| {
             // Nothing when unchanged, or when the tab is gone.

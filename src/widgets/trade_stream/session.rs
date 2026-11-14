@@ -62,11 +62,9 @@ struct Watched {
     feed: TradeFeed,
 }
 
-/// A stream's session state: its feeds and settings, and what its view
-/// shows.
+/// A stream's session state: what its view shows (its feeds and settings
+/// live in the effects `new` starts).
 pub(crate) struct Stream {
-    /// The tab's settings, as the view last saw them.
-    pub(super) settings: Signal<TradeStreamSettings>,
     /// The rows the view shows, updated while the widget is visible.
     pub(super) shown: Signal<Shared<Shown>>,
     /// Live prints per second across the markets, while visible.
@@ -74,8 +72,12 @@ pub(crate) struct Stream {
 }
 
 impl Stream {
-    pub(super) fn new(scope: SessionScope, ferris: Ferris, saved: TradeStreamSettings) -> Self {
-        let settings = signal(saved);
+    /// A stream following `settings`, the session's copy of the tab's.
+    pub(super) fn new(
+        scope: SessionScope,
+        ferris: Ferris,
+        settings: Signal<TradeStreamSettings>,
+    ) -> Self {
         let shown = signal(Shared(Rc::new(Shown {
             loading: true,
             ..Shown::default()
@@ -154,11 +156,7 @@ impl Stream {
             });
         });
 
-        Self {
-            settings,
-            shown,
-            rate,
-        }
+        Self { shown, rate }
     }
 }
 

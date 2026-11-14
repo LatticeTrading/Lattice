@@ -37,17 +37,15 @@ pub(crate) trait Widget: 'static {
     type Session: 'static;
 
     /// Makes its session state, under the session's owner, the first time
-    /// a view of it asks; `settings` are its tab's.
+    /// a view of it asks. `settings` is the session's copy of its tab's
+    /// settings, which the host makes and keeps equal to the tab's, so what
+    /// the session does follows them even while no view shows it; a session
+    /// that doesn't need them ignores it.
     fn session(
         scope: SessionScope,
         services: &DataServices,
-        settings: Self::Settings,
+        settings: Signal<Self::Settings>,
     ) -> Self::Session;
-
-    /// The session's copy of its settings, which the host keeps equal to
-    /// the tab's, so what the session does follows them even while no
-    /// view shows it.
-    fn settings(session: &Self::Session) -> Signal<Self::Settings>;
 
     /// Its view, from its session and its tab.
     fn view(session: &Rc<Self::Session>, tab: &TabContext<Self::Settings>) -> View;
@@ -114,24 +112,24 @@ pub(crate) struct SettingsPanel {
     pub anchor: ElementRef,
 }
 
+/// Reads a tab's saved settings: calls its argument with them (tracked).
+pub(crate) type ReadSettings = Rc<dyn Fn(&mut dyn FnMut(&WidgetSettings))>;
+
 /// A widget's tab as layout gives it to the host, whatever its kind.
 #[derive(Clone)]
 pub(crate) struct TabHandle {
-    /// The settings saved in the tab record (tracked).
-    pub settings: Memo<WidgetSettings>,
+    /// The tab's kind, which never changes.
+    pub kind: WidgetKind,
+    /// Calls its argument with the settings saved in the tab record
+    /// (tracked), without copying them: the host's memo of the kind's
+    /// settings is the one copy.
+    pub read: ReadSettings,
     /// Whether the tab is its pane's active one (its view shows).
     pub shown: Memo<bool>,
     /// Saves settings in the tab record and persists the workspace; does
     /// nothing when they are unchanged or the tab is gone.
     pub save: Rc<dyn Fn(&WidgetSettings)>,
     pub panel: SettingsPanel,
-}
-
-impl TabHandle {
-    /// The tab's kind, which never changes.
-    pub fn kind(&self) -> WidgetKind {
-        self.settings.with_untracked(WidgetSettings::kind)
-    }
 }
 
 /// What a widget's views get from its tab, besides its session: the
@@ -161,14 +159,17 @@ impl<S: KindSettings> TabContext<S> {
     /// The context of `tab`, whose kind's settings are `S`.
     fn new(tab: TabHandle) -> Self {
         let TabHandle {
-            settings,
+            read,
             shown,
             save,
             panel,
+            ..
         } = tab;
         Self {
             settings: computed(move || {
-                settings.with(|settings| S::of(settings).cloned().unwrap_or_default())
+                let mut found = None;
+                read(&mut |settings| found = S::of(settings).cloned());
+                found.unwrap_or_default()
             }),
             shown,
             save: Rc::new(move |settings: &S| save(&settings.clone().wrap())),
@@ -198,10 +199,17 @@ impl<S: KindSettings> TabContext<S> {
     }
 }
 
+/// A `W` widget's session state as the host keeps it: the widget's own,
+/// and the session's copy of its settings.
+struct Hosted<W: Widget> {
+    settings: Signal<W::Settings>,
+    session: Rc<W::Session>,
+}
+
 /// A `W` widget's view of `widget`, with the startup every widget shares:
-/// it finds the data services, gets (or makes) the widget's session, keeps
-/// the session's copy of the settings equal to the tab's, and shows the
-/// settings panel while it is open.
+/// it finds the data services, gets (or makes) the widget's session and the
+/// session's copy of the settings, keeps that copy equal to the tab's, and
+/// shows the settings panel while it is open.
 pub(super) fn build<W: Widget>(widget: &WidgetView, tab: TabHandle) -> View {
     let tab = TabContext::<W::Settings>::new(tab);
     let Some(services) = DataServices::try_get() else {
@@ -209,9 +217,16 @@ pub(super) fn build<W: Widget>(widget: &WidgetView, tab: TabHandle) -> View {
         return view().flex_1();
     };
     let saved = tab.settings;
-    let session = widget.state(|scope| W::session(scope, &services, saved.get_untracked()));
+    // Made under the session's owner, so the copy lives as long as it.
+    let hosted = widget.state(|scope| {
+        let settings = signal(saved.get_untracked());
+        Hosted::<W> {
+            settings,
+            session: Rc::new(W::session(scope, &services, settings)),
+        }
+    });
+    let (copy, session) = (hosted.settings, hosted.session.clone());
     // The tab record is where the settings live; the session follows it.
-    let copy = W::settings(&session);
     effect(move || {
         let next = saved.get();
         if copy.with_untracked(|current| *current != next) {

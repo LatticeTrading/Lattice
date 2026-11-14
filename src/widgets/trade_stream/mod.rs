@@ -50,13 +50,9 @@ impl Widget for TradeStream {
     fn session(
         scope: SessionScope,
         services: &DataServices,
-        settings: TradeStreamSettings,
+        settings: Signal<TradeStreamSettings>,
     ) -> Stream {
         Stream::new(scope, services.ferris.clone(), settings)
-    }
-
-    fn settings(stream: &Stream) -> Signal<TradeStreamSettings> {
-        stream.settings
     }
 
     /// Its rows, for the markets its tab's settings watch.
