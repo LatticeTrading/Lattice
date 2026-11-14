@@ -17,6 +17,11 @@
     "warning": "#ebcb8b",
     "bid": "var(--success)",
     "ask": "var(--danger)",
+    "link-green": "var(--success)",
+    "link-red": "var(--danger)",
+    "link-blue": "#81a1c1",
+    "link-yellow": "var(--warning)",
+    "link-orange": "#d08770",
     "backdrop": "rgba(0, 0, 0, 0.6)"
   }
 }

@@ -5,9 +5,12 @@ use std::rc::Rc;
 
 use nsh_core::prelude::*;
 
-use super::{ROW_HEIGHT, listing::Listing, sources::Sources};
+use super::{ROW_HEIGHT, listing::Listing};
 use crate::{
-    data::ferris::{CatalogMarket, MarketSelection},
+    data::{
+        Markets,
+        ferris::{CatalogMarket, MarketSelection},
+    },
     exchanges, theme,
     ui::RowScroll,
     widgets::common::{Shared, market_tags},
@@ -19,7 +22,7 @@ const LIST_HEIGHT: f32 = 400.0;
 const CURRENT_EDGE: f32 = 3.0;
 
 /// What could not load, with Retry; hidden while everything did.
-pub(super) fn failures(listing: Memo<Shared<Listing>>, sources: Sources) -> View {
+pub(super) fn failures(listing: Memo<Shared<Listing>>, markets: Markets) -> View {
     let message = computed(move || {
         listing.with(|listing| {
             let failed = &listing.0.failed;
@@ -61,7 +64,7 @@ pub(super) fn failures(listing: Memo<Shared<Listing>>, sources: Sources) -> View
                 .role(AccessibilityRole::Button)
                 .label("Retry loading markets")
                 .hover(|s| s.border_color(theme::ACCENT).text_color(theme::TEXT))
-                .on_press(move || sources.retry())
+                .on_press(move || markets.retry())
                 .child(text("Retry")),
         )
 }

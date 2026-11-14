@@ -4,6 +4,9 @@
 //! the Trade Stream's. The pane's gear opens it for the active tab; every
 //! change is saved in the tab record at once.
 //!
+//! - Link Color: the old first row, a compact select of None and the five
+//!   link colors; the same choice as the pane header's link button
+//!   ([`crate::link`]).
 //! - Timeframe: the old compact select (ticks, or candles of one of the
 //!   seven timeframes).
 //! - Market: the market charted, in the old chooser box (logo, pair, type,
@@ -20,6 +23,7 @@ use nsh_core::prelude::*;
 use super::{ChartSettings, settings::Interval};
 use crate::{
     data::ferris::{Channel, Operation, Requirement},
+    link::LinkColor,
     ui::{self, Side},
     widgets::{
         TabContext,
@@ -59,6 +63,7 @@ pub(super) fn panel(tab: TabContext<ChartSettings>) -> Overlay {
         .test_id("chart-settings")
         .flex_col()
         .py(px(4.0))
+        .child(link_row(tab.clone()))
         .child(timeframe_row(tab.clone()))
         .child(market_row(saved, picking))
         .child(toggle(
@@ -84,6 +89,39 @@ pub(super) fn panel(tab: TabContext<ChartSettings>) -> Overlay {
         close,
         body,
     )
+}
+
+/// What the Link Color select calls linked to no color.
+const UNLINKED: &str = "none";
+
+/// "Link Color": the link color whose picks the chart takes, or none.
+fn link_row(tab: TabContext<ChartSettings>) -> View {
+    let saved = tab.settings;
+    let select = ui::compact_dropdown(
+        || {
+            std::iter::once(SelectItem::new(UNLINKED, "None"))
+                .chain(
+                    LinkColor::ALL
+                        .iter()
+                        .map(|color| SelectItem::new(color.id(), color.label())),
+                )
+                .collect()
+        },
+        move || {
+            SharedString::from(
+                saved.with(|settings| settings.link().map_or(UNLINKED, LinkColor::id)),
+            )
+        },
+        move || saved.with(|settings| settings.link().map_or("None", LinkColor::label).to_owned()),
+        move |id| {
+            let color = LinkColor::from_id(id);
+            if color.is_some() || id == UNLINKED {
+                tab.save(&saved.get_untracked().with_link(color));
+            }
+        },
+        "Link Color",
+    );
+    ui::label_edge_row("Link Color").child(select)
 }
 
 /// "Timeframe": ticks, or candles of one of the seven timeframes.

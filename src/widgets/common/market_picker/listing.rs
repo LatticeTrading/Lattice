@@ -1,19 +1,20 @@
-//! What the picker can offer: each exchange's markets from the catalogs
-//! that arrived, what is loading and what failed, and the results for a
-//! tab and a search.
+//! What the picker can offer: of the app's market directory, each
+//! exchange's markets its requirement allows, what is loading and what
+//! failed, and the results for a tab and a search.
 
 use std::rc::Rc;
 
-use super::sources::Got;
 use crate::{
     data::{
-        ferris::{
-            Availability, Capabilities, CatalogMarket, Requirement, SymbolQuery, merge_catalogs,
-        },
-        net::{ApiError, QueryState},
+        ferris::{Availability, CatalogMarket, Product, Requirement, SymbolQuery},
+        markets::Directory,
+        net::ApiError,
     },
     exchanges,
 };
+
+/// The products a catalog can list (options are never asked for).
+const PRODUCTS: [Product; 3] = [Product::Perp, Product::Future, Product::Spot];
 
 /// What the picker can offer, from what has arrived.
 #[derive(Default)]
@@ -30,54 +31,45 @@ pub(super) struct Listing {
 }
 
 impl Listing {
-    pub fn new(
-        capabilities: &QueryState<Capabilities>,
-        got: &[Got],
-        requirement: Requirement,
-        only: Option<&str>,
-    ) -> Self {
+    /// What `directory` has for a picker of `only` (one exchange, or
+    /// every one) that needs `requirement`: markets whose exchange and
+    /// product are denied it are left out, and so is an exchange with none
+    /// of its products on offer (what it is loading or failed to load is
+    /// not this picker's business).
+    pub fn new(directory: &Directory, requirement: Requirement, only: Option<&str>) -> Self {
         let mut listing = Self::default();
-        let Some(document) = capabilities.data.as_deref() else {
-            listing.loading = capabilities.error.is_none();
-            if let Some(error) = &capabilities.error {
+        let Some(document) = directory.capabilities.as_deref() else {
+            listing.loading = directory.error.is_none();
+            if let Some(error) = &directory.error {
                 listing
                     .failed
                     .push(("the exchange list".to_owned(), error.clone()));
             }
             return listing;
         };
-        let mut ids: Vec<&str> = got.iter().map(|got| got.exchange.as_str()).collect();
-        ids.sort_by_key(|id| exchanges::rank(id));
-        ids.dedup();
-        for id in ids {
+        for listed in &directory.exchanges {
+            let id = listed.exchange.as_str();
             if only.is_some_and(|only| only != id) {
                 continue;
             }
-            let scopes: Vec<&Got> = got.iter().filter(|got| got.exchange == id).collect();
-            listing.loading |= scopes
-                .iter()
-                .any(|got| got.data.is_none() && got.error.is_none());
-            if let Some(error) = scopes
-                .iter()
-                .find(|got| got.data.is_none())
-                .and_then(|got| got.error.clone())
-            {
+            let offered = |product: Product| {
+                requirement.availability(document, id, product) != Availability::Unsupported
+            };
+            if !PRODUCTS.into_iter().any(offered) {
+                continue;
+            }
+            listing.loading |= listed.loading;
+            if let Some(error) = &listed.error {
                 listing
                     .failed
-                    .push((exchanges::display_name(id).to_owned(), error));
+                    .push((exchanges::display_name(id).to_owned(), error.clone()));
             }
-            let markets: Vec<Rc<CatalogMarket>> = merge_catalogs(
-                scopes
-                    .iter()
-                    .filter_map(|got| got.data.as_ref())
-                    .map(|catalog| &catalog.markets),
-            )
-            .into_iter()
-            .filter(|market| {
-                requirement.availability(document, id, market.selection.kind.product())
-                    != Availability::Unsupported
-            })
-            .collect();
+            let markets: Vec<Rc<CatalogMarket>> = listed
+                .markets
+                .iter()
+                .filter(|market| offered(market.selection.kind.product()))
+                .cloned()
+                .collect();
             if !markets.is_empty() {
                 listing.all.extend(markets.iter().cloned());
                 listing.exchanges.push((id.to_owned(), markets));

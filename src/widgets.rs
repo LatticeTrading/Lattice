@@ -22,7 +22,7 @@ mod chart;
 mod market_screener;
 mod trade_stream;
 
-pub(crate) use host::{Category, SettingsPanel, TabContext, TabHandle};
+pub(crate) use host::{Category, Linking, SettingsPanel, TabContext, TabHandle};
 
 registry::registry! {
     chart::Chart,

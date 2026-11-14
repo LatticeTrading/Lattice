@@ -5,7 +5,7 @@ use std::rc::Rc;
 /// A value shared by reference, equal only to itself: what a signal of a
 /// big value rebuilt whole (a universe, a table, the rows shown, a
 /// listing) holds, so setting it never compares the contents.
-pub(crate) struct Shared<T>(pub Rc<T>);
+pub struct Shared<T>(pub Rc<T>);
 
 impl<T> Shared<T> {
     pub fn new(value: T) -> Self {

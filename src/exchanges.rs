@@ -1,6 +1,7 @@
-//! The exchanges Lattice shows: display names, order and logos, by Ferris's
+//! The exchanges Lattice shows: display names and logos, by Ferris's
 //! exchange id (`bybit`), read from the venue table
-//! ([`VENUES`](crate::data::ferris::VENUES)).
+//! ([`VENUES`](crate::data::ferris::VENUES)), whose order is the order
+//! exchanges are listed in (the market directory, `crate::data::markets`).
 //!
 //! Logos are inlined at compile time so desktop and web draw the same
 //! thing.
@@ -14,16 +15,6 @@ use crate::data::ferris::{VENUES, Venue};
 /// An exchange's name for people, or its id when Lattice does not know it.
 pub fn display_name(exchange: &str) -> &str {
     Venue::listed(exchange).map_or(exchange, |venue| venue.name)
-}
-
-/// Where `exchange` comes in lists of exchanges: the old app's order
-/// (`SUPPORTED_EXCHANGES`, the table's), then any other by id.
-pub fn rank(exchange: &str) -> (usize, &str) {
-    let at = VENUES
-        .iter()
-        .position(|venue| venue.id == exchange)
-        .unwrap_or(VENUES.len());
-    (at, exchange)
 }
 
 /// The logo's markup of `exchange` (any case): its venue's, a family's

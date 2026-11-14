@@ -29,6 +29,7 @@ use crate::{
         ferris::{Candle, FerrisConfig, MarketSelection, Timeframe},
     },
     layout,
+    link::LinkColor,
     shell::clock::Clock,
     storage::StoredWorkspace,
     widgets::{WidgetKind, picker::Picker},
@@ -250,6 +251,49 @@ fn settings_save_only_what_differs_and_read_leniently() {
     assert_eq!(read(json!(5)), Interval::Candles(Timeframe::M1));
     let damaged = ChartSettings::from(json!({ "market": "BTC", "showGrid": "no" }));
     assert_eq!(damaged, ChartSettings::default());
+}
+
+#[test]
+fn the_link_color_is_saved_only_when_it_is_not_the_default() {
+    let saved = |settings: &ChartSettings| serde_json::to_value(settings).unwrap();
+    // Blue until told otherwise, which saves nothing.
+    let settings = ChartSettings::default();
+    assert_eq!(settings.link(), Some(LinkColor::Blue));
+    assert_eq!(
+        saved(&settings.clone().with_link(Some(LinkColor::Blue))),
+        json!({})
+    );
+
+    let red = settings.clone().with_link(Some(LinkColor::Red));
+    assert_eq!(saved(&red), json!({ "linkColor": "red" }));
+    assert_eq!(
+        ChartSettings::from(saved(&red)).link(),
+        Some(LinkColor::Red)
+    );
+    // No color is the old app's empty name.
+    let none = settings.with_link(None);
+    assert_eq!(saved(&none), json!({ "linkColor": "" }));
+    assert_eq!(ChartSettings::from(saved(&none)).link(), None);
+    assert_eq!(
+        ChartSettings::from(json!({ "linkColor": null })).link(),
+        None
+    );
+
+    // A color Lattice does not know, or no name at all, is the default.
+    for odd in [json!("purple"), json!(5)] {
+        let read = ChartSettings::from(json!({ "linkColor": odd }));
+        assert_eq!(read, ChartSettings::default());
+    }
+
+    // A market sent to the chart's color is its market, and nothing else.
+    let market = MarketSelection {
+        exchange: "hyperliquid".into(),
+        ..MarketSelection::bybit_btc_usdt()
+    };
+    let sent = red.clone().with_linked_market(market.clone());
+    assert_eq!(sent.market(), market);
+    assert_eq!(sent.link(), Some(LinkColor::Red));
+    assert_eq!(sent.interval(), red.interval());
 }
 
 /// Opaque colors that tell the layers apart.

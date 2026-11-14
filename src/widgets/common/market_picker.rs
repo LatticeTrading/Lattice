@@ -2,12 +2,12 @@
 //! exchange Ferris lists, searched by pair and filtered by exchange; picking
 //! one hands its [`MarketSelection`] to the caller and closes the picker.
 //!
-//! - Data: the capabilities say which exchanges list markets and which
-//!   catalog scopes to ask for ([`catalog_scopes`]); each scope is the
-//!   shared catalog query ([`crate::data::ferris::Ferris::catalog_query`]),
-//!   watched while the picker is open and kept by the query hub for ten
-//!   minutes after, so reopening it is instant. Exchanges show as their
-//!   catalogs arrive; one that fails says so above the results, with Retry.
+//! - Data: the app's market directory ([`crate::data::Markets`]), which it
+//!   holds a lease on while it is open. The Everything Bar holds one for as
+//!   long as the app runs, so the picker opens on markets already there;
+//!   on its own (a test) it starts the directory and exchanges show as
+//!   their catalogs arrive. One that fails says so above the results, with
+//!   Retry.
 //! - Options ([`MarketPicker`]): one exchange only (the old
 //!   `filterExchange`), a capability requirement (only markets whose
 //!   exchange and product are not denied it: unknown metadata keeps the old
@@ -27,13 +27,11 @@
 //! overlay of its own, so it can open over another floating panel (a
 //! widget's settings).
 //!
-//! Its parts: [`sources`] (the watches and what they got), [`listing`]
-//! (what can be offered, and the results for a tab and a search), [`tabs`]
-//! and [`results`] (the views).
+//! Its parts: [`listing`] (what of the directory can be offered, and the
+//! results for a tab and a search), [`tabs`] and [`results`] (the views).
 
 mod listing;
 mod results;
-mod sources;
 mod tabs;
 
 use std::rc::Rc;
@@ -43,7 +41,6 @@ use nsh_core::{keymap::When, prelude::*};
 use self::{
     listing::Listing,
     results::{Results, failures},
-    sources::Sources,
     tabs::tabs,
 };
 use super::Shared;
@@ -123,7 +120,7 @@ impl MarketPicker {
                 .child(text("Market data is unavailable."));
             return ui::modal_panel(PANEL_WIDTH, title, None, on_close, body);
         };
-        let ferris = services.ferris.clone();
+        let markets = services.markets.clone();
         let Self {
             exchange,
             requirement,
@@ -135,21 +132,17 @@ impl MarketPicker {
         let close: Rc<dyn Fn()> = Rc::new(on_close.clone());
         let every_exchange = exchange.is_none();
 
-        let sources = Sources::follow(&ferris, exchange.clone(), requirement);
-        let listing = {
-            let sources = sources.clone();
-            computed(move || {
-                let got = sources.results.get();
-                sources.capabilities.with(|state| {
-                    Shared(Rc::new(Listing::new(
-                        state,
-                        &got,
-                        requirement,
-                        exchange.as_deref(),
-                    )))
-                })
+        // Held while the picker is in the view.
+        let directory = markets.lease().release_on_cleanup();
+        let listing = computed(move || {
+            directory.with(|directory| {
+                Shared(Rc::new(Listing::new(
+                    &directory.0,
+                    requirement,
+                    exchange.as_deref(),
+                )))
             })
-        };
+        });
 
         let query = signal(String::new());
         // `None` is "All".
@@ -270,7 +263,7 @@ impl MarketPicker {
             .text_color(theme::TEXT)
             .child(search)
             .child(tabs(listing, tab))
-            .child(failures(listing, sources))
+            .child(failures(listing, markets))
             .child(
                 Results {
                     list,

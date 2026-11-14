@@ -118,6 +118,19 @@ roles! {
     /// The sell side: a print that sold, an ask.
     ASK = "ask",
 
+    // Link colors: the five groups a widget's market can be linked to. A
+    // theme draws them from its own palette; they must stay told apart.
+    /// The green link group: the dot of what is linked to it.
+    LINK_GREEN = "link-green",
+    /// The red link group.
+    LINK_RED = "link-red",
+    /// The blue link group, which widgets are linked to until told otherwise.
+    LINK_BLUE = "link-blue",
+    /// The yellow link group.
+    LINK_YELLOW = "link-yellow",
+    /// The orange link group.
+    LINK_ORANGE = "link-orange",
+
     // Layers.
     /// What dims the window behind a modal (the market picker): the old
     /// app's black at 60% in every theme.

@@ -1,6 +1,6 @@
 //! Shared Lattice controls: text fields, flat buttons, tooltips, settings
-//! rows ([`form`]), movable floating panels ([`panel`]) and engine-driven
-//! list scrolling ([`RowScroll`]).
+//! rows ([`form`]), movable floating panels ([`panel`]), the link button
+//! ([`link`]) and engine-driven list scrolling ([`RowScroll`]).
 //!
 //! NSH's `input` is a complete text field on every host (on Windows the
 //! system's RichEdit text box, on the web an `<input>`), so typing, caret
@@ -11,6 +11,7 @@
 //! symbol search, and future widgets all behave the same way.
 
 mod form;
+mod link;
 mod panel;
 mod row_scroll;
 
@@ -18,6 +19,7 @@ pub use form::{
     check_box, check_row, compact_dropdown, dropdown, label_column_row, label_edge_list_row,
     label_edge_row,
 };
+pub use link::link_button;
 pub use panel::{Side, centered_panel, floating_panel, modal_panel, settings_panel};
 pub use row_scroll::RowScroll;
 

@@ -22,13 +22,18 @@
 //!   timeframe changes. Panning near the oldest candle asks the feed for
 //!   the page before it.
 //!
-//! Settings ([`ChartSettings`]: the market, the timeframe, the grid and the
-//! hovered bar's prices) are saved in its tab record; the pane's gear opens
-//! its settings panel ([`panel`]).
+//! Settings ([`ChartSettings`]: the market, the timeframe, the grid, the
+//! hovered bar's prices and the link color) are saved in its tab record;
+//! the pane's gear opens its settings panel ([`panel`]).
 //!
-//! Not ported yet from the old chart: color-linked markets, indicators and
-//! drawings (neither existed there beyond a roadmap), and the placeholder
-//! space it reserved while older candles loaded.
+//! The chart can be linked ([`crate::link`]): its pane header's link button
+//! picks a color (blue at first), and a market picked in the Everything
+//! Bar's search while the bar has that color becomes the chart's market
+//! setting, which the session follows as any other change of it.
+//!
+//! Not ported yet from the old chart: indicators and drawings (neither
+//! existed there beyond a roadmap), and the placeholder space it reserved
+//! while older candles loaded.
 
 mod panel;
 mod scene;
@@ -47,7 +52,7 @@ use nsh_core::prelude::*;
 use self::{session::ChartSession, settings::ChartSettings};
 use crate::{
     data::{DataServices, SessionScope},
-    widgets::{Category, TabContext, host::Widget},
+    widgets::{Category, Linking, TabContext, host::Widget},
 };
 
 /// The Chart, as the registry lists it.
@@ -79,4 +84,10 @@ impl Widget for Chart {
     fn panel(_session: &Rc<ChartSession>, tab: &TabContext<ChartSettings>) -> Option<Overlay> {
         Some(panel::panel(tab.clone()))
     }
+
+    const LINKING: Option<Linking<ChartSettings>> = Some(Linking {
+        link: ChartSettings::link,
+        with_link: ChartSettings::with_link,
+        with_market: ChartSettings::with_linked_market,
+    });
 }

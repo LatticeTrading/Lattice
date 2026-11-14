@@ -2,11 +2,15 @@
 //!
 //! Desktop uses the platform's normal title bar for window controls. The web
 //! build gets no title bar because the browser owns that chrome.
+//!
+//! Left to right: the wordmark, the Layout Manager's button and the pages;
+//! in the middle the link button, the symbol search ([`search`]) and New
+//! Widget; then the clock, the connection status and Settings.
 
 use nsh_base::tooltip;
 use nsh_core::{
     desktop::{TitleBarOptions, WindowAttributes},
-    element::{ImageSrc, desktop::current_window, input},
+    element::{ImageSrc, desktop::current_window},
     prelude::*,
 };
 
@@ -22,6 +26,7 @@ use crate::{
     widgets::picker::{Picker, Target},
 };
 
+mod search;
 #[cfg(test)]
 mod tests;
 
@@ -150,10 +155,20 @@ pub fn bar(
     window_attributes.title_bar = Some(TitleBarOptions::default());
     current_window().set(window_attributes);
 
-    let controls = dynamic(move || {
-        let saved = workspace.get();
-        let compact = window().width.0 <= 768.0;
-        let control_width = if compact { 36.0 } else { 40.0 };
+    // The old app's breakpoint for compact controls.
+    let compact = computed(|| window().width.0 <= 768.0);
+    // The pages and the active one are all the bar shows of the workspace:
+    // a widget's settings being saved rebuilds nothing here.
+    let pages = computed(move || {
+        workspace.with(|state| {
+            let ids: Vec<usize> = state.pages.iter().map(|page| page.id).collect();
+            (ids, state.active_page_id)
+        })
+    });
+
+    let left = dynamic(move || {
+        let (ids, active) = pages.get();
+        let compact = compact.get();
         let page_width = if compact { 28.0 } else { 32.0 };
 
         let wordmark = view()
@@ -170,13 +185,11 @@ pub fn bar(
             .label("Layout manager")
             .on_press(move || manager.toggle());
 
-        let pages = saved
-            .pages
+        let pages = ids
             .iter()
             .enumerate()
-            .map(|(index, page)| {
-                let id = page.id;
-                let selected = id == saved.active_page_id;
+            .map(|(index, &id)| {
+                let selected = id == active;
                 segment(&(index + 1).to_string(), page_width)
                     .accessibility_state(move || AccessibilityState {
                         selected,
@@ -204,17 +217,14 @@ pub fn bar(
         let add_page = segment("+", page_width)
             .border_r_1()
             .label("Add layout page")
-            .on_press({
-                let workspace = workspace;
-                move || {
-                    workspace.update(|state| {
-                        layout::add_page(state);
-                        let _ = persist(state);
-                    });
-                }
+            .on_press(move || {
+                workspace.update(|state| {
+                    layout::add_page(state);
+                    let _ = persist(state);
+                });
             });
 
-        let left = view()
+        view()
             .h_full()
             .flex()
             .items_center()
@@ -222,28 +232,17 @@ pub fn bar(
             .child(wordmark)
             .child(layout_button)
             .children(pages)
-            .child(add_page);
+            .child(add_page)
+    });
 
-        let search = input()
-            .h(px(38.0))
-            .flex_1()
-            .min_w(px(0.0))
-            .px(px(8.0))
-            .placeholder("Search symbols...")
-            .readonly(true)
-            .disabled(true)
-            .text_size(px(if compact { 11.0 } else { 12.0 }))
-            .border_l_1()
-            .border_color(theme::BORDER)
-            .label("Search symbols");
-
-        let new_widget = view()
+    let new_widget = dynamic(move || {
+        view()
             .h_full()
             .flex_none()
             .flex()
             .items_center()
             .gap(px(6.0))
-            .px(px(if compact { 12.0 } else { 16.0 }))
+            .px(px(if compact.get() { 12.0 } else { 16.0 }))
             .border_l_1()
             .border_r_1()
             .border_color(theme::BORDER)
@@ -264,10 +263,32 @@ pub fn bar(
             })
             .on_press(move || picker.toggle(Target::NewPane))
             .child(text("+"))
-            .child(text("New Widget").text_size(px(12.0)));
+            .child(text("New Widget").text_size(px(12.0)))
+    });
+
+    // Made once, outside every `dynamic`: the search field keeps its text,
+    // focus and caret whatever changes around it. Wider than the old app's
+    // 400pt where there is room, for the link button beside the field.
+    let center_width = computed(|| match window().width.0 {
+        width if width <= 768.0 => 320.0,
+        width if width <= 1100.0 => 400.0,
+        _ => 520.0,
+    });
+    let center = view()
+        .w(move || px(center_width.get()))
+        .h_full()
+        .flex_none()
+        .flex()
+        .items_center()
+        .child(search::search(workspace))
+        .child(new_widget);
+
+    let right = dynamic(move || {
+        let compact = compact.get();
+        let control_width = if compact { 36.0 } else { 40.0 };
 
         let zone = move || clock::offset_label(clock.get().offset);
-        let clock = view()
+        let time = view()
             .test_id("clock")
             .h_full()
             .flex()
@@ -311,41 +332,31 @@ pub fn bar(
             .on_press(move || settings_open.update(|open| *open = !*open))
             .child(text("⚙"));
 
-        let center = view()
-            .w(px(400.0))
-            .h_full()
-            .flex_none()
-            .flex()
-            .items_center()
-            .child(search)
-            .child(new_widget);
-
-        let right = view()
-            .h_full()
-            .flex_none()
-            .flex()
-            .items_center()
-            .child(clock)
-            .child(connection)
-            .child(settings);
-
-        let left_slot = view().flex_1().h_full().flex().items_center().child(left);
-        let right_slot = view()
-            .flex_1()
-            .h_full()
-            .flex()
-            .items_center()
-            .justify_end()
-            .child(right);
-
         view()
-            .size_full()
-            .flex_row()
+            .h_full()
+            .flex_none()
+            .flex()
             .items_center()
-            .child(left_slot)
-            .child(center)
-            .child(right_slot)
+            .child(time)
+            .child(connection)
+            .child(settings)
     });
+
+    let left_slot = view().flex_1().h_full().flex().items_center().child(left);
+    let right_slot = view()
+        .flex_1()
+        .h_full()
+        .flex()
+        .items_center()
+        .justify_end()
+        .child(right);
+    let controls = view()
+        .size_full()
+        .flex_row()
+        .items_center()
+        .child(left_slot)
+        .child(center)
+        .child(right_slot);
 
     view()
         .element_ref(&bar_ref)
@@ -361,7 +372,7 @@ pub fn bar(
         .border_color(theme::BORDER)
         .bg(theme::SURFACE)
         .child(controls)
-        // Outside the bar's `dynamic` so the panel, and the field's focus and
+        // Outside the bar's `dynamic`s so the panel, and the field's focus and
         // caret, survive workspace changes such as clearing a page.
         .child(dynamic(move || {
             manager

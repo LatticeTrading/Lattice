@@ -13,7 +13,10 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::{WidgetKind, WidgetSettings};
-use crate::data::{DataServices, SessionScope, WidgetView};
+use crate::{
+    data::{DataServices, SessionScope, WidgetView, ferris::MarketSelection},
+    link::LinkColor,
+};
 
 /// One widget: how the picker shows it, its settings and session, and its
 /// views. Each widget's `mod.rs` implements it on a unit struct, and the
@@ -55,6 +58,25 @@ pub(crate) trait Widget: 'static {
     fn panel(_session: &Rc<Self::Session>, _tab: &TabContext<Self::Settings>) -> Option<Overlay> {
         None
     }
+
+    /// How its market follows a link color ([`crate::link`]), for a widget
+    /// that shows one market: its pane header then has a link button, and
+    /// a market picked in the Everything Bar's search is shown on it while
+    /// it is linked to the bar's color. The default is none: the widget
+    /// cannot be linked.
+    const LINKING: Option<Linking<Self::Settings>> = None;
+}
+
+/// A linkable widget's settings: the color they link it to, and what a
+/// change of color or a market sent to that color makes of them
+/// ([`Widget::LINKING`]).
+pub(crate) struct Linking<S> {
+    /// The color the settings link the widget to, if any.
+    pub link: fn(&S) -> Option<LinkColor>,
+    /// The settings linked to a color, or to none.
+    pub with_link: fn(S, Option<LinkColor>) -> S,
+    /// The settings showing a market sent to the widget's color.
+    pub with_market: fn(S, MarketSelection) -> S,
 }
 
 /// The picker's groups of widgets, in the order its strip shows them.

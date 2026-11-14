@@ -74,6 +74,10 @@ pub(crate) struct StoredSettings {
     pub theme: Option<String>,
     /// How the Everything Bar's clock reads.
     pub clock: StoredClock,
+    /// The Everything Bar's link color id (`blue`): which widgets its
+    /// search sends a pick to. Absent: the default color.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_color: Option<String>,
 }
 
 /// The clock's saved preferences: 24-hour UTC+0 by default.

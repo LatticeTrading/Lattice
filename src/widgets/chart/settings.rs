@@ -1,17 +1,22 @@
 //! The chart's settings, saved in its tab's record under the old app's
 //! names: `market` (the market charted), `timeframe` (`tick`, `1m`, ...,
-//! `1w`), `showGrid` and `showOhlcOnHover`.
+//! `1w`), `showGrid`, `showOhlcOnHover` and `linkColor` (the link color
+//! whose picks the chart takes, `""` for none).
 //!
 //! Each is left out of the saved form while it holds its default (Bybit's
-//! BTC/USDT perpetual, `1m`, both shown) and read leniently: an unreadable
-//! market or a member of the wrong type reads as its default, a timeframe
-//! under one of the old app's other spellings (`1`, `60`, `1T`) as the one
-//! it meant and an unknown one as `1m`.
+//! BTC/USDT perpetual, `1m`, both shown, linked to blue) and read
+//! leniently: an unreadable market or a member of the wrong type reads as
+//! its default, a timeframe under one of the old app's other spellings
+//! (`1`, `60`, `1T`) as the one it meant and an unknown one as `1m`, a
+//! link color Lattice does not know as the default one.
 
 use serde::{Serialize, Serializer};
 use serde_json::Value;
 
-use crate::data::ferris::{MarketSelection, Timeframe};
+use crate::{
+    data::ferris::{MarketSelection, Timeframe},
+    link::LinkColor,
+};
 
 /// What a chart's points are: every trade (a tick line), or candles of a
 /// timeframe.
@@ -94,6 +99,24 @@ pub(crate) struct ChartSettings {
     /// `Some(false)` hides the hovered bar's prices; `None` shows them.
     #[serde(rename = "showOhlcOnHover", skip_serializing_if = "Option::is_none")]
     show_ohlc: Option<bool>,
+    /// The link color whose picks the chart takes: `None` is the default
+    /// one ([`LinkColor::DEFAULT`]), `Some(None)` no color (saved as `""`,
+    /// the old app's "None").
+    #[serde(
+        rename = "linkColor",
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "save_link"
+    )]
+    link: Option<Option<LinkColor>>,
+}
+
+/// A link that is not the default one, as it is saved: its color's id, or
+/// `""` for none.
+fn save_link<S: Serializer>(
+    link: &Option<Option<LinkColor>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(link.flatten().map_or("", LinkColor::id))
 }
 
 impl From<Value> for ChartSettings {
@@ -112,6 +135,13 @@ impl From<Value> for ChartSettings {
             )
             .with_grid(shown("showGrid"))
             .with_ohlc(shown("showOhlcOnHover"))
+            .with_link(match members.get("linkColor") {
+                // The old app's "None".
+                Some(Value::Null) => None,
+                Some(Value::String(id)) if id.is_empty() => None,
+                Some(Value::String(id)) => LinkColor::from_id(id).or(Some(LinkColor::DEFAULT)),
+                _ => Some(LinkColor::DEFAULT),
+            })
     }
 }
 
@@ -162,5 +192,22 @@ impl ChartSettings {
     pub fn with_ohlc(mut self, shown: bool) -> Self {
         self.show_ohlc = (!shown).then_some(false);
         self
+    }
+
+    /// The link color whose picks the chart takes, if any.
+    pub fn link(&self) -> Option<LinkColor> {
+        self.link.unwrap_or(Some(LinkColor::DEFAULT))
+    }
+
+    /// These settings linked to `color` (`None`: to no color).
+    pub fn with_link(mut self, color: Option<LinkColor>) -> Self {
+        self.link = (color != Some(LinkColor::DEFAULT)).then_some(color);
+        self
+    }
+
+    /// These settings charting `market`, which the chart's link color was
+    /// sent.
+    pub fn with_linked_market(self, market: MarketSelection) -> Self {
+        self.with_market(Some(market))
     }
 }

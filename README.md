@@ -10,8 +10,10 @@ included). Market data comes from the Ferris backend through a shared data
 layer (HTTP, WebSocket, polling). Three widgets are ported: the Chart
 (candles and ticks, drawn on the GPU through NSH's WGSL shader views), the
 Market Screener and the Trade Stream; the others still to port have empty
-folders under `src/widgets/`. The Everything Bar's symbol search and connection status are
-placeholders. On desktop the platform's normal title bar keeps minimize,
+folders under `src/widgets/`. The Everything Bar's symbol search finds any
+market and sends it to the widgets linked to the bar's link color (the
+Chart, from its pane header's link button); its connection status is a
+placeholder. On desktop the platform's normal title bar keeps minimize,
 maximize/restore, and close; on web the browser owns the window chrome.
 
 Before changing code, read `docs/nsh-development.md`, the development guide
@@ -74,15 +76,16 @@ visual and native-caption acceptance remains a user-run check.
 - `themes/`: one JSON file per theme.
 - `src/lib.rs`: the registered NSH UI set and shared `App` root.
 - `src/main.rs`, `src/app.rs`: optional direct Cargo desktop launcher.
-- `src/shell.rs`, `src/shell/`: the shell, Everything Bar, Settings panel, and clock.
-- `src/ui.rs`, `src/ui/`: shared controls (text field, button, tooltip hint, settings rows, floating panels, list scrolling).
+- `src/shell.rs`, `src/shell/`: the shell, Everything Bar (with its symbol search and link button), Settings panel, and clock.
+- `src/ui.rs`, `src/ui/`: shared controls (text field, button, tooltip hint, settings rows, floating panels, the link button, list scrolling).
 - `src/layout.rs`, `src/layout/grid.rs`: workspace pages, tabs, panes, and responsive geometry.
 - `src/storage.rs`: versioned NSH storage-service persistence.
 - `src/theme.rs`, `src/theme/roles.rs`: the theme engine and its color roles.
 - `src/assets.rs`, `assets/`: compile-time fonts and app assets (icons, exchange logos).
-- `src/data.rs`, `src/data/`: the data layer (`net/`: shared HTTP, WebSocket, polling, and live-feed plumbing; `ferris/`: the Ferris integration, with per-exchange rules in `ferris/venues.rs`; `session.rs`: per-widget data sessions).
+- `src/data.rs`, `src/data/`: the data layer (`net/`: shared HTTP, WebSocket, polling, and live-feed plumbing; `ferris/`: the Ferris integration, with per-exchange rules in `ferris/venues.rs`; `session.rs`: per-widget data sessions; `markets.rs`: the app's one directory of every market, which the search and the market picker read).
 - `src/widgets.rs`, `src/widgets/`: the widget registry, the widget picker, shared widget parts (`common/`: market picker, exchange logos, number field), and one folder per widget (`chart/`, `market_screener/`, `trade_stream/`).
-- `src/exchanges.rs`, `src/format.rs`: exchange names, order, and logos; number formatting.
+- `src/link.rs`: color linking (the link colors, and the Everything Bar's).
+- `src/exchanges.rs`, `src/format.rs`: exchange names and logos; number formatting.
 - `src/platform/`: future native integrations (empty).
 
 ## NSH documentation used for this migration

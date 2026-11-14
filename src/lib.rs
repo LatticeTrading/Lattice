@@ -6,6 +6,7 @@ pub mod data;
 mod exchanges;
 mod format;
 mod layout;
+mod link;
 mod shell;
 mod storage;
 mod theme;

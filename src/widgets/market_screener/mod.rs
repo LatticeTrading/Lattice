@@ -10,8 +10,9 @@
 //!   cadence. Two screeners share one request per scope; a hidden screener
 //!   keeps polling, so showing it again is instant.
 //! - While it shows, each new snapshot (or a value going stale) builds the
-//!   next [`universe::Universe`], which is filtered and sorted into the
-//!   rows the table shows ([`Table`](session::Table)). A hidden screener does none of it.
+//!   next [`Universe`](crate::data::ferris::universe::Universe), which is
+//!   filtered and sorted into the rows the table shows
+//!   ([`Table`](session::Table)). A hidden screener does none of it.
 //! - Its settings ([`ScreenerSettings`]: scope, products, columns, their
 //!   order and widths) are saved in its tab record. The session keeps a
 //!   copy the host brings up to date, and polls only the scopes they
@@ -25,7 +26,6 @@ mod panel;
 mod session;
 mod settings;
 mod table;
-mod universe;
 
 use std::rc::Rc;
 

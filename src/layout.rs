@@ -18,7 +18,10 @@
 //! A widget's view also gets its tab ([`TabHandle`], which the widgets'
 //! host makes its kind's `TabContext` of): the settings saved in the tab
 //! record, a way to save new ones, and the settings panel its pane's gear
-//! opens for the active tab. Which widget a tab shows is the widgets'
+//! opens for the active tab. A widget that can be linked ([`crate::link`])
+//! also gets a link button in its pane's header, beside the gear, which
+//! links it to a color; [`link_market`] shows a market on the widgets
+//! linked to one. Which widget a tab shows is the widgets'
 //! business ([`widgets::view`]); layout names none. A pane's `+` opens the app's widget picker
 //! ([`Picker`]) for that pane, which adds a tab of the widget picked.
 
@@ -27,12 +30,16 @@ mod grid;
 mod tests;
 pub(crate) use grid::Grid;
 
-use std::{collections::HashSet, rc::Rc};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use crate::{
-    data::{DataServices, Sessions, WidgetId},
+    data::{DataServices, Sessions, WidgetId, ferris::MarketSelection},
+    link::LinkColor,
     storage::{self, StoredPage, StoredWorkspace},
-    theme,
+    theme, ui,
     widgets::{
         self, SettingsPanel, TabHandle, WidgetKind, WidgetSettings,
         picker::{Picker, Target},
@@ -135,6 +142,45 @@ pub(crate) fn set_tab_settings(
         .pages
         .iter_mut()
         .any(|page| page.grid.set_settings(widget, settings))
+}
+
+/// Links `widget` to `color` (or to none), whichever page it is on; false
+/// when no tab is that widget, or it cannot be linked.
+pub(crate) fn set_link(
+    workspace: &mut StoredWorkspace,
+    widget: WidgetId,
+    color: Option<LinkColor>,
+) -> bool {
+    workspace
+        .pages
+        .iter_mut()
+        .any(|page| page.grid.set_link(widget, color))
+}
+
+/// Shows `market` on every widget linked to `color`, on every page: what
+/// a pick in the Everything Bar's search does while the bar has that color
+/// ([`crate::link`]). The market goes into each widget's saved settings.
+/// How many widgets that is.
+pub(crate) fn link_market(
+    workspace: &mut StoredWorkspace,
+    color: LinkColor,
+    market: &MarketSelection,
+) -> usize {
+    let mut sent = HashSet::new();
+    for page in &mut workspace.pages {
+        page.grid.link_market(color, market, &mut sent);
+    }
+    sent.len()
+}
+
+/// How many widgets are linked to each color, on every page, in
+/// [`LinkColor::ALL`]'s order.
+pub(crate) fn link_counts(workspace: &StoredWorkspace) -> [usize; 5] {
+    let mut links = HashMap::new();
+    for page in &workspace.pages {
+        page.grid.links(&mut links);
+    }
+    LinkColor::ALL.map(|color| links.values().filter(|link| **link == Some(color)).count())
 }
 
 fn active_grid(workspace: &StoredWorkspace) -> &Grid {
@@ -415,6 +461,47 @@ fn pane_view(
         active_tab.get();
         settings_open.set(false);
     });
+    // The active tab's widget and the color it is linked to, when it is a
+    // widget that can be linked: the header then has its link button.
+    let link = computed(move || {
+        let active = active_tab.get();
+        tabs.with(|tabs| {
+            tabs.iter()
+                .find(|tab| tab.id == active)
+                .and_then(|tab| match &tab.settings {
+                    TabWidget::Known(settings) => settings.link().map(|color| (tab.widget, color)),
+                    TabWidget::Unknown { .. } => None,
+                })
+        })
+    });
+    let linkable = computed(move || link.with(Option::is_some));
+    let link_button = dynamic(move || {
+        linkable.get().then(|| {
+            ui::link_button(
+                "Widget link color",
+                move || link.get().and_then(|(_, color)| color),
+                true,
+                |_| String::new(),
+                move |color| {
+                    let Some((widget, _)) = link.get_untracked() else {
+                        return;
+                    };
+                    workspace.update(|state| {
+                        if set_link(state, widget, color) {
+                            persist(state);
+                        }
+                    });
+                },
+                ui::Side::Right,
+                8.0,
+            )
+            .h_full()
+            .w(px(32.0))
+            .border_l_1()
+            .border_color(theme::BORDER)
+            .test_id(&format!("pane-link-{id}"))
+        })
+    });
 
     let header = view()
         .h(px(32.0))
@@ -459,6 +546,7 @@ fn pane_view(
                 .child(text("+")),
         )
         .child(view().flex_1())
+        .child(link_button)
         .child(
             view()
                 .element_ref(&gear)

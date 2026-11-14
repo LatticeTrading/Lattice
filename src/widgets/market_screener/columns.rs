@@ -12,13 +12,13 @@ use std::{borrow::Cow, cmp::Ordering, fmt::Write as _};
 
 use serde::{Serialize, Serializer};
 
-use super::universe::{Derived, Family, Row, Universe};
 use crate::{
     data::ferris::{
         CapabilityState, Product,
         market_stats::{
             FieldState, Price, StatsField, StatsFieldName, StatsFields, bulk_unsupported,
         },
+        universe::{Derived, Family, Row, Universe},
     },
     exchanges, format,
 };

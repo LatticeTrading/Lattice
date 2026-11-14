@@ -198,7 +198,7 @@ impl CatalogMarket {
 /// `markets`, or `data`, or the reply itself), every row read leniently.
 /// Kept: active markets that can be streamed (dated futures with an exact
 /// day), not options, each once. A reply with no markets array fails.
-pub(super) fn parse(payload: &Value, exchange: &str) -> Result<Catalog, ApiError> {
+pub(crate) fn parse(payload: &Value, exchange: &str) -> Result<Catalog, ApiError> {
     let rows = match payload {
         Value::Array(rows) => rows,
         Value::Object(reply) => match reply.get("markets").or_else(|| reply.get("data")) {

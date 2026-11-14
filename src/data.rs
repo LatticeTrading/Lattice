@@ -10,6 +10,8 @@
 //!   data backend, treated like any other external API.
 //! - [`session`] gives each widget a session that owns its data for as long
 //!   as the widget is in the workspace, whether or not it is on screen.
+//! - [`markets`] is the app's one directory of every market Ferris lists,
+//!   which the Everything Bar's search and the market picker both read.
 //!
 //! The shell makes one [`DataServices`] and provides it as context; a
 //! widget reaches it with [`DataServices::get`]. Nothing connects until
@@ -17,10 +19,16 @@
 //! connection go.
 
 pub mod ferris;
+mod keyed;
+pub mod markets;
 pub mod net;
 pub mod session;
+mod shared;
 
+pub(crate) use keyed::Keyed;
+pub use markets::Markets;
 pub use session::{SessionScope, Sessions, WidgetId, WidgetView};
+pub use shared::Shared;
 
 use nsh_core::prelude::*;
 
@@ -34,6 +42,8 @@ pub struct DataServices {
     pub ferris: ferris::Ferris,
     /// Every widget's session (what a widget streams and keeps).
     pub sessions: Sessions,
+    /// Every market Ferris lists, shared by whatever offers or ranks them.
+    pub markets: Markets,
 }
 
 impl DataServices {
@@ -53,10 +63,12 @@ impl DataServices {
                 .expect("the production Ferris configuration is valid")
         });
         let sessions = Sessions::new();
+        let markets = Markets::new(ferris.clone());
         let services = Self {
             status,
             ferris,
             sessions,
+            markets,
         };
         provide_context(services.clone());
         let shutdown = services.clone();

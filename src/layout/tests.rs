@@ -48,6 +48,86 @@ fn layout_codes_round_trip_and_reject_invalid_data() {
     assert!(import_code("LATTICE1.0").is_err());
 }
 
+/// The saved settings of `widget`'s tab, in each breakpoint's copy.
+fn saved_settings(saved: &StoredWorkspace, widget: WidgetId) -> Vec<serde_json::Value> {
+    saved
+        .pages
+        .iter()
+        .flat_map(|page| page.grid.layouts.iter().flatten())
+        .flat_map(|pane| &pane.tabs)
+        .filter(|tab| tab.widget == widget)
+        .filter_map(|tab| match &tab.settings {
+            TabWidget::Known(settings) => Some(settings.to_value()),
+            TabWidget::Unknown { .. } => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_linked_market_goes_to_the_widgets_of_its_color_on_every_page() {
+    let mut saved = StoredWorkspace::default();
+    normalize(&mut saved);
+    super::spawn(&mut saved, WidgetKind::Chart);
+    super::spawn(&mut saved, WidgetKind::Chart);
+    super::spawn(&mut saved, WidgetKind::MarketScreener);
+    add_page(&mut saved);
+    super::spawn(&mut saved, WidgetKind::Chart);
+    let widget = |page: usize, pane: usize| saved.pages[page].grid.layouts[4][pane].tabs[0].widget;
+    let (blue, red, screener, other_page) =
+        (widget(0, 0), widget(0, 1), widget(0, 2), widget(1, 0));
+
+    // Charts are linked to blue until told otherwise; a screener cannot be.
+    assert_eq!(link_counts(&saved), [0, 0, 3, 0, 0]);
+    assert!(set_link(&mut saved, red, Some(LinkColor::Red)));
+    assert!(!set_link(&mut saved, screener, Some(LinkColor::Red)));
+    assert_eq!(link_counts(&saved), [0, 1, 2, 0, 0]);
+
+    // A market sent to blue is the market of both blue charts, on either
+    // page, in every breakpoint's copy of their tabs, and of nothing else.
+    let market = MarketSelection {
+        exchange: "hyperliquid".into(),
+        symbol: "BTC/USDC".into(),
+        quote: "USDC".into(),
+        request_symbol: "BTC/USDC:USDC".into(),
+        ..MarketSelection::bybit_btc_usdt()
+    };
+    assert_eq!(link_market(&mut saved, LinkColor::Blue, &market), 2);
+    for widget in [blue, other_page] {
+        let copies = saved_settings(&saved, widget);
+        assert_eq!(copies.len(), 5);
+        for copy in copies {
+            assert_eq!(copy["market"]["exchange"], "hyperliquid");
+            assert_eq!(copy.get("linkColor"), None);
+        }
+    }
+    for copy in saved_settings(&saved, red) {
+        assert_eq!(copy, serde_json::json!({ "linkColor": "red" }));
+    }
+    assert_eq!(link_market(&mut saved, LinkColor::Green, &market), 0);
+
+    // A chart linked to no color takes no market, and counts for none.
+    assert!(set_link(&mut saved, other_page, None));
+    assert_eq!(link_counts(&saved), [0, 1, 1, 0, 0]);
+    assert_eq!(
+        link_market(
+            &mut saved,
+            LinkColor::Blue,
+            &MarketSelection::bybit_btc_usdt()
+        ),
+        1
+    );
+    assert_eq!(
+        saved_settings(&saved, other_page)[0]["market"]["exchange"],
+        "hyperliquid"
+    );
+
+    // The links and the markets are in the layout's code.
+    let code = export_code(&saved).unwrap();
+    let imported = import_code(&code).unwrap();
+    assert_eq!(link_counts(&imported), [0, 1, 1, 0, 0]);
+    assert_eq!(export_code(&imported).unwrap(), code);
+}
+
 fn gesture(saved: &StoredWorkspace, resize: bool) -> DragState {
     let before = active_grid(saved).layouts[4].clone();
     DragState {

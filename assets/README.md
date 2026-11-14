@@ -25,9 +25,13 @@ SHA-256:
 `lattice-pro/src/components/layout/ConnectionStatusIndicator.tsx` at
 `ac999e00567b6a1558715d30f4b38730488e2e9f`.
 
-It is the only icon file; other controls draw text glyphs (`⚙`, `+`). The
-shell inlines it at compile time (`include_str!` in
-`src/shell/everything_bar.rs`); `src/assets.rs` registers the fonts. No loose
+`icons/search.svg` is the magnifier of the old search field
+(`lattice-pro/src/components/layout/EverythingBar.tsx`, its `.search-icon`
+path), drawn in `currentColor`.
+
+They are the only icon files; other controls draw text glyphs (`⚙`, `+`).
+The shell inlines them at compile time (`include_str!` in
+`src/shell/everything_bar.rs` and `src/shell/everything_bar/search.rs`); `src/assets.rs` registers the fonts. No loose
 files are read at runtime. `LICENSE-LUCIDE` is left from the GPUI build,
 whose Lucide icons (`gpui-kit-assets`) Lattice no longer bundles.
 

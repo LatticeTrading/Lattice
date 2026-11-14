@@ -5,7 +5,7 @@
 //! - [`WidgetKind`](super::WidgetKind): the catalog of widgets, a variant
 //!   per widget named as its type, with the widget's metadata;
 //! - [`WidgetSettings`](super::WidgetSettings): a tab's kind and settings,
-//!   and how they are saved;
+//!   how they are saved, and how a linkable widget's follow a link color;
 //! - [`KindSettings`](super::host::KindSettings) for each widget's
 //!   settings;
 //! - [`view`](super::view): a tab's view, by its kind.
@@ -108,6 +108,56 @@ macro_rules! registry {
                     $(Self::$kind(settings) => ::serde_json::to_value(settings),)+
                 };
                 value.unwrap_or(::serde_json::Value::Null)
+            }
+
+            /// The link color of a widget that can be linked
+            /// (`Some(None)`: linked to none); `None` for a widget that
+            /// cannot ([`Widget::LINKING`]($crate::widgets::host::Widget::LINKING)).
+            pub fn link(&self) -> Option<Option<$crate::link::LinkColor>> {
+                match self {
+                    $(
+                        Self::$kind(settings) => {
+                            <$module::$kind as $crate::widgets::host::Widget>::LINKING
+                                .map(|linking| (linking.link)(settings))
+                        }
+                    )+
+                }
+            }
+
+            /// These settings linked to `color` (or to none); `None` for
+            /// a widget that cannot be linked.
+            pub fn with_link(&self, color: Option<$crate::link::LinkColor>) -> Option<Self> {
+                match self {
+                    $(
+                        Self::$kind(settings) => {
+                            <$module::$kind as $crate::widgets::host::Widget>::LINKING
+                                .map(|linking| {
+                                    Self::$kind((linking.with_link)(settings.clone(), color))
+                                })
+                        }
+                    )+
+                }
+            }
+
+            /// These settings showing `market`, sent to the color they are
+            /// linked to; `None` for a widget that cannot be linked.
+            pub fn with_market(
+                &self,
+                market: &$crate::data::ferris::MarketSelection,
+            ) -> Option<Self> {
+                match self {
+                    $(
+                        Self::$kind(settings) => {
+                            <$module::$kind as $crate::widgets::host::Widget>::LINKING
+                                .map(|linking| {
+                                    Self::$kind((linking.with_market)(
+                                        settings.clone(),
+                                        market.clone(),
+                                    ))
+                                })
+                        }
+                    )+
+                }
             }
         }
 

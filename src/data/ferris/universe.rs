@@ -1,27 +1,25 @@
-//! The screener's markets as of one moment: every row of every scope it
-//! polls, each field's effective state, and the USD rates its volume
-//! estimates use (the old app's `MarketUniverseService` and
+//! The markets of the statistics scopes polled, as of one moment: every row
+//! of every scope, each field's effective state, and the USD rates their
+//! volume estimates use (the old app's `MarketUniverseService` and
 //! `AssetUsdRates`).
 //!
 //! A [`Universe`] is built from the feeds' latest snapshots in one pass and
 //! never changes after; a new snapshot, or a value going stale, builds the
-//! next one. Rows point into the snapshots rather than copying them.
+//! next one. Rows point into the snapshots rather than copying them. The
+//! Market Screener shows one; the app's market directory
+//! ([`crate::data::Markets`]) reads the volumes it ranks markets by from
+//! another.
 
 use std::{cmp::Ordering, collections::HashMap, rc::Rc};
 
-use crate::{
-    data::{
-        ferris::{
-            MarketStatsScope, Product, SettlementVolume, StatsSnapshot, Venue,
-            market_stats::{FieldMeta, FieldState, StatsFieldName, StatsMarket},
-        },
-        net::ApiError,
-    },
-    exchanges, format,
+use super::{
+    MarketStatsScope, Product, SettlementVolume, StatsSnapshot, Venue,
+    market_stats::{FieldMeta, FieldState, StatsFieldName, StatsMarket},
 };
+use crate::{data::net::ApiError, format};
 
 /// What one scope's feed had at the moment the universe was built.
-pub(super) struct FeedSnap {
+pub struct FeedSnap {
     pub scope: Rc<MarketStatsScope>,
     /// `Bybit · Linear perpetuals`.
     pub label: String,
@@ -39,7 +37,7 @@ impl FeedSnap {
     ) -> Self {
         let label = format!(
             "{} · {}",
-            exchanges::display_name(&scope.exchange),
+            Venue::listed(&scope.exchange).map_or(scope.exchange.as_str(), |venue| venue.name),
             scope.partition.label
         );
         Self {
@@ -81,7 +79,7 @@ impl FeedSnap {
 /// A market's product family, from its settlement asset alone (never from
 /// the venue or a guess at the quote).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Family {
+pub enum Family {
     Linear,
     Inverse,
     Unknown,
@@ -113,7 +111,7 @@ impl Family {
 
 /// How sure a derived figure is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Derived {
+pub enum Derived {
     Available,
     Stale,
     Unavailable,
@@ -139,7 +137,7 @@ impl Derived {
 
 /// A row's 24h quote volume in USD, estimated through [`UsdRates`].
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct UsdVolume {
+pub struct UsdVolume {
     pub value: Option<f64>,
     pub status: Derived,
 }
@@ -152,7 +150,7 @@ impl UsdVolume {
 }
 
 /// One market row: a market of a feed's snapshot.
-pub(super) struct Row {
+pub struct Row {
     /// Its feed, an index into [`Universe::feeds`].
     pub feed: usize,
     /// Its market, an index into that feed's snapshot.
@@ -162,7 +160,7 @@ pub(super) struct Row {
 }
 
 /// Every row of every feed, as of [`Universe::evaluated_at`].
-pub(super) struct Universe {
+pub struct Universe {
     pub feeds: Vec<FeedSnap>,
     pub rows: Vec<Row>,
     /// When the fields' states were evaluated (Unix milliseconds).

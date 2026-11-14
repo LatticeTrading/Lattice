@@ -9,7 +9,6 @@ use nsh_core::{prelude::*, time::unix_ms};
 use super::{
     ScreenerSettings,
     columns::{self, Sort, default_sort},
-    universe::{self, FeedSnap, Universe},
 };
 use crate::{
     data::{
@@ -17,6 +16,7 @@ use crate::{
         ferris::{
             Capabilities, Ferris, MarketStatsScope, Product, StatsFieldName, StatsSnapshot,
             stats_scopes,
+            universe::{self, FeedSnap, Universe},
         },
         net::{ApiError, QueryState, Watch},
     },

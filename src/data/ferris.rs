@@ -13,7 +13,8 @@
 //!   ([`Capabilities::snapshot`], [`Capabilities::realtime`]).
 //! - Market statistics ([`market_stats`]): every market of a scope with
 //!   prices, funding, volume and open interest, polled through one shared
-//!   query per scope ([`Ferris::market_stats_query`]).
+//!   query per scope ([`Ferris::market_stats_query`]); [`universe`] is the
+//!   scopes polled as of one moment, with their USD volume estimates.
 //! - Market catalogs ([`catalog`]): every market of an exchange, one
 //!   shared request per listing scope ([`Ferris::catalog_query`]), which
 //!   pickers offer as [`MarketSelection`]s.
@@ -35,6 +36,7 @@ mod market;
 pub mod market_stats;
 mod protocol;
 pub mod trades;
+pub mod universe;
 mod venues;
 
 use std::{rc::Rc, time::Duration};

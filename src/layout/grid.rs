@@ -1,11 +1,12 @@
 //! Integer grid geometry, independent of GPUI. Row height and gaps match lattice-pro.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    data::WidgetId,
+    data::{WidgetId, ferris::MarketSelection},
+    link::LinkColor,
     widgets::{WidgetKind, WidgetSettings},
 };
 
@@ -336,6 +337,61 @@ impl Grid {
             found = true;
         }
         found
+    }
+
+    /// Links `widget`'s tab to `color` (or to none) in every copy of it;
+    /// false when no tab of this grid is that widget, or its widget cannot
+    /// be linked.
+    pub fn set_link(&mut self, widget: WidgetId, color: Option<LinkColor>) -> bool {
+        let mut found = false;
+        for tab in self.tabs_mut().filter(|tab| tab.widget == widget) {
+            if let TabWidget::Known(settings) = &tab.settings
+                && let Some(linked) = settings.with_link(color)
+            {
+                tab.settings = TabWidget::Known(linked);
+                found = true;
+            }
+        }
+        found
+    }
+
+    /// Shows `market` on every widget of this grid linked to `color` (in
+    /// every copy of its tab), adding each to `sent`.
+    pub fn link_market(
+        &mut self,
+        color: LinkColor,
+        market: &MarketSelection,
+        sent: &mut HashSet<WidgetId>,
+    ) {
+        for tab in self.tabs_mut() {
+            if let TabWidget::Known(settings) = &tab.settings
+                && settings.link() == Some(Some(color))
+                && let Some(showing) = settings.with_market(market)
+            {
+                tab.settings = TabWidget::Known(showing);
+                sent.insert(tab.widget);
+            }
+        }
+    }
+
+    /// Adds each widget of this grid that can be linked to `links`, with
+    /// the color it is linked to.
+    pub fn links(&self, links: &mut HashMap<WidgetId, Option<LinkColor>>) {
+        for tab in self.layouts.iter().flatten().flat_map(|pane| &pane.tabs) {
+            if let TabWidget::Known(settings) = &tab.settings
+                && let Some(link) = settings.link()
+            {
+                links.insert(tab.widget, link);
+            }
+        }
+    }
+
+    /// Every copy of every tab.
+    fn tabs_mut(&mut self) -> impl Iterator<Item = &mut Tab> {
+        self.layouts
+            .iter_mut()
+            .flatten()
+            .flat_map(|pane| &mut pane.tabs)
     }
 
     /// Adds a pane holding one tab of `kind`, below every other pane.
