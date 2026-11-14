@@ -27,5 +27,6 @@ mod routing;
 mod selection;
 
 pub(super) use catalog_row::{Derived, extended_symbol, hyperliquid_symbol};
+pub use routing::RestTarget;
 pub(super) use routing::{Requested, apex_symbol, bitfinex_symbol, kucoin_symbol};
 pub use selection::{MarketKey, MarketSelection, MarketType};

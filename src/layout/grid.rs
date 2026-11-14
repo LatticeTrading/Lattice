@@ -35,7 +35,21 @@ pub struct Tab {
     /// The widget's kind and settings, the same in every breakpoint's copy.
     /// A tab's kind never changes (another kind would be another widget,
     /// with a new id).
-    pub settings: WidgetSettings,
+    pub settings: TabWidget,
+}
+
+/// What a tab's widget is: one this build knows, with its settings, or one
+/// it does not (a newer build's), kept exactly as it was saved so the next
+/// save writes it back unchanged. An unknown tab shows as unavailable.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TabWidget {
+    Known(WidgetSettings),
+    Unknown {
+        /// The saved kind id.
+        kind: String,
+        /// The saved settings member, if there was one.
+        settings: Option<serde_json::Value>,
+    },
 }
 
 /// What tabs were called before widgets existed.
@@ -48,12 +62,16 @@ impl Tab {
             id,
             title: kind.title().into(),
             widget: WidgetId::fresh(),
-            settings: WidgetSettings::new(kind),
+            settings: TabWidget::Known(WidgetSettings::new(kind)),
         }
     }
 
-    pub fn kind(&self) -> WidgetKind {
-        self.settings.kind()
+    /// Its widget's kind; `None` for a kind this build does not know.
+    pub fn kind(&self) -> Option<WidgetKind> {
+        match &self.settings {
+            TabWidget::Known(settings) => Some(settings.kind()),
+            TabWidget::Unknown { .. } => None,
+        }
     }
 }
 
@@ -61,7 +79,8 @@ impl Tab {
 /// a Market Screener, and `settings` is left out while it holds the kind's
 /// defaults, so a screener tab saves exactly as it did before kinds and
 /// settings existed, and those saves load as screeners. An unknown kind
-/// (from a newer build) loads as a Market Screener.
+/// (from a newer build) is kept with its settings as saved
+/// ([`TabWidget::Unknown`]) and written back unchanged.
 #[derive(Serialize, Deserialize)]
 struct TabRecord {
     id: usize,
@@ -74,30 +93,53 @@ struct TabRecord {
 
 impl From<TabRecord> for Tab {
     fn from(record: TabRecord) -> Self {
-        let kind = match record.kind.as_deref() {
-            None => WidgetKind::UNNAMED,
-            Some(id) => WidgetKind::from_id(id).unwrap_or_else(|| {
-                log::warn!("Lattice: tab {} has unknown widget {id:?}", record.id);
-                WidgetKind::UNNAMED
-            }),
+        let known = match record.kind.as_deref() {
+            None => Some(WidgetKind::UNNAMED),
+            Some(id) => WidgetKind::from_id(id),
+        };
+        let settings = match known {
+            Some(kind) => TabWidget::Known(WidgetSettings::read(
+                kind,
+                record.settings.unwrap_or_default(),
+            )),
+            None => {
+                let kind = record.kind.unwrap_or_default();
+                log::warn!(
+                    "Lattice: tab {} has unknown widget {kind:?}; kept as unavailable",
+                    record.id
+                );
+                TabWidget::Unknown {
+                    kind,
+                    settings: record.settings,
+                }
+            }
         };
         Self {
             id: record.id,
             title: record.title,
             widget: WidgetId::fresh(),
-            settings: WidgetSettings::read(kind, record.settings.unwrap_or_default()),
+            settings,
         }
     }
 }
 
 impl From<Tab> for TabRecord {
     fn from(tab: Tab) -> Self {
-        let kind = tab.kind();
+        let (kind, settings) = match tab.settings {
+            TabWidget::Known(settings) => {
+                let kind = settings.kind();
+                (
+                    (kind != WidgetKind::UNNAMED).then(|| kind.id().to_owned()),
+                    (!settings.is_default()).then(|| settings.to_value()),
+                )
+            }
+            TabWidget::Unknown { kind, settings } => (Some(kind), settings),
+        };
         Self {
             id: tab.id,
             title: tab.title,
-            kind: (kind != WidgetKind::UNNAMED).then(|| kind.id().to_owned()),
-            settings: (!tab.settings.is_default()).then(|| tab.settings.to_value()),
+            kind,
+            settings,
         }
     }
 }
@@ -264,7 +306,7 @@ impl Grid {
     /// them (the settings differ only in a save edited by hand). A tab is known
     /// by its pane and tab ids, as the tab operations find it.
     pub fn unify_widgets(&mut self) {
-        let mut first: HashMap<(usize, usize), (WidgetId, WidgetSettings)> = HashMap::new();
+        let mut first: HashMap<(usize, usize), (WidgetId, TabWidget)> = HashMap::new();
         for pane in self.layouts.iter_mut().flatten() {
             let pane_id = pane.id;
             for tab in &mut pane.tabs {
@@ -288,9 +330,9 @@ impl Grid {
             .iter_mut()
             .flatten()
             .flat_map(|pane| &mut pane.tabs)
-            .filter(|tab| tab.widget == widget && tab.kind() == settings.kind())
+            .filter(|tab| tab.widget == widget && tab.kind() == Some(settings.kind()))
         {
-            settings.clone_into(&mut tab.settings);
+            tab.settings = TabWidget::Known(settings.clone());
             found = true;
         }
         found

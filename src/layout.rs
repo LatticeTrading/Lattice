@@ -38,7 +38,7 @@ use crate::{
         picker::{Picker, Target},
     },
 };
-use grid::{GAP, Pane, ROW_STEP, Tab, breakpoint, column_step, columns};
+use grid::{GAP, Pane, ROW_STEP, Tab, TabWidget, breakpoint, column_step, columns};
 use nsh_core::prelude::*;
 
 #[derive(Clone, PartialEq)]
@@ -642,10 +642,13 @@ fn tab_content(
     panel: SettingsPanel,
 ) -> View {
     // The row is keyed by widget, whose tab id and kind never change.
-    let (tab_id, widget) = tab.with_untracked(|tab| (tab.id, tab.widget));
+    let (tab_id, widget, kind) = tab.with_untracked(|tab| (tab.id, tab.widget, tab.kind()));
     let shown = computed(move || active_tab.get() == tab_id);
     let attached = sessions.attach(widget, shown);
-    let body = widgets::view(&attached, tab_handle(tab, shown, workspace, panel));
+    let body = match kind {
+        Some(kind) => widgets::view(&attached, tab_handle(tab, kind, shown, workspace, panel)),
+        None => unavailable(tab),
+    };
     attached.release_on_cleanup();
     view()
         .flex_1()
@@ -661,22 +664,29 @@ fn tab_content(
 /// its pane's settings panel.
 fn tab_handle(
     tab: ReadSignal<Tab>,
+    kind: WidgetKind,
     shown: Memo<bool>,
     workspace: Signal<StoredWorkspace>,
     panel: SettingsPanel,
 ) -> TabHandle {
-    let (widget, kind) = tab.with_untracked(|tab| (tab.widget, tab.settings.kind()));
+    let widget = tab.with_untracked(|tab| tab.widget);
     TabHandle {
         kind,
         read: Rc::new(move |read: &mut dyn FnMut(&WidgetSettings)| {
-            tab.with(|tab| read(&tab.settings));
+            tab.with(|tab| {
+                if let TabWidget::Known(settings) = &tab.settings {
+                    read(settings);
+                }
+            });
         }),
         shown,
         save: Rc::new(move |next: &WidgetSettings| {
             // Nothing when unchanged, or when the tab is gone.
             let changed = workspace.with_untracked(|state| {
                 widget_ids(state).contains(&widget)
-                    && tab.with_untracked(|tab| tab.settings != *next)
+                    && tab.with_untracked(
+                        |tab| !matches!(&tab.settings, TabWidget::Known(saved) if saved == next),
+                    )
             });
             if changed {
                 workspace.update(|state| {
@@ -688,4 +698,36 @@ fn tab_handle(
         }),
         panel,
     }
+}
+
+/// A tab whose widget this build does not know (a newer build saved it):
+/// it says so, and its record is kept as saved, so that build still finds
+/// its widget there.
+fn unavailable(tab: ReadSignal<Tab>) -> View {
+    let kind = tab.with_untracked(|tab| match &tab.settings {
+        TabWidget::Unknown { kind, .. } => kind.clone(),
+        TabWidget::Known(_) => String::new(),
+    });
+    view()
+        .flex_1()
+        .min_h(px(0.0))
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(6.0))
+        .px(px(20.0))
+        .py(px(40.0))
+        .text_center()
+        .text_size(px(12.0))
+        .text_color(theme::TEXT_MUTED)
+        .role(AccessibilityRole::Text)
+        .test_id("widget-unavailable")
+        .child(text(
+            "This widget is not available in this version of Lattice.",
+        ))
+        .child(
+            text(format!("Widget: {kind}"))
+                .text_size(px(11.0))
+                .text_color(theme::TEXT_FAINT),
+        )
 }

@@ -44,7 +44,7 @@ pub use capabilities::{
 pub use catalog::{
     Catalog, CatalogMarket, CatalogScope, SymbolQuery, catalog_scopes, merge as merge_catalogs,
 };
-pub use market::{MarketKey, MarketSelection, MarketType};
+pub use market::{MarketKey, MarketSelection, MarketType, RestTarget};
 pub use market_stats::{MarketStatsScope, StatsFieldName, StatsSnapshot, stats_scopes};
 pub use protocol::{Channel, FerrisProtocol, FerrisPush, FerrisTopic};
 pub use trades::{Side, Trade, TradeFeed, TradeRow};

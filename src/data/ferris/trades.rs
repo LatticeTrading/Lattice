@@ -34,7 +34,8 @@ use nsh_core::{prelude::*, time::unix_ms};
 use serde_json::{Value, json};
 
 use super::{
-    Availability, Channel, Ferris, FerrisPush, FerrisTopic, MarketKey, MarketSelection, Operation,
+    Availability, Channel, Ferris, FerrisPush, MarketKey, MarketSelection, Operation, Requirement,
+    RestTarget,
 };
 use crate::data::net::{FeedLease, FeedNode, TaskHandle, TopicPhase};
 
@@ -415,23 +416,19 @@ fn settle(feed: &Feed) {
 /// the old app's did.
 async fn snapshot(ferris: &Ferris, market: &MarketSelection, label: &str) -> Option<Value> {
     if let Ok(capabilities) = ferris.capabilities().await
-        && capabilities.snapshot(
+        && Requirement::snapshot(Operation::FetchTrades).availability(
+            &capabilities,
             &market.exchange,
-            Operation::FetchTrades,
-            Some(market.kind.product()),
+            market.kind.product(),
         ) == Availability::Unsupported
     {
         return None;
     }
-    let FerrisTopic::Market {
+    let RestTarget {
         exchange,
         symbol,
         params,
-        ..
-    } = market.rest_topic(Channel::Trades).ok()?
-    else {
-        return None;
-    };
+    } = market.rest_target().ok()?;
     let body = json!({
         "exchange": exchange,
         "symbol": symbol,

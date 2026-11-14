@@ -207,7 +207,8 @@ impl FerrisTopic {
     }
 }
 
-fn exchange_id(exchange: &str) -> Result<String, ApiError> {
+/// An exchange id as Ferris reads it: trimmed, lower case, not empty.
+pub(super) fn exchange_id(exchange: &str) -> Result<String, ApiError> {
     let id = exchange.trim().to_ascii_lowercase();
     if id.is_empty() {
         return Err(ApiError::invalid_request(
@@ -217,7 +218,8 @@ fn exchange_id(exchange: &str) -> Result<String, ApiError> {
     Ok(id)
 }
 
-fn params_object(params: Value) -> Result<Map<String, Value>, ApiError> {
+/// Request params as Ferris reads them: an object (null is none).
+pub(super) fn params_object(params: Value) -> Result<Map<String, Value>, ApiError> {
     match params {
         Value::Null => Ok(Map::new()),
         Value::Object(params) => Ok(params),

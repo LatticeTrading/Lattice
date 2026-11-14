@@ -184,11 +184,11 @@ impl Capabilities {
     pub fn realtime(
         &self,
         exchange: &str,
-        channel: &str,
+        channel: Channel,
         product: Option<Product>,
     ) -> Availability {
         self.exchange(exchange)
-            .and_then(|exchange| exchange.features.realtime.get(channel))
+            .and_then(|exchange| exchange.features.realtime.get(channel.as_str()))
             .map_or(Availability::Unknown, |feature| {
                 feature.availability(product)
             })
@@ -214,6 +214,14 @@ impl Requirement {
         }
     }
 
+    /// REST `operation` only.
+    pub fn snapshot(operation: Operation) -> Self {
+        Self {
+            snapshot: Some(operation),
+            realtime: None,
+        }
+    }
+
     /// Whether markets of `product` on `exchange` meet it (the old
     /// `getCapabilityRequirementAvailability`): an explicit denial of either
     /// part wins over unknown metadata, which wins over support. Callers
@@ -228,7 +236,7 @@ impl Requirement {
             capabilities.snapshot(exchange, operation, Some(product))
         });
         let realtime = self.realtime.map_or(Availability::Supported, |channel| {
-            capabilities.realtime(exchange, channel.as_str(), Some(product))
+            capabilities.realtime(exchange, channel, Some(product))
         });
         match (snapshot, realtime) {
             (Availability::Unsupported, _) | (_, Availability::Unsupported) => {

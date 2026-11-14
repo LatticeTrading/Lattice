@@ -2,16 +2,29 @@
 //! its route key, whether it can be streamed, and the venues' repairs of
 //! request symbol aliases.
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::{
     MarketSelection, MarketType,
     expiry::{compact_day, is_bare, is_iso_day, plain_pair},
 };
 use crate::data::{
-    ferris::{Channel, FerrisTopic, Venue},
+    ferris::{
+        Channel, FerrisTopic, Venue,
+        protocol::{exchange_id, params_object},
+    },
     net::ApiError,
 };
+
+/// What a REST request for a market names
+/// ([`MarketSelection::rest_target`]), as Ferris reads it: the exchange id
+/// lower case, the symbol trimmed, the params an object.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RestTarget {
+    pub exchange: String,
+    pub symbol: String,
+    pub params: Map<String, Value>,
+}
 
 impl MarketSelection {
     /// The topic of `channel` that streams this market.
@@ -24,16 +37,33 @@ impl MarketSelection {
         )
     }
 
-    /// The topic a REST snapshot of it is asked for with (its exchange,
-    /// symbol and params): the streamed one, except on venues whose REST
-    /// products are told apart by catalog id (KuCoin and Bitfinex,
-    /// [`Venue::rest_by_market_id`]).
-    pub fn rest_topic(&self, channel: Channel) -> Result<FerrisTopic, ApiError> {
+    /// What a REST request for it names (its exchange, symbol and params):
+    /// the streamed symbol, except on venues whose REST products are told
+    /// apart by catalog id (KuCoin and Bitfinex, [`Venue::rest_by_market_id`]).
+    pub fn rest_target(&self) -> Result<RestTarget, ApiError> {
         let symbol = match &self.market_id {
             Some(id) if Venue::of(&self.exchange).rest_by_market_id => id.clone(),
             _ => self.routed_symbol(),
         };
-        FerrisTopic::market(channel, &self.exchange, &symbol, self.request_params())
+        let symbol = symbol.trim();
+        if symbol.is_empty() {
+            return Err(ApiError::invalid_request("a Ferris request needs a symbol"));
+        }
+        Ok(RestTarget {
+            exchange: exchange_id(&self.exchange)?,
+            symbol: symbol.to_owned(),
+            params: params_object(self.request_params())?,
+        })
+    }
+
+    /// The REST target as a topic of `channel` (what the identity keys).
+    pub(super) fn rest_topic(&self, channel: Channel) -> Result<FerrisTopic, ApiError> {
+        let RestTarget {
+            exchange,
+            symbol,
+            params,
+        } = self.rest_target()?;
+        FerrisTopic::market(channel, &exchange, &symbol, Value::Object(params))
     }
 
     /// The request symbol with the venue aliases repaired (the old app's
