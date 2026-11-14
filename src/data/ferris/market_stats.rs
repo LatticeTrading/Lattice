@@ -8,7 +8,8 @@
 //! - A *partition* is one complete request profile of an exchange (Bybit's
 //!   linear perpetuals, its inverse futures, ...): the backend will list
 //!   them in `marketStats.partitions`; until it does, they come from the
-//!   table below, ported from the old app's `marketPartitions.ts`.
+//!   venue's [`stats_profiles`](super::Venue::stats_profiles), ported from
+//!   the old app's `marketPartitions.ts`.
 //! - [`stats_scopes`] turns the capabilities into the scopes a consumer
 //!   polls, and [`super::Ferris::market_stats_query`] into one shared query
 //!   per scope, so every widget asking for a scope shares one request.
@@ -21,7 +22,7 @@ use std::{collections::HashMap, rc::Rc, time::Duration};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Map, Value};
 
-use super::{Capabilities, CapabilityState, ExchangeCapabilities, Product};
+use super::{Capabilities, CapabilityState, ExchangeCapabilities, Product, Venue};
 use crate::data::net::canonical_json;
 
 /// A statistics field, as the API names it.
@@ -195,11 +196,10 @@ impl StatsCapability {
     }
 }
 
-/// Fields an exchange advertises but serves only for selected markets:
-/// Binance answers a bulk request for open interest with
-/// `VALIDATION_ERROR` ("requires selected marketIds").
+/// Whether `exchange` advertises `field` but serves it only for selected
+/// markets ([`Venue::stats_bulk_unsupported`]: Binance's open interest).
 pub fn bulk_unsupported(exchange: &str, field: StatsFieldName) -> bool {
-    exchange == "binance" && field == StatsFieldName::OpenInterest
+    Venue::of(exchange).stats_bulk_unsupported.contains(&field)
 }
 
 // Partitions.
@@ -216,61 +216,8 @@ pub struct Partition {
     pub stats_params: Option<Map<String, Value>>,
 }
 
-/// A partition of the fallback table: `<exchange>:<id>`, its label,
-/// product and statistics parameters.
-type Profile = (
-    &'static str,
-    &'static str,
-    Product,
-    &'static [(&'static str, &'static str)],
-);
-
-const TYPE_PERP: &[(&str, &str)] = &[("type", "perp")];
-const TYPE_FUTURE: &[(&str, &str)] = &[("type", "future")];
-const TYPE_SPOT: &[(&str, &str)] = &[("type", "spot")];
-const TYPE_OPTION: &[(&str, &str)] = &[("type", "option")];
-const INVERSE_PERP: &[(&str, &str)] = &[("category", "inverse"), ("type", "perp")];
-const INVERSE_FUTURE: &[(&str, &str)] = &[("category", "inverse"), ("type", "future")];
-
-/// The request profiles until the backend sends `partitions`: complete
-/// profiles, not selectors to merge into another profile.
-fn fallback_profiles(exchange: &str) -> &'static [Profile] {
-    use Product::{Future, Option, Perp, Spot};
-    const LINEAR_INVERSE: &[Profile] = &[
-        ("linear-perp", "Linear perpetuals", Perp, TYPE_PERP),
-        ("linear-future", "Linear futures", Future, TYPE_FUTURE),
-        ("inverse-perp", "Inverse perpetuals", Perp, INVERSE_PERP),
-        ("inverse-future", "Inverse futures", Future, INVERSE_FUTURE),
-        ("spot", "Spot", Spot, TYPE_SPOT),
-        ("option", "Options", Option, TYPE_OPTION),
-    ];
-    const PERP_SPOT: &[Profile] = &[
-        ("perp", "Perpetuals", Perp, TYPE_PERP),
-        ("spot", "Spot", Spot, TYPE_SPOT),
-    ];
-    const PERP: &[Profile] = &[("perp", "Perpetuals", Perp, TYPE_PERP)];
-    match exchange {
-        "binance" | "bybit" => LINEAR_INVERSE,
-        "kucoin" => &[
-            ("linear-perp", "Linear perpetuals", Perp, TYPE_PERP),
-            ("future", "Futures", Future, TYPE_FUTURE),
-            ("spot", "Spot", Spot, TYPE_SPOT),
-        ],
-        "hyperliquid" => &[
-            ("linear-perp", "Linear perpetuals", Perp, TYPE_PERP),
-            ("spot", "Spot", Spot, TYPE_SPOT),
-        ],
-        "bitfinex" | "aster" | "lighterxyz" | "nado" | "lighter" => PERP_SPOT,
-        "extended" | "apex" | "variational" => PERP,
-        // Perpl and Phoenix take no parameters: Phoenix rejects `type`, and
-        // both catalogs are perpetuals only.
-        "perpl" | "phoenix" => &[("perp", "Perpetuals", Perp, &[])],
-        _ => &[],
-    }
-}
-
 /// `exchange`'s partitions: the backend's when it lists them, else the
-/// fallback table once per advertised scope dimension (scope parameters
+/// venue's fallback profiles once per advertised scope dimension (scope parameters
 /// other than `category` and `type`, which the profiles already say).
 fn partitions(exchange: &str, capability: &StatsCapability) -> Vec<Partition> {
     if let Some(partitions) = &capability.partitions {
@@ -293,7 +240,7 @@ fn partitions(exchange: &str, capability: &StatsCapability) -> Vec<Partition> {
         dimensions.push(("{}".to_owned(), Map::new()));
     }
     let mut result = Vec::new();
-    for &(id, label, product, params) in fallback_profiles(exchange) {
+    for &(id, label, product, params) in Venue::of(exchange).stats_profiles {
         for (key, dimension) in &dimensions {
             let mut stats: Map<String, Value> = params
                 .iter()
@@ -391,12 +338,15 @@ pub fn stats_scopes(
     scopes
 }
 
-/// Bybit without parameters means its linear category, as the old app sent.
+/// The params sent for a scope: its own, or its venue's default when it
+/// has none ([`Venue::stats_default_params`]: Bybit's linear category).
 fn request_params(exchange: &str, params: Map<String, Value>) -> Map<String, Value> {
-    if exchange == "bybit" && params.is_empty() {
-        let mut linear = Map::new();
-        linear.insert("category".to_owned(), Value::from("linear"));
-        return linear;
+    let defaults = Venue::of(exchange).stats_default_params;
+    if params.is_empty() && !defaults.is_empty() {
+        return defaults
+            .iter()
+            .map(|&(name, value)| (name.to_owned(), Value::from(value)))
+            .collect();
     }
     params
 }
@@ -415,18 +365,21 @@ pub(super) fn request_body(
 
 /// How long a statistics request may take: whole-exchange scopes of many
 /// fields are slow on the largest venues (old app measurements: 20-30s).
-/// Hyperliquid's typed scopes are large whatever they ask for.
+/// Some venues' typed scopes are large whatever they ask for, and some
+/// allow a large request longer ([`Venue::stats_typed_scopes_large`],
+/// [`Venue::stats_large_timeout`]: Hyperliquid).
 pub(super) fn request_timeout(
     exchange: &str,
     params: &Map<String, Value>,
     fields: usize,
 ) -> Duration {
-    let large = fields >= 5 || (exchange == "hyperliquid" && params.contains_key("type"));
-    Duration::from_secs(match exchange {
-        _ if !large => 15,
-        "hyperliquid" => 30,
-        _ => 20,
-    })
+    let venue = Venue::of(exchange);
+    let large = fields >= 5 || (venue.stats_typed_scopes_large && params.contains_key("type"));
+    if large {
+        venue.stats_large_timeout
+    } else {
+        Duration::from_secs(15)
+    }
 }
 
 // Snapshots.

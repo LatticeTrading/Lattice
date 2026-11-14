@@ -12,7 +12,7 @@ use std::{cmp::Ordering, collections::HashMap, rc::Rc};
 use crate::{
     data::{
         ferris::{
-            MarketStatsScope, Product, StatsSnapshot,
+            MarketStatsScope, Product, SettlementVolume, StatsSnapshot, Venue,
             market_stats::{FieldMeta, FieldState, StatsFieldName, StatsMarket},
         },
         net::ApiError,
@@ -469,11 +469,15 @@ struct Edge {
     source: Rc<RateSource>,
 }
 
-/// These products report settlement volume in the quote slot, not the
-/// market's quote asset.
+/// Whether the quote slot holds volume in the market's quote asset: some
+/// venues report settlement volume there ([`Venue::settlement_volume`]:
+/// Extended for every market, KuCoin for coin-margined ones).
 fn has_quote_asset_volume(market: &StatsMarket) -> bool {
-    let settlement_volume = market.exchange == "extended"
-        || (market.exchange == "kucoin" && market.settle.as_deref() == Some(market.base.as_str()));
+    let settlement_volume = match Venue::of(&market.exchange).settlement_volume {
+        SettlementVolume::Never => false,
+        SettlementVolume::Always => true,
+        SettlementVolume::CoinMargined => market.settle.as_deref() == Some(market.base.as_str()),
+    };
     !settlement_volume || market.settle.as_deref() == Some(market.quote.as_str())
 }
 

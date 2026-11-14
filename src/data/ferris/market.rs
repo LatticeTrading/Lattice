@@ -18,7 +18,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{Channel, FerrisTopic, Product};
+use super::{Channel, FerrisTopic, Product, Venue};
 use crate::data::net::ApiError;
 
 /// A market's product type, under the old app's names.
@@ -172,11 +172,12 @@ impl MarketSelection {
     }
 
     /// The topic a REST snapshot of it is asked for with (its exchange,
-    /// symbol and params): the streamed one, except that KuCoin and
-    /// Bitfinex REST products are told apart by catalog id.
+    /// symbol and params): the streamed one, except on venues whose REST
+    /// products are told apart by catalog id (KuCoin and Bitfinex,
+    /// [`Venue::rest_by_market_id`]).
     pub fn rest_topic(&self, channel: Channel) -> Result<FerrisTopic, ApiError> {
         let symbol = match &self.market_id {
-            Some(id) if matches!(self.exchange.as_str(), "bitfinex" | "kucoin") => id.clone(),
+            Some(id) if Venue::of(&self.exchange).rest_by_market_id => id.clone(),
             _ => self.routed_symbol(),
         };
         FerrisTopic::market(channel, &self.exchange, &symbol, self.request_params())
@@ -259,7 +260,8 @@ impl MarketSelection {
     /// app's `createMarketIdentityKey`): the exchange, the repaired request
     /// symbol, the category where it picks the product, and the type.
     pub fn route_key(&self) -> String {
-        let category = if matches!(self.exchange.as_str(), "bitfinex" | "kucoin") {
+        // A venue that routes by type never picks a product by category.
+        let category = if !Venue::of(&self.exchange).routes_by_type.is_empty() {
             String::new()
         } else {
             self.category
@@ -286,12 +288,11 @@ impl MarketSelection {
     }
 
     /// Whether Ferris can stream it: a dated future of Binance, Bybit or
-    /// KuCoin needs its exact expiry day in the request symbol (the old
-    /// app's `isRoutableMarketSelection`); a month-code contract has none.
+    /// KuCoin ([`Venue::futures_need_day`]) needs its exact expiry day in
+    /// the request symbol (the old app's `isRoutableMarketSelection`); a
+    /// month-code contract has none.
     pub fn is_routable(&self) -> bool {
-        if self.kind != MarketType::Future
-            || !matches!(self.exchange.as_str(), "binance" | "bybit" | "kucoin")
-        {
+        if self.kind != MarketType::Future || !Venue::of(&self.exchange).futures_need_day {
             return true;
         }
         self.request_symbol
@@ -418,11 +419,12 @@ impl MarketSelection {
         });
         let settle = settle.flatten();
         let category = category.or_else(|| {
+            let venue = Venue::of(&exchange);
             let family = derive_family(kind, &base, &quote, settle.as_deref());
-            match (kind, exchange.as_str(), family) {
-                (MarketType::Spot, "kucoin" | "bitfinex", _) => None,
-                (MarketType::Spot, ..) => Some("spot".to_owned()),
-                (_, "binance" | "bybit", Some(family @ (Family::Linear | Family::Inverse))) => {
+            match (kind, family) {
+                (MarketType::Spot, _) if venue.routes_by_type.contains(&MarketType::Spot) => None,
+                (MarketType::Spot, _) => Some("spot".to_owned()),
+                (_, Some(family @ (Family::Linear | Family::Inverse))) if venue.linear_inverse => {
                     Some(family.as_str().to_owned())
                 }
                 _ => None,
@@ -450,15 +452,10 @@ impl MarketSelection {
     /// The params that pick the product on venues that need them (the old
     /// app's `marketRequestParams`).
     fn request_params(&self) -> Value {
-        let by_type = match self.exchange.as_str() {
-            "kucoin" => matches!(
-                self.kind,
-                MarketType::Spot | MarketType::Perp | MarketType::Future
-            ),
-            "bitfinex" => matches!(self.kind, MarketType::Spot | MarketType::Perp),
-            _ => false,
-        };
-        if by_type {
+        if Venue::of(&self.exchange)
+            .routes_by_type
+            .contains(&self.kind)
+        {
             return json!({ "type": self.kind.as_str() });
         }
         match self.category.as_deref().map(str::trim) {
@@ -471,9 +468,9 @@ impl MarketSelection {
 }
 
 /// The request symbol with the venue aliases repaired (the old app's
-/// `canonicalizeRequestSymbol`): Apex `X/USDT` perpetuals stream as
-/// `X/USDT:USDT`, KuCoin and Bitfinex pairs carry their settlement, KuCoin
-/// dated futures their day.
+/// `canonicalizeRequestSymbol`), by the venue's own repair
+/// ([`Venue::repair_symbol`]: [`apex_symbol`], [`kucoin_symbol`],
+/// [`bitfinex_symbol`]); as requested elsewhere.
 fn canonical_symbol(
     exchange: &str,
     kind: MarketType,
@@ -486,54 +483,82 @@ fn canonical_symbol(
         .map(str::trim)
         .filter(|settle| !settle.is_empty())
         .map(str::to_ascii_uppercase);
-    match exchange.trim().to_ascii_lowercase().as_str() {
-        "kucoin" => {
-            let pair = requested.trim().to_ascii_uppercase();
-            let Some((base, quote)) = plain_pair(&pair) else {
-                return requested.to_owned();
-            };
-            if !matches!(kind, MarketType::Perp | MarketType::Future) {
-                return requested.to_owned();
-            }
-            let settlement = settle.or_else(|| match quote {
-                "USD" => Some(base.to_owned()),
-                "USDT" | "USDC" => Some(quote.to_owned()),
-                _ => None,
-            });
-            match (kind, settlement) {
-                (MarketType::Perp, Some(settlement)) => format!("{pair}:{settlement}"),
-                (MarketType::Future, Some(settlement)) if expiry.is_some_and(is_iso_day) => {
-                    let day = compact_day(expiry.unwrap_or_default());
-                    format!("{pair}:{settlement}-{day}")
-                }
-                // A month-code native id has no exact day: kept as its own
-                // identity, not routed to another contract.
-                (MarketType::Future, _) if !exchange_symbol.is_empty() => {
-                    exchange_symbol.to_owned()
-                }
-                _ => requested.to_owned(),
-            }
+    Venue::of(exchange)
+        .repair_symbol
+        .and_then(|repair| {
+            repair(&Requested {
+                kind,
+                requested,
+                settle: settle.as_deref(),
+                expiry,
+                exchange_symbol,
+            })
+        })
+        .unwrap_or_else(|| requested.to_owned())
+}
+
+/// What a venue's symbol repair reads ([`Venue::repair_symbol`]).
+pub(super) struct Requested<'a> {
+    kind: MarketType,
+    /// The symbol asked for, as given.
+    requested: &'a str,
+    /// The settlement asset, upper case, when known.
+    settle: Option<&'a str>,
+    expiry: Option<&'a str>,
+    exchange_symbol: &'a str,
+}
+
+/// KuCoin's pairs carry their settlement, its dated futures their day; a
+/// month-code native id has no exact day and is kept as its own identity,
+/// not routed to another contract.
+pub(super) fn kucoin_symbol(input: &Requested<'_>) -> Option<String> {
+    let pair = input.requested.trim().to_ascii_uppercase();
+    let (base, quote) = plain_pair(&pair)?;
+    if !matches!(input.kind, MarketType::Perp | MarketType::Future) {
+        return None;
+    }
+    let settlement = input.settle.map(str::to_owned).or_else(|| match quote {
+        "USD" => Some(base.to_owned()),
+        "USDT" | "USDC" => Some(quote.to_owned()),
+        _ => None,
+    });
+    match (input.kind, settlement) {
+        (MarketType::Perp, Some(settlement)) => Some(format!("{pair}:{settlement}")),
+        (MarketType::Future, Some(settlement)) if input.expiry.is_some_and(is_iso_day) => {
+            let day = compact_day(input.expiry.unwrap_or_default());
+            Some(format!("{pair}:{settlement}-{day}"))
         }
-        "bitfinex" if kind == MarketType::Perp => {
-            let pair = requested.trim().to_ascii_uppercase();
-            match pair.split_once('/') {
-                Some((base, quote))
-                    if is_bare(base) && !quote.is_empty() && !quote.contains(':') =>
-                {
-                    let settlement = settle.unwrap_or_else(|| quote.to_owned());
-                    format!("{pair}:{settlement}")
-                }
-                _ => requested.to_owned(),
-            }
+        (MarketType::Future, _) if !input.exchange_symbol.is_empty() => {
+            Some(input.exchange_symbol.to_owned())
         }
-        "apex" if kind == MarketType::Perp => {
-            let pair = requested.trim().to_ascii_uppercase();
-            match plain_pair(&pair) {
-                Some((_, "USDT")) => format!("{pair}:USDT"),
-                _ => requested.to_owned(),
-            }
+        _ => None,
+    }
+}
+
+/// Bitfinex perpetual pairs carry their settlement.
+pub(super) fn bitfinex_symbol(input: &Requested<'_>) -> Option<String> {
+    if input.kind != MarketType::Perp {
+        return None;
+    }
+    let pair = input.requested.trim().to_ascii_uppercase();
+    match pair.split_once('/') {
+        Some((base, quote)) if is_bare(base) && !quote.is_empty() && !quote.contains(':') => {
+            let settlement = input.settle.unwrap_or(quote);
+            Some(format!("{pair}:{settlement}"))
         }
-        _ => requested.to_owned(),
+        _ => None,
+    }
+}
+
+/// Apex `X/USDT` perpetuals stream as `X/USDT:USDT`.
+pub(super) fn apex_symbol(input: &Requested<'_>) -> Option<String> {
+    if input.kind != MarketType::Perp {
+        return None;
+    }
+    let pair = input.requested.trim().to_ascii_uppercase();
+    match plain_pair(&pair) {
+        Some((_, "USDT")) => Some(format!("{pair}:USDT")),
+        _ => None,
     }
 }
 
@@ -560,6 +585,9 @@ struct Derivation<'a> {
 /// perpetuals `BASE/QUOTE:SETTLE` and dated futures
 /// `BASE/QUOTE:SETTLE-YYMMDD` (a month-code future keeps its native id and
 /// is not routable); KuCoin, Bitfinex and Apex through their alias repairs.
+/// What differs by venue is in its [`Venue`] record: its own rule first
+/// (Extended, Hyperliquid), then whether it has linear and inverse
+/// families (Binance, Bybit) and whether its symbols carry a settlement.
 ///
 /// Two rules differ from the old app's, checked against live Ferris
 /// (2026-11-13; the old ones subscribed to aliases):
@@ -574,7 +602,7 @@ struct Derivation<'a> {
 ///   under the settled symbol; Nado's REST answers with it too. Phoenix's
 ///   own symbols carry no settlement (`SOL/USD`), so they stay as listed.
 fn derive_request_symbol(input: &Derivation<'_>) -> String {
-    let exchange = input.exchange.trim().to_ascii_lowercase();
+    let venue = Venue::of(input.exchange);
     let settle = input
         .settle
         .flatten()
@@ -586,7 +614,7 @@ fn derive_request_symbol(input: &Derivation<'_>) -> String {
         .filter(|s| !s.is_empty())
     {
         return canonical_symbol(
-            &exchange,
+            input.exchange,
             input.kind,
             explicit,
             settle,
@@ -606,37 +634,34 @@ fn derive_request_symbol(input: &Derivation<'_>) -> String {
     let pair = format!("{base}/{quote}");
     let settlement = settle.map(str::to_uppercase);
 
-    // Extended's quote-qualified wire alias is not evidence of the market's
-    // family.
-    if exchange == "extended" && input.kind == MarketType::Perp {
-        return format!("{pair}:{}", settlement.unwrap_or(quote));
+    if let Some(symbol) = venue.derive_symbol.and_then(|derive| {
+        derive(&Derived {
+            kind: input.kind,
+            base: &base,
+            quote: &quote,
+            pair: &pair,
+            settlement: settlement.as_deref(),
+            catalog,
+            exchange_symbol,
+        })
+    }) {
+        return symbol;
     }
-    if exchange != "binance" && exchange != "bybit" {
-        if exchange == "hyperliquid" {
-            return if input.kind == MarketType::Spot {
-                pair
-            } else if catalog.contains(':') {
-                catalog.to_owned()
-            } else if exchange_symbol.contains(':') {
-                exchange_symbol.to_owned()
-            } else {
-                format!("{base}/USDC:USDC")
-            };
-        }
+    if !venue.linear_inverse {
         let listed = if catalog.is_empty() {
             exchange_symbol
         } else {
             catalog
         };
         if input.kind == MarketType::Perp
-            && exchange != "phoenix"
+            && !venue.unsettled_symbols
             && plain_pair(&listed.to_uppercase()).is_some()
             && let Some(settlement) = settlement
         {
             return format!("{pair}:{settlement}");
         }
         return canonical_symbol(
-            &exchange,
+            input.exchange,
             input.kind,
             listed,
             settle,
@@ -683,6 +708,45 @@ fn derive_request_symbol(input: &Derivation<'_>) -> String {
         // its native id rather than routing to another contract.
         _ => exchange_symbol.to_owned(),
     }
+}
+
+/// What a venue's own request symbol rule reads of a catalog market
+/// ([`Venue::derive_symbol`]).
+pub(super) struct Derived<'a> {
+    kind: MarketType,
+    /// Upper case.
+    base: &'a str,
+    /// Upper case.
+    quote: &'a str,
+    /// `BASE/QUOTE`.
+    pair: &'a str,
+    /// The settlement asset, upper case, when known.
+    settlement: Option<&'a str>,
+    /// The catalog's own symbol, trimmed.
+    catalog: &'a str,
+    /// The native id, or else the catalog's symbol.
+    exchange_symbol: &'a str,
+}
+
+/// Extended perpetuals are `BASE/QUOTE:SETTLE`: its quote-qualified wire
+/// alias is not evidence of the market's family.
+pub(super) fn extended_symbol(input: &Derived<'_>) -> Option<String> {
+    (input.kind == MarketType::Perp)
+        .then(|| format!("{}:{}", input.pair, input.settlement.unwrap_or(input.quote)))
+}
+
+/// Hyperliquid spot is `BASE/QUOTE`; its perpetuals, HIP-3 ones included,
+/// are the catalog's or native settled symbol, else `BASE/USDC:USDC`.
+pub(super) fn hyperliquid_symbol(input: &Derived<'_>) -> Option<String> {
+    Some(if input.kind == MarketType::Spot {
+        input.pair.to_owned()
+    } else if input.catalog.contains(':') {
+        input.catalog.to_owned()
+    } else if input.exchange_symbol.contains(':') {
+        input.exchange_symbol.to_owned()
+    } else {
+        format!("{}/USDC:USDC", input.base)
+    })
 }
 
 /// `BASE/QUOTE:SETTLE`, optionally `-YYMMDD` (the old

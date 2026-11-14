@@ -2,8 +2,9 @@
 //! lists, one shared request per catalog scope (the old app's
 //! `FerrisMarketsService` and `MarketSymbolService`).
 //!
-//! A scope is one request profile of one exchange. Most exchanges list
-//! every product in one reply (`{"params":{}}`); a few only list some
+//! A scope is one request profile of one exchange (its venue's
+//! [`catalog_profiles`](super::Venue::catalog_profiles)). Most exchanges
+//! list every product in one reply (`{"params":{}}`); a few only list some
 //! products unless asked for others by `category` (checked live
 //! 2026-11-13):
 //!
@@ -29,7 +30,7 @@ use std::{collections::HashSet, rc::Rc, time::Duration};
 
 use serde_json::{Map, Value, json};
 
-use super::{Availability, Capabilities, MarketSelection, MarketType, Operation, Product};
+use super::{Availability, Capabilities, MarketSelection, MarketType, Operation, Product, Venue};
 use crate::data::net::{ApiError, canonical_json};
 
 /// How long a catalog is fresh, and how often a watched one is refetched.
@@ -66,29 +67,9 @@ impl CatalogScope {
         json!({ "exchange": self.exchange, "params": self.params })
     }
 
-    /// Its deadline. Hyperliquid's catalog took 10-18s live (2026-11-13);
-    /// the old app allowed 20s for every catalog.
+    /// Its deadline ([`Venue::catalog_timeout`]).
     pub(super) fn timeout(&self) -> Duration {
-        if self.exchange == "hyperliquid" {
-            Duration::from_secs(30)
-        } else {
-            Duration::from_secs(20)
-        }
-    }
-}
-
-/// The listing profiles of `exchange`: a category (none for `{}`) and the
-/// products its reply lists.
-fn profiles(exchange: &str) -> &'static [(Option<&'static str>, &'static [Product])] {
-    use Product::{Future, Perp, Spot};
-    match exchange {
-        "binance" => &[
-            (None, &[Perp, Future]),
-            (Some("inverse"), &[Perp, Future]),
-            (Some("spot"), &[Spot]),
-        ],
-        "aster" => &[(None, &[Perp]), (Some("spot"), &[Spot])],
-        _ => &[(None, &[Spot, Perp, Future])],
+        Venue::of(&self.exchange).catalog_timeout
     }
 }
 
@@ -116,7 +97,7 @@ pub fn catalog_scopes(
         if feature.availability(None) != Availability::Supported {
             continue;
         }
-        for (category, products) in profiles(&id) {
+        for (category, products) in Venue::of(&id).catalog_profiles {
             let products: Vec<Product> = products
                 .iter()
                 .copied()
@@ -168,8 +149,10 @@ pub struct CatalogMarket {
 
 impl CatalogMarket {
     fn new(selection: MarketSelection) -> Self {
-        let key = match (&selection.market_id, selection.exchange.as_str()) {
-            (Some(id), "hyperliquid") => format!("hyperliquid:{id}"),
+        let key = match &selection.market_id {
+            Some(id) if Venue::of(&selection.exchange).catalog_keys_by_id => {
+                format!("{}:{id}", selection.exchange)
+            }
             _ => selection.route_key(),
         };
         let lower = selection.symbol.to_lowercase();

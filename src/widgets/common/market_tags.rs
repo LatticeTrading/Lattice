@@ -13,7 +13,7 @@ pub(crate) fn market_tags(
     detail: impl Fn() -> Option<String> + Clone + 'static,
 ) -> View {
     let tag = |content: Text| {
-        content
+        tag_text(content)
             .flex_none()
             .min_h(px(16.0))
             .px(px(5.0))
@@ -21,11 +21,6 @@ pub(crate) fn market_tags(
             .border_1()
             .border_color(theme::BORDER)
             .bg(theme::BACKGROUND)
-            .text_size(px(9.0))
-            .font_weight(FontWeight::SEMIBOLD)
-            .letter_spacing(px(0.4))
-            .uppercase()
-            .number_of_lines(1)
     };
     let shown = detail.clone();
     view()
@@ -39,4 +34,16 @@ pub(crate) fn market_tags(
                 .text_color(theme::WARNING)
                 .style_when(move || shown().is_none(), |s| s.hidden()),
         )
+}
+
+/// A market tag's text as the old `.market-tag` set it: small, semibold,
+/// spaced uppercase on one line. The caller picks its color (and its box,
+/// if any).
+pub(crate) fn tag_text(content: Text) -> Text {
+    content
+        .text_size(px(9.0))
+        .font_weight(FontWeight::SEMIBOLD)
+        .letter_spacing(px(0.4))
+        .uppercase()
+        .number_of_lines(1)
 }

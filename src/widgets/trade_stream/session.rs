@@ -2,11 +2,7 @@
 //! settings watch, and the rows its view shows (the widget's data,
 //! described in the parent module).
 
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-    time::Duration,
-};
+use std::{cell::Cell, rc::Rc, time::Duration};
 
 use nsh_core::{prelude::*, time::unix_ms};
 
@@ -16,7 +12,7 @@ use crate::{
         SessionScope,
         ferris::{Ferris, MarketSelection, TradeFeed, TradeRow},
     },
-    widgets::common::Shared,
+    widgets::common::{Keyed, Shared},
 };
 
 /// How often the trades-per-second rate is sampled while shown.
@@ -54,9 +50,8 @@ pub(super) struct Shown {
     pub failed: Vec<Rc<MarketSelection>>,
 }
 
-/// One market the session watches.
+/// One market the session watches (held by its identity).
 struct Watched {
-    identity: String,
     slot: u64,
     market: Rc<MarketSelection>,
     feed: TradeFeed,
@@ -83,7 +78,7 @@ impl Stream {
             ..Shown::default()
         })));
         let rate = signal(0.0_f64);
-        let watched: Rc<RefCell<Vec<Watched>>> = Rc::default();
+        let watched: Rc<Keyed<String, Watched>> = Rc::default();
         // Prints arrived (or the markets changed) since the rows were made.
         let dirty = Rc::new(Cell::new(true));
         // Bumped when `dirty` is set, so the visible view schedules a frame.
@@ -123,7 +118,7 @@ impl Stream {
                 let (watched, dirty) = (watched.clone(), dirty.clone());
                 Rc::new(move || {
                     dirty.set(false);
-                    let next = merge(&watched.borrow(), max_trades.get_untracked());
+                    let next = watched.with(|held| merge(held, max_trades.get_untracked()));
                     shown.try_set(Shared(Rc::new(next)));
                 })
             };
@@ -145,11 +140,11 @@ impl Stream {
             spawn(async move {
                 loop {
                     let now = unix_ms();
-                    let total = watched
-                        .borrow()
-                        .iter()
-                        .map(|watched| watched.feed.trades_per_second(now))
-                        .sum::<f64>();
+                    let total = watched.with(|held| {
+                        held.iter()
+                            .map(|(_, watched)| watched.feed.trades_per_second(now))
+                            .sum::<f64>()
+                    });
                     rate.try_set(total);
                     timer(RATE_EVERY).await;
                 }
@@ -165,42 +160,35 @@ impl Stream {
 /// that marks the session dirty on each change, and the rest are let go.
 fn follow_markets(
     ferris: &Ferris,
-    watched: &RefCell<Vec<Watched>>,
+    watched: &Keyed<String, Watched>,
     markets: &[MarketSelection],
     mark: &Rc<dyn Fn()>,
     next_slot: &Cell<u64>,
 ) {
-    let mut previous = std::mem::take(&mut *watched.borrow_mut());
-    let next: Vec<Watched> = markets
-        .iter()
-        .map(|market| {
-            let identity = market.identity();
-            if let Some(at) = previous.iter().position(|kept| kept.identity == identity) {
-                let mut kept = previous.swap_remove(at);
-                kept.market = Rc::new(market.clone());
-                return kept;
-            }
+    watched.follow(
+        markets.iter().map(|market| (market.identity(), market)),
+        |kept, market| {
+            kept.market = Rc::new(MarketSelection::clone(market));
+            true
+        },
+        |market| {
             let slot = next_slot.get();
             next_slot.set(slot + 1);
             let mark = mark.clone();
             Watched {
-                identity,
                 slot,
-                market: Rc::new(market.clone()),
+                market: Rc::new(MarketSelection::clone(market)),
                 feed: ferris.trades(market, move || mark()),
             }
-        })
-        .collect();
-    *watched.borrow_mut() = next;
-    // Markets no longer watched: their leases end here.
-    drop(previous);
+        },
+    );
 }
 
 /// The newest `max` prints across `watched`, newest first (ties in the
 /// markets' order, then arrival).
-fn merge(watched: &[Watched], max: usize) -> Shown {
+fn merge(watched: &[(String, Watched)], max: usize) -> Shown {
     let mut shown = Shown::default();
-    for market in watched {
+    for (_, market) in watched {
         shown.loading |= market.feed.loading();
         if market.feed.failed() {
             shown.failed.push(market.market.clone());

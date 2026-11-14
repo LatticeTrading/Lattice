@@ -11,17 +11,14 @@ use nsh_core::{
 
 use crate::{theme, ui};
 
-/// The largest number the field reads: one typed above it reads as it.
-const LARGEST: f64 = 10_000.0;
-
-/// A field for a whole number within `range` (at most 10,000), 60pt wide
-/// and right aligned, showing `value` (tracked).
+/// A field for a whole number within `range`, 60pt wide and right
+/// aligned, showing `value` (tracked).
 ///
 /// - While something else is typed it shows that, else `value`.
 /// - Enter or leaving the field commits what is typed: a number, rounded
-///   and clamped into 0-10,000 and then into `range`, goes to
-///   `on_commit`; anything else goes back to `value`. The field then shows
-///   `value` again.
+///   and clamped into `range` (one above it saves the range's end), goes
+///   to `on_commit`; anything else goes back to `value`. The field then
+///   shows `value` again.
 /// - Up and Down while it has the focus commit the next step above or
 ///   below what is typed (or `value`, while that is not a number), in
 ///   steps of `step` from the range's start as an HTML number field counts
@@ -35,21 +32,12 @@ pub(crate) fn number_field(
     on_commit: impl Fn(u16) + 'static,
 ) -> Input {
     let (min, max) = (*range.start(), *range.end());
-    debug_assert!(f64::from(max) <= LARGEST, "a range the field can't reach");
     let value = computed(value);
     // What the field shows: `value`, unless something else is being
     // typed.
     let draft = signal(value.get_untracked().to_string());
     effect(move || draft.set(value.get().to_string()));
-    let typed = move || {
-        draft
-            .get_untracked()
-            .trim()
-            .parse::<f64>()
-            .ok()
-            .filter(|typed| typed.is_finite())
-            .map(|typed| typed.round().clamp(0.0, LARGEST) as u16)
-    };
+    let typed = move || read(&draft.get_untracked());
     let save: Rc<dyn Fn(u16)> = Rc::new(move |next: u16| {
         on_commit(next.clamp(min, max));
         draft.set(value.get_untracked().to_string());
@@ -102,6 +90,15 @@ pub(crate) fn number_field(
             focused.set(false);
             blur();
         })
+}
+
+/// The whole number `text` holds, rounded and saturated into `u16` (one
+/// above it reads as `u16::MAX`, one below 0 as 0), so stepping from it
+/// never overflows; the caller clamps it into its range.
+fn read(text: &str) -> Option<u16> {
+    let typed = text.trim().parse::<f64>().ok()?;
+    // `as` saturates.
+    typed.is_finite().then(|| typed.round() as u16)
 }
 
 /// The step after `from` (`up`) or before it, on the grid of `step`s from

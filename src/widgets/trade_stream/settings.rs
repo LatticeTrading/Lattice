@@ -101,6 +101,37 @@ impl TradeStreamSettings {
         self
     }
 
+    /// These settings with `market` watched last, unless it already is.
+    pub fn adding(self, market: MarketSelection) -> Self {
+        let mut markets = self.markets();
+        markets.push(market);
+        self.with_markets(markets)
+    }
+
+    /// These settings with `market` in place of `replaced` (added last
+    /// when `replaced` is not watched). A market already watched is kept
+    /// once, where it was.
+    pub fn replacing(self, replaced: &MarketSelection, market: MarketSelection) -> Self {
+        let identity = replaced.identity();
+        let mut markets = self.markets();
+        match markets.iter().position(|kept| kept.identity() == identity) {
+            Some(at) => markets[at] = market,
+            None => markets.push(market),
+        }
+        self.with_markets(markets)
+    }
+
+    /// These settings no longer watching `market` (the last one too).
+    pub fn without(self, market: &MarketSelection) -> Self {
+        let identity = market.identity();
+        let markets = self
+            .markets()
+            .into_iter()
+            .filter(|kept| kept.identity() != identity)
+            .collect();
+        self.with_markets(markets)
+    }
+
     /// These settings showing `count` prints, within 10-200.
     pub fn with_max_trades(mut self, count: u16) -> Self {
         let count = count.clamp(MIN_TRADES, MAX_TRADES);

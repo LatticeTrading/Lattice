@@ -91,7 +91,7 @@ fn scope_row(screener: Rc<Screener>, tab: TabContext<ScreenerSettings>) -> View 
         },
         "Exchange",
     );
-    ui::setting_row("Exchange").child(picker)
+    ui::label_column_row("Exchange").child(picker)
 }
 
 /// "Products": perpetuals and futures, each shown or not (none is a real
@@ -155,7 +155,7 @@ fn products_row(screener: Rc<Screener>, tab: TabContext<ScreenerSettings>) -> Vi
                 tab.save(&next);
             })
     });
-    ui::setting_row("Products").children(chips)
+    ui::label_column_row("Products").children(chips)
 }
 
 /// "Columns": every column the screener can show besides exchange, symbol

@@ -2,7 +2,7 @@
 //! its settings ask for, and the table its view shows (the widget's data,
 //! described in the parent module).
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc, time::Duration};
+use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use nsh_core::{prelude::*, time::unix_ms};
 
@@ -21,7 +21,7 @@ use crate::{
         net::{ApiError, QueryState, Watch},
     },
     exchanges,
-    widgets::common::Shared,
+    widgets::common::{Keyed, Shared},
 };
 
 /// Every product the screener can show (`settings::PRODUCT_CHOICES`).
@@ -86,7 +86,7 @@ impl PartialEq for Input {
 
 /// One shared statistics watch per scope, by query key, with the scope it
 /// was made for.
-type Watches = Rc<RefCell<HashMap<String, (Rc<MarketStatsScope>, Watch<StatsSnapshot>)>>>;
+type Watches = Rc<Keyed<String, (Rc<MarketStatsScope>, Watch<StatsSnapshot>)>>;
 
 /// What the table shows: the rows that match the search, in order.
 pub(super) struct Table {
@@ -293,11 +293,13 @@ impl Screener {
     /// Asks for the capabilities again (after discovery failed).
     pub(super) fn retry_discovery(&self) {
         self.discovery.refresh();
-        for (_, watch) in self.watches.borrow().values() {
-            if watch.state().with_untracked(|state| state.error.is_some()) {
-                watch.refresh();
+        self.watches.with(|held| {
+            for (_, (_, watch)) in held {
+                if watch.state().with_untracked(|state| state.error.is_some()) {
+                    watch.refresh();
+                }
             }
-        }
+        });
     }
 }
 
@@ -362,36 +364,37 @@ fn follow_scopes(
                     .collect();
                 offered.set(Some(Rc::new(choices)));
             }
-            let mut previous = std::mem::take(&mut *watches.borrow_mut());
-            let mut next = HashMap::new();
-            let mut listed = Vec::new();
             let shown = scopes.into_iter().filter(|scope| {
                 products.contains(&scope.partition.product)
                     && chosen.as_ref().is_none_or(|id| *id == scope.partition.id)
             });
-            for scope in shown {
-                let scope = Rc::new(scope);
-                // A kept scope keeps its watch unless its cadence changed;
-                // a new watch is made before the old one goes, so the value
-                // stays cached between them.
-                let watch = match previous.remove(&scope.key) {
-                    Some((old, watch))
-                        if old.capability.poll_interval == scope.capability.poll_interval =>
-                    {
-                        watch
+            // A kept scope keeps its watch unless its cadence changed (the
+            // new watch is made before the old one goes, so the value stays
+            // cached between them); scopes no longer offered or shown are
+            // let go.
+            watches.follow(
+                shown.map(|scope| (scope.key.clone(), Rc::new(scope))),
+                |(held, _), scope| {
+                    let same = held.capability.poll_interval == scope.capability.poll_interval;
+                    if same {
+                        *held = scope.clone();
                     }
-                    _ => session.run(|| ferris.queries().watch(ferris.market_stats_query(&scope))),
-                };
-                listed.push(Feed {
-                    scope: scope.clone(),
-                    state: watch.state(),
-                });
-                next.insert(scope.key.clone(), (scope, watch));
-            }
-            *watches.borrow_mut() = next;
-            // Scopes no longer offered or shown: their demand ends here.
-            drop(previous);
-            feeds.set(listed);
+                    same
+                },
+                |scope| {
+                    let watch =
+                        session.run(|| ferris.queries().watch(ferris.market_stats_query(scope)));
+                    (scope.clone(), watch)
+                },
+            );
+            feeds.set(watches.with(|held| {
+                held.iter()
+                    .map(|(_, (scope, watch))| Feed {
+                        scope: scope.clone(),
+                        state: watch.state(),
+                    })
+                    .collect()
+            }));
         });
     });
 }

@@ -31,6 +31,7 @@ mod market;
 pub mod market_stats;
 mod protocol;
 pub mod trades;
+mod venues;
 
 use std::{rc::Rc, time::Duration};
 
@@ -47,6 +48,7 @@ pub use market::{MarketSelection, MarketType};
 pub use market_stats::{MarketStatsScope, StatsFieldName, StatsSnapshot, stats_scopes};
 pub use protocol::{Channel, FerrisProtocol, FerrisPush, FerrisTopic};
 pub use trades::{Side, Trade, TradeFeed, TradeRow};
+pub use venues::{CatalogProfile, SettlementVolume, StatsProfile, VENUES, Venue};
 
 use super::net::{
     ApiError, HttpClient, HttpOptions, Queries, QuerySpec, Request, SharedSocket, SocketConfig,

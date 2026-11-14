@@ -53,8 +53,11 @@ pub fn text_field(value: Signal<String>) -> Input {
         .auto_capitalize(AutoCapitalize::None)
 }
 
-/// A settings row: its name, then the controls the caller adds.
-pub fn setting_row(name: &'static str) -> View {
+/// A settings row with its name in a fixed 78pt column, muted, and the
+/// controls the caller adds right after it, filling the rest (the app's
+/// settings and the screener's panel). Compare [`label_edge_row`], whose
+/// control sits at the far edge.
+pub fn label_column_row(name: &'static str) -> View {
     view()
         .h(ROW_HEIGHT)
         .w_full()
@@ -71,10 +74,11 @@ pub fn setting_row(name: &'static str) -> View {
         )
 }
 
-/// A row of the old app's settings panel (`.settings-row`): its name on
-/// the left, on one line in primary text, and the control the caller adds
-/// pushed to the right edge, 10pt in from both sides.
-pub fn form_row(name: &'static str) -> View {
+/// A row of the old app's settings panel (`.settings-row`): its name at
+/// the left edge, on one line in primary text, and the control the caller
+/// adds pushed to the right edge, 10pt in from both sides. Compare
+/// [`label_column_row`], whose controls follow a fixed name column.
+pub fn label_edge_row(name: &'static str) -> View {
     view()
         .w_full()
         .flex_row()
@@ -87,9 +91,9 @@ pub fn form_row(name: &'static str) -> View {
         .child(form_label(name))
 }
 
-/// A [`form_row`] whose control is a list: its name level with the first
-/// entry (the old `.settings-row-list`).
-pub fn form_list_row(name: &'static str) -> View {
+/// A [`label_edge_row`] whose control is a list: its name level with the
+/// first entry (the old `.settings-row-list`).
+pub fn label_edge_list_row(name: &'static str) -> View {
     view()
         .w_full()
         .flex_row()
@@ -110,7 +114,7 @@ fn form_label(name: &'static str) -> Text {
         .text_color(theme::TEXT)
 }
 
-/// A dropdown filling the rest of a [`setting_row`]: it shows `shown`, lists `items`
+/// A dropdown filling the rest of a [`label_column_row`]: it shows `shown`, lists `items`
 /// (as they are while it is open),
 /// marks the one whose id is `value`, and calls `on_pick` with a picked id.
 pub fn dropdown(

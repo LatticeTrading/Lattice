@@ -27,11 +27,11 @@
 //! overlay of its own, so it can open over another floating panel (a
 //! widget's settings).
 
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use nsh_core::{keymap::When, prelude::*};
 
-use super::{LogoStyle, Shared, exchange_logo, market_tags};
+use super::{Keyed, LogoStyle, Shared, exchange_logo, market_tags};
 use crate::{
     data::{
         DataServices,
@@ -307,7 +307,7 @@ impl PartialEq for Got {
 struct Sources {
     capabilities: ReadSignal<QueryState<Capabilities>>,
     capabilities_watch: Rc<Watch<Capabilities>>,
-    catalogs: Rc<RefCell<HashMap<String, Watch<Catalog>>>>,
+    catalogs: Rc<Keyed<String, (CatalogScope, Watch<Catalog>)>>,
     /// Each scope's latest result.
     results: Memo<Vec<Got>>,
 }
@@ -321,7 +321,7 @@ impl Sources {
         let owner = Owner::current();
         let capabilities_watch = Rc::new(ferris.watch_capabilities());
         let capabilities = capabilities_watch.state();
-        let catalogs: Rc<RefCell<HashMap<String, Watch<Catalog>>>> = Rc::default();
+        let catalogs: Rc<Keyed<String, (CatalogScope, Watch<Catalog>)>> = Rc::default();
         let feeds = signal(Vec::<(CatalogScope, ReadSignal<QueryState<Catalog>>)>::new());
         {
             let (ferris, catalogs, exchange) = (ferris.clone(), catalogs.clone(), exchange.clone());
@@ -345,20 +345,24 @@ impl Sources {
                         requirement.availability(&document, id, product)
                             != Availability::Unsupported
                     });
-                    let mut previous = std::mem::take(&mut *catalogs.borrow_mut());
-                    let mut next = HashMap::new();
-                    let mut listed = Vec::new();
-                    for scope in scopes {
-                        let watch = previous.remove(&scope.key).unwrap_or_else(|| {
-                            owner.run(|| ferris.queries().watch(ferris.catalog_query(&scope)))
-                        });
-                        listed.push((scope.clone(), watch.state()));
-                        next.insert(scope.key, watch);
-                    }
-                    *catalogs.borrow_mut() = next;
-                    // Scopes no longer called for: their demand ends here.
-                    drop(previous);
-                    feeds.set(listed);
+                    // Scopes no longer called for are let go.
+                    catalogs.follow(
+                        scopes.into_iter().map(|scope| (scope.key.clone(), scope)),
+                        |(held, _), scope| {
+                            *held = scope.clone();
+                            true
+                        },
+                        |scope| {
+                            let watch =
+                                owner.run(|| ferris.queries().watch(ferris.catalog_query(scope)));
+                            (scope.clone(), watch)
+                        },
+                    );
+                    feeds.set(catalogs.with(|held| {
+                        held.iter()
+                            .map(|(_, (scope, watch))| (scope.clone(), watch.state()))
+                            .collect()
+                    }));
                 });
             });
         }
@@ -392,11 +396,13 @@ impl Sources {
         {
             self.capabilities_watch.refresh();
         }
-        for watch in self.catalogs.borrow().values() {
-            if watch.state().with_untracked(|state| state.error.is_some()) {
-                watch.refresh();
+        self.catalogs.with(|held| {
+            for (_, (_, watch)) in held {
+                if watch.state().with_untracked(|state| state.error.is_some()) {
+                    watch.refresh();
+                }
             }
-        }
+        });
     }
 }
 

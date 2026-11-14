@@ -51,7 +51,7 @@ fn theme_row(active: ActiveTheme) -> View {
         move |id| active.select(id),
         "Theme",
     );
-    ui::setting_row("Theme")
+    ui::label_column_row("Theme")
         .child(step(active, -1, "‹", "Previous theme"))
         .child(picker)
         .child(step(active, 1, "›", "Next theme"))
@@ -84,7 +84,7 @@ fn hour_cycle_row(clock: Clock) -> View {
             })
             .on_press(move || clock.update(|prefs| prefs.hour12 = hour12))
     };
-    ui::setting_row("Clock")
+    ui::label_column_row("Clock")
         .child(choice("24h", false))
         .child(choice("12h", true))
 }
@@ -106,7 +106,7 @@ fn time_zone_row(clock: Clock) -> View {
         },
         "Clock time zone",
     );
-    ui::setting_row("Time zone").child(picker)
+    ui::label_column_row("Time zone").child(picker)
 }
 
 /// A square button that switches `by` themes along the list.

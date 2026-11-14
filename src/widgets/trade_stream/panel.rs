@@ -32,7 +32,7 @@ use crate::{
     ui::{self, Side},
     widgets::{
         TabContext,
-        common::{LogoStyle, MarketPicker, exchange_logo, number_field},
+        common::{LogoStyle, MarketPicker, exchange_logo, number_field, tag_text},
     },
 };
 
@@ -109,22 +109,10 @@ fn picker(
     let tab = tab.clone();
     MarketPicker::new(move |picked| {
         let settings = saved.get_untracked();
-        let mut markets = settings.markets();
-        match &picking_for {
-            Picking::Add => markets.push(picked),
-            Picking::Replace(replaced) => {
-                let identity = replaced.identity();
-                match markets
-                    .iter()
-                    .position(|market| market.identity() == identity)
-                {
-                    Some(at) => markets[at] = picked,
-                    None => markets.push(picked),
-                }
-            }
-        }
-        // A market already watched is kept once, where it was.
-        tab.save(&settings.with_markets(markets));
+        tab.save(&match &picking_for {
+            Picking::Add => settings.adding(picked),
+            Picking::Replace(replaced) => settings.replacing(replaced, picked),
+        });
     })
     .requires(Requirement::realtime(Channel::Trades))
     .current(current)
@@ -166,7 +154,7 @@ fn markets(tab: &TabContext<TradeStreamSettings>, picking: Signal<Option<Picking
         .hover(|s| s.border_color(theme::ACCENT).text_color(theme::TEXT))
         .on_press(move || picking.set(Some(Picking::Add)))
         .child(text("Add pair"));
-    ui::form_list_row("Markets").child(
+    ui::label_edge_list_row("Markets").child(
         view()
             .min_w(px(0.0))
             .max_w(px(LIST_WIDTH))
@@ -193,13 +181,10 @@ fn market_entry(
         market.tags()
     );
     let identity = market.identity();
-    let replacing = {
-        let identity = identity.clone();
-        move || {
-            picking.with(
-                |picking| matches!(picking, Some(Picking::Replace(m)) if m.identity() == identity),
-            )
-        }
+    let replacing = move || {
+        picking.with(
+            |picking| matches!(picking, Some(Picking::Replace(m)) if m.identity() == identity),
+        )
     };
     // The old `.market-tag` segments: no box of their own, a divider
     // before each.
@@ -211,15 +196,7 @@ fn market_entry(
             .px(px(8.0))
             .border_l_1()
             .border_color(theme::BORDER)
-            .child(
-                text(label)
-                    .number_of_lines(1)
-                    .text_size(px(9.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .letter_spacing(px(0.4))
-                    .uppercase()
-                    .text_color(color),
-            )
+            .child(tag_text(text(label)).text_color(color))
     };
     let mut chooser = view()
         .flex_1()
@@ -299,15 +276,7 @@ fn market_entry(
                 .border_color(theme::ACCENT)
                 .z_index(1)
         })
-        .on_press(move || {
-            let settings = saved.get_untracked();
-            let markets = settings
-                .markets()
-                .into_iter()
-                .filter(|kept| kept.identity() != identity)
-                .collect();
-            tab.save(&settings.with_markets(markets));
-        })
+        .on_press(move || tab.save(&saved.get_untracked().without(&market)))
         .child(text("×"));
     view().w_full().flex_row().child(chooser).child(remove)
 }
@@ -324,5 +293,5 @@ fn max_trades(tab: TabContext<TradeStreamSettings>) -> View {
     .label("Max Trades")
     .hint("10 to 200 trades")
     .test_id("trade-stream-max-trades");
-    ui::form_row("Max Trades").child(field)
+    ui::label_edge_row("Max Trades").child(field)
 }
