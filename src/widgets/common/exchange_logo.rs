@@ -6,6 +6,7 @@ use nsh_core::prelude::*;
 use crate::{
     exchanges,
     theme::{self, Role},
+    ui,
 };
 
 /// How one place draws exchange logos.
@@ -26,7 +27,12 @@ impl LogoStyle {
     }
 
     fn initials(self, initials: Text) -> Text {
-        let initials = initials.size(px(self.size)).text_center();
+        // Centered both ways in their square, as the old app's badge
+        // (`ExchangeLogo.tsx`, an SVG text at mid-height) drew them.
+        let initials = initials
+            .size(px(self.size))
+            .text_center()
+            .inline_style(ui::middle());
         let initials = if self.boxed {
             initials
                 .bg(theme::SURFACE)

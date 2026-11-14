@@ -19,7 +19,8 @@ pub use panel::{Side, centered_panel, floating_panel, modal_panel, settings_pane
 pub use row_scroll::RowScroll;
 
 use nsh_core::{
-    element::{Input, input},
+    PropertyValue, StyleKey,
+    element::{Input, Style, input},
     prelude::*,
 };
 
@@ -27,6 +28,15 @@ use crate::theme;
 
 /// The default height of a single-line field or a panel row.
 pub const ROW_HEIGHT: Points = px(36.0);
+
+/// Text in the middle of its box's height (a text is drawn from the top
+/// otherwise), for an `inline_style`.
+pub fn middle() -> Style {
+    Style::default().with(
+        StyleKey::TextAlignVertical,
+        PropertyValue::AlignVertical(Some(Percentage(0.5))),
+    )
+}
 
 /// A single-line text field bound to `value`.
 ///

@@ -33,9 +33,8 @@ use std::{
 };
 
 use nsh_core::{
-    AccessibilityActionDef, AccessibilityValue, NodeId, PanActivation, PropertyValue, StyleKey,
-    TouchEvent, TouchPhase,
-    element::{Spawned, Style},
+    AccessibilityActionDef, AccessibilityValue, NodeId, PanActivation, TouchEvent, TouchPhase,
+    element::Spawned,
     overlay::{HINT_DELAY, Placement},
     prelude::*,
 };
@@ -872,14 +871,6 @@ fn row(table: Signal<Shared<Table>>, layout: Columns, at: Position, tips: Tips) 
         }))
 }
 
-/// Text in the middle of its box's height (a cell is as tall as its row).
-fn middle() -> Style {
-    Style::default().with(
-        StyleKey::TextAlignVertical,
-        PropertyValue::AlignVertical(Some(Percentage(0.5))),
-    )
-}
-
 /// A row's cell as one text showing `content`: `column`'s laid-out width
 /// and the row's height, with a divider on its trailing edge unless it is
 /// the last column. Sized by its style, it is never measured: binding it
@@ -899,7 +890,8 @@ fn cell_text(
         .flex_none()
         .px(px(CELL_PADDING))
         .number_of_lines(1)
-        .inline_style(middle())
+        // A cell is as tall as its row.
+        .inline_style(ui::middle())
         .border_color(theme::BORDER);
     let cell = if last { cell } else { cell.border_r_1() };
     let cell = if column.numeric() {
@@ -952,8 +944,7 @@ fn exchange_cell(
         .role(AccessibilityRole::Image)
         .label(move || label().unwrap_or_default())
         .child(logo)
-        // The initials sit mid-height, as every cell's text does.
-        .child(initials.inline_style(middle()));
+        .child(initials);
     let cell = if last { cell } else { cell.border_r_1() };
     tips.watch(cell, Column::Exchange, at).into_element()
 }

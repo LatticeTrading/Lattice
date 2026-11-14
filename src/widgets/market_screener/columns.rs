@@ -20,7 +20,7 @@ use crate::{
             FieldState, Price, StatsField, StatsFieldName, StatsFields, bulk_unsupported,
         },
     },
-    format,
+    exchanges, format,
 };
 
 /// A column of the screener. Saved by its [`Column::id`], the old app's.
@@ -725,21 +725,28 @@ pub(super) fn tooltip(universe: &Universe, row: &Row, column: Column) -> String 
     let product = feed.scope.partition.product;
     let (state, value) = evaluate(universe, row, column);
     let amount = shown(state, &value);
+    // A field the venue serves only for selected markets says so, by name
+    // ("Binance open interest is not available in bulk statistics.").
     let bulk = column
         .field()
-        .is_some_and(|field| bulk_unsupported(&feed.scope.exchange, field));
+        .filter(|&field| bulk_unsupported(&feed.scope.exchange, field))
+        .map(|field| {
+            format!(
+                "{} {} is not available in bulk statistics.",
+                exchanges::display_name(&feed.scope.exchange),
+                field.label()
+            )
+        });
     let envelope = column
         .field()
-        .filter(|_| !bulk)
+        .filter(|_| bulk.is_none())
         .and_then(|field| Envelope::find(&market.fields, field));
-    let support = if bulk {
-        Some("Binance open interest is not available in bulk statistics.")
-    } else {
+    let support = bulk.as_deref().or_else(|| {
         column
             .field()
             .and_then(|field| feed.scope.capability.field(product, field))
             .and_then(|support| support.reason.as_deref())
-    };
+    });
     let mut lines: Vec<String> = Vec::new();
     let label = match (state, amount.is_some()) {
         (FieldState::Stale, _) => "Stale",

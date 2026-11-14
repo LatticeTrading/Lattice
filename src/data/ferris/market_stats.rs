@@ -62,6 +62,19 @@ impl StatsFieldName {
             Self::Volume24h => "volume24h",
         }
     }
+
+    /// Its name in a sentence (`open interest`).
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Funding => "funding",
+            Self::IndexPrice => "index price",
+            Self::LastPrice => "last price",
+            Self::LastSettledFunding => "last settled funding",
+            Self::MarkPrice => "mark price",
+            Self::OpenInterest => "open interest",
+            Self::Volume24h => "24h volume",
+        }
+    }
 }
 
 impl Product {
