@@ -816,33 +816,30 @@ fn rows(
         })
     };
     let pressed = tips.clone();
-    virtual_list(
-        move || table.with(|table| table.0.order.len()),
-        move |at: Position| row(table, layout, at, tips.clone()),
-    )
-    .estimated_item_size(px(ROW_HEIGHT))
-    .element_ref(&list)
-    .scrollable(false)
-    .scrollbar(false)
-    .flex_1()
-    .min_h(px(0.0))
-    .on_layout(move |bounds: &Bounds<Points>| vertical.measure(bounds.size.height.0))
-    .on_wheel(move |event: &WheelEvent| vertical.wheel(event))
-    .label("Market statistics")
-    // A press anywhere in the rows hides the tooltip, as a press hides an
-    // element's; it shows again once the pointer comes over a cell.
-    .on_touch(move |event: &TouchEvent| {
-        if event.phase == TouchPhase::Start {
-            pressed.hide();
-        }
-    })
-    .empty(
-        view()
-            .p(px(CELL_PADDING))
-            .text_color(theme::TEXT_FAINT)
-            .role(AccessibilityRole::Text)
-            .child(text(move || empty().to_owned())),
-    )
+    vertical
+        .drive(virtual_list(
+            move || table.with(|table| table.0.order.len()),
+            move |at: Position| row(table, layout, at, tips.clone()),
+        ))
+        .estimated_item_size(px(ROW_HEIGHT))
+        .element_ref(&list)
+        .flex_1()
+        .min_h(px(0.0))
+        .label("Market statistics")
+        // A press anywhere in the rows hides the tooltip, as a press hides an
+        // element's; it shows again once the pointer comes over a cell.
+        .on_touch(move |event: &TouchEvent| {
+            if event.phase == TouchPhase::Start {
+                pressed.hide();
+            }
+        })
+        .empty(
+            view()
+                .p(px(CELL_PADDING))
+                .text_color(theme::TEXT_FAINT)
+                .role(AccessibilityRole::Text)
+                .child(text(move || empty().to_owned())),
+        )
 }
 
 /// One row: its cells, bound to the market at its position, made again

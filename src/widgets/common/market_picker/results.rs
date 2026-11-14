@@ -97,31 +97,28 @@ impl Results {
                 }
             })
         };
-        let rows = virtual_list(
-            move || shown.with(|s| s.0.len()),
-            move |at: Position| state.row(at),
-        )
-        .estimated_item_size(px(ROW_HEIGHT))
-        .element_ref(&list)
-        .scrollable(false)
-        .scrollbar(false)
-        .flex_1()
-        .min_h(px(0.0))
-        .on_layout(move |bounds: &Bounds<Points>| scroll.measure(bounds.size.height.0))
-        .on_wheel(move |event: &WheelEvent| scroll.wheel(event))
-        .role(AccessibilityRole::Listbox)
-        .label("Markets")
-        // The old message: centered, well clear of the edges.
-        .empty(
-            view()
-                .px(px(20.0))
-                .py(px(40.0))
-                .text_center()
-                .text_size(px(12.0))
-                .text_color(theme::TEXT_MUTED)
-                .role(AccessibilityRole::Text)
-                .child(text(move || empty().to_owned())),
-        );
+        let rows = scroll
+            .drive(virtual_list(
+                move || shown.with(|s| s.0.len()),
+                move |at: Position| state.row(at),
+            ))
+            .estimated_item_size(px(ROW_HEIGHT))
+            .element_ref(&list)
+            .flex_1()
+            .min_h(px(0.0))
+            .role(AccessibilityRole::Listbox)
+            .label("Markets")
+            // The old message: centered, well clear of the edges.
+            .empty(
+                view()
+                    .px(px(20.0))
+                    .py(px(40.0))
+                    .text_center()
+                    .text_size(px(12.0))
+                    .text_color(theme::TEXT_MUTED)
+                    .role(AccessibilityRole::Text)
+                    .child(text(move || empty().to_owned())),
+            );
         view()
             .h(px(LIST_HEIGHT))
             .flex_none()

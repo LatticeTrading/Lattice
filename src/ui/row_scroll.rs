@@ -174,6 +174,18 @@ impl RowScroll {
         self.viewport.set(height);
     }
 
+    /// `list` scrolled by this offset: the four calls the list needs, made
+    /// together so none is missed. The platform neither scrolls it nor
+    /// draws its scrollbar, the wheel over it goes here, and its laid-out
+    /// height is the viewport. Its rows must all be one height (no header,
+    /// footer, padding or separators).
+    pub fn drive(self, list: VirtualList) -> VirtualList {
+        list.scrollable(false)
+            .scrollbar(false)
+            .on_layout(move |bounds: &Bounds<Points>| self.measure(bounds.size.height.0))
+            .on_wheel(move |event: &WheelEvent| self.wheel(event))
+    }
+
     fn step(self, step: Step) {
         match step {
             Step::By(delta) => self.by(delta),
