@@ -1,5 +1,6 @@
-//! The desktop WebSocket stack: tokio-tungstenite over rustls with the
-//! webpki roots, the stack nsh-core uses for its own native sockets. Each
+//! The desktop WebSocket stack: tokio-tungstenite over rustls trusting the
+//! system's certificate store (webpki roots on Android), the stack nsh-core
+//! uses for its own native sockets. Each
 //! socket is one engine task; the engine polls tasks inside its tokio
 //! runtime, so tokio's networking works there and wakes the engine.
 

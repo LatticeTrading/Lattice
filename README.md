@@ -1,16 +1,21 @@
 # Lattice
 
-Native Rust trading terminal shell built with **Native Shell (NSH) 0.5.0**.
-Lattice has one shared Rust UI for native desktop and WebAssembly web targets.
-The data layer for backend connections is in place, and the first widget, the
-Market Screener, is ported.
+Native Rust trading terminal built with **Native Shell (NSH) 0.5.0**, a port
+of the lattice-pro web app. Lattice has one shared Rust UI for native desktop
+and WebAssembly web targets.
 
-The current shell preserves the multi-page workspace, responsive grid geometry,
-pane/tab model, and versioned persistence. It renders an empty dark workspace
-until the user creates a widget. On desktop, NSH's hidden title bar puts
-minimize, maximize/restore, and close controls in the Everything Bar and makes
-its background a window-drag region. The web target omits those controls and
-drag behavior because the browser owns the window chrome.
+The shell has the multi-page workspace, responsive grid with movable and
+resizable panes, tabs, themes, and versioned persistence (layout codes
+included). Market data comes from the Ferris backend through a shared data
+layer (HTTP, WebSocket, polling). Two widgets are ported: the Market Screener
+and the Trade Stream; the others still to port have empty folders under
+`src/widgets/`. The Everything Bar's symbol search and connection status are
+placeholders. On desktop the platform's normal title bar keeps minimize,
+maximize/restore, and close; on web the browser owns the window chrome.
+
+Before changing code, read `docs/nsh-development.md`, the development guide
+(architecture, data layer, widgets, conventions). `docs/` is local only and
+not tracked by git.
 
 ## NSH project
 
@@ -67,22 +72,23 @@ visual and native-caption acceptance remains a user-run check.
 - `nsh.json`: NSH app identity, Rust root, and appearance.
 - `themes/`: one JSON file per theme.
 - `src/lib.rs`: the registered NSH UI set and shared `App` root.
-- `src/app.rs`: optional direct Cargo desktop launcher.
-- `src/shell.rs`, `src/shell/everything_bar.rs`: shared shell and platform-aware chrome.
-- `src/ui.rs`: shared controls (text field, button, floating panel).
+- `src/main.rs`, `src/app.rs`: optional direct Cargo desktop launcher.
+- `src/shell.rs`, `src/shell/`: the shell, Everything Bar, Settings panel, and clock.
+- `src/ui.rs`, `src/ui/`: shared controls (text field, button, tooltip hint, settings rows, floating panels, list scrolling).
 - `src/layout.rs`, `src/layout/grid.rs`: workspace pages, tabs, panes, and responsive geometry.
 - `src/storage.rs`: versioned NSH storage-service persistence.
+- `src/theme.rs`, `src/theme/roles.rs`: the theme engine and its color roles.
 - `src/assets.rs`, `assets/`: compile-time fonts and app assets (icons, exchange logos).
-- `src/data.rs`, `src/data/`: the data layer (shared HTTP, WebSocket, and polling plumbing; the Ferris integration; per-widget data sessions).
-- `src/widgets.rs`, `src/widgets/`: widgets (the Market Screener).
-- `src/exchanges.rs`, `src/format.rs`: exchange names and logos; number formatting.
-- `src/platform/`: future native integrations.
+- `src/data.rs`, `src/data/`: the data layer (`net/`: shared HTTP, WebSocket, polling, and live-feed plumbing; `ferris/`: the Ferris integration, with per-exchange rules in `ferris/venues.rs`; `session.rs`: per-widget data sessions).
+- `src/widgets.rs`, `src/widgets/`: the widget registry, the widget picker, shared widget parts (`common/`: market picker, exchange logos, number field), and one folder per widget (`market_screener/`, `trade_stream/`).
+- `src/exchanges.rs`, `src/format.rs`: exchange names, order, and logos; number formatting.
+- `src/platform/`: future native integrations (empty).
 
 ## NSH documentation used for this migration
 
 - Native Shell project structure and `nsh.json` configuration
 - Building Rust apps and shared roots
-- Desktop title bars and `window_drag`
+- Desktop windows and title bars
 - WebAssembly runtime and web packaging
 - Styles, fonts, assets, storage, scrolling, and touch/press input
 
