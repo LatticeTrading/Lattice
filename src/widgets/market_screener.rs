@@ -55,7 +55,7 @@ const PRODUCTS: [Product; 2] = [Product::Perp, Product::Future];
 
 /// The screener's view of `widget`: its rows, from its session, as its
 /// tab's settings say, and the settings panel while it is open.
-pub(crate) fn market_screener(widget: &WidgetView, tab: &TabContext) -> View {
+pub(crate) fn market_screener(widget: &WidgetView, tab: &TabContext<ScreenerSettings>) -> View {
     let Some(services) = DataServices::try_get() else {
         log::error!("Market Screener: no data services above the widget");
         return view().flex_1();
@@ -87,7 +87,7 @@ pub(crate) fn market_screener(widget: &WidgetView, tab: &TabContext) -> View {
 /// longer shown, or its exchange turned out not to have it (the old app
 /// did both). A scope the capabilities stopped offering is kept: the view
 /// says so and offers to show every exchange.
-fn forget_unusable_scope(screener: &Rc<Screener>, tab: &TabContext) {
+fn forget_unusable_scope(screener: &Rc<Screener>, tab: &TabContext<ScreenerSettings>) {
     let (offered, feeds, saved, tab) =
         (screener.offered, screener.feeds, tab.settings, tab.clone());
     effect(move || {

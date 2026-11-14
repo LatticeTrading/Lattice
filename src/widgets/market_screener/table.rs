@@ -27,8 +27,6 @@
 //! the list does not scroll natively, and the table has its own scrollbar
 //! at the pane's right edge, outside the sideways scroll.
 
-mod scroll;
-
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
@@ -42,13 +40,17 @@ use nsh_core::{
     prelude::*,
 };
 
-use self::scroll::RowScroll;
 use super::{
     Screener, Shared, Table,
     columns::{self, Column, NumberCell, Tone},
     settings::{self, MAX_WIDTH, MIN_WIDTH, ScreenerSettings, Side},
 };
-use crate::{exchanges, layout::TabContext, theme, ui};
+use crate::{
+    exchanges,
+    layout::TabContext,
+    theme,
+    ui::{self, RowScroll},
+};
 
 /// A row's height, and the title row's: the old app's Trade Stream density
 /// plus half again.
@@ -193,11 +195,13 @@ impl Columns {
     }
 }
 
-pub(super) fn table_view(screener: Rc<Screener>, tab: TabContext) -> View {
+pub(super) fn table_view(screener: Rc<Screener>, tab: TabContext<ScreenerSettings>) -> View {
     let list = element_ref();
     let table = screener.table;
     let saved = tab.settings;
-    let vertical = RowScroll::new(list, move || table.with(|table| table.0.order.len()));
+    let vertical = RowScroll::new(list, ROW_HEIGHT, move || {
+        table.with(|table| table.0.order.len())
+    });
 
     let search = ui::text_field(screener.search)
         .placeholder("Search markets…")
@@ -309,7 +313,7 @@ pub(super) fn table_view(screener: Rc<Screener>, tab: TabContext) -> View {
         // Beside the rows, at the pane's edge whatever the sideways scroll.
         .child(
             vertical
-                .scrollbar()
+                .scrollbar("Scroll markets")
                 .absolute()
                 .top(px(ROW_HEIGHT))
                 .bottom(px(0.0))
@@ -347,7 +351,7 @@ fn line_button(label: &'static str, on_press: impl Fn() + 'static) -> View {
 
 /// Discovery's state, a saved scope no longer offered, and each scope's
 /// report, one line each, above the table.
-fn status(screener: Rc<Screener>, tab: TabContext) -> View {
+fn status(screener: Rc<Screener>, tab: TabContext<ScreenerSettings>) -> View {
     let discovery = screener.discovery();
     let table = screener.table;
     let discovering = computed(move || discovery.with(|state| state.is_loading()));
@@ -455,7 +459,12 @@ fn title_box(column: Column, last: bool, layout: Columns) -> View {
 
 /// The title row: each title sorts by its column, moves it when dragged
 /// sideways, and resizes it from its trailing edge.
-fn header(screener: Rc<Screener>, tab: TabContext, layout: Columns, vertical: RowScroll) -> View {
+fn header(
+    screener: Rc<Screener>,
+    tab: TabContext<ScreenerSettings>,
+    layout: Columns,
+    vertical: RowScroll,
+) -> View {
     view()
         .h(px(ROW_HEIGHT))
         .flex_none()
@@ -484,7 +493,7 @@ fn header(screener: Rc<Screener>, tab: TabContext, layout: Columns, vertical: Ro
 }
 
 /// Moves `column` to `side` of `target` in the saved order.
-fn move_column(tab: &TabContext, column: Column, target: Column, side: Side) {
+fn move_column(tab: &TabContext<ScreenerSettings>, column: Column, target: Column, side: Side) {
     if let Some(next) = tab.settings.get_untracked().moved(column, target, side) {
         tab.save(&next);
     }
@@ -495,7 +504,7 @@ fn title(
     column: Column,
     last: bool,
     screener: Rc<Screener>,
-    tab: TabContext,
+    tab: TabContext<ScreenerSettings>,
     layout: Columns,
     vertical: RowScroll,
 ) -> View {
@@ -676,7 +685,7 @@ fn resized(widths: &[(Column, f32)], column: Column, by: f32) -> Vec<(Column, f3
 
 /// Saves `widths` over the widths already set (those of hidden columns
 /// stay).
-fn save_widths(tab: &TabContext, widths: &[(Column, f32)]) {
+fn save_widths(tab: &TabContext<ScreenerSettings>, widths: &[(Column, f32)]) {
     let settings = tab.settings.get_untracked();
     let next = settings.with_widths(settings.widths().chain(widths.iter().copied()));
     tab.save(&next);
@@ -685,7 +694,12 @@ fn save_widths(tab: &TabContext, widths: &[(Column, f32)]) {
 /// The grip on a title's trailing edge that resizes its column. The first
 /// resize keeps every shown column at the width it has then, so the table
 /// stops growing to fill the pane (the old app's behavior).
-fn grip(column: Column, tab: TabContext, layout: Columns, dragging: Rc<Cell<bool>>) -> View {
+fn grip(
+    column: Column,
+    tab: TabContext<ScreenerSettings>,
+    layout: Columns,
+    dragging: Rc<Cell<bool>>,
+) -> View {
     // The widths when the drag began.
     let start = Rc::new(std::cell::RefCell::new(None::<Vec<(Column, f32)>>));
     let preview = layout.preview;

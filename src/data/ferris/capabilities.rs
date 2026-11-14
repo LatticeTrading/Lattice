@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::Operation;
+use super::{Channel, Operation};
 
 /// The whole capabilities document.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -191,5 +191,50 @@ impl Capabilities {
             .map_or(Availability::Unknown, |feature| {
                 feature.availability(product)
             })
+    }
+}
+
+/// What a feature needs of a market's exchange: an operation, a realtime
+/// channel, or both (the old app's `FerrisCapabilityRequirement`). The
+/// Trade Stream needs realtime `trades` only; its REST history is an
+/// optional head start.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Requirement {
+    pub snapshot: Option<Operation>,
+    pub realtime: Option<Channel>,
+}
+
+impl Requirement {
+    /// Realtime `channel` only.
+    pub fn realtime(channel: Channel) -> Self {
+        Self {
+            snapshot: None,
+            realtime: Some(channel),
+        }
+    }
+
+    /// Whether markets of `product` on `exchange` meet it (the old
+    /// `getCapabilityRequirementAvailability`): an explicit denial of either
+    /// part wins over unknown metadata, which wins over support. Callers
+    /// that must stay backward compatible exclude only `Unsupported`.
+    pub fn availability(
+        &self,
+        capabilities: &Capabilities,
+        exchange: &str,
+        product: Product,
+    ) -> Availability {
+        let snapshot = self.snapshot.map_or(Availability::Supported, |operation| {
+            capabilities.snapshot(exchange, operation, Some(product))
+        });
+        let realtime = self.realtime.map_or(Availability::Supported, |channel| {
+            capabilities.realtime(exchange, channel.as_str(), Some(product))
+        });
+        match (snapshot, realtime) {
+            (Availability::Unsupported, _) | (_, Availability::Unsupported) => {
+                Availability::Unsupported
+            }
+            (Availability::Unknown, _) | (_, Availability::Unknown) => Availability::Unknown,
+            _ => Availability::Supported,
+        }
     }
 }

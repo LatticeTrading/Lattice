@@ -1,0 +1,93 @@
+//! The Trade Stream's settings, saved in its tab's record under the old
+//! app's names: `markets` (the markets watched) and `maxTrades` (how many
+//! prints show, 10-200).
+//!
+//! Both are left out of the saved form while they hold their defaults
+//! (Bybit BTC/USDT perpetual; 50), and read leniently: an unreadable
+//! market is dropped, a repeated one kept once, a count out of range
+//! clamped, a member of the wrong type read as its default. An explicit
+//! empty list is kept: the stream then asks for a market.
+
+use serde::Serialize;
+use serde_json::Value;
+
+use crate::data::ferris::MarketSelection;
+
+/// The fewest and most prints the stream shows, and its default.
+pub(super) const MIN_TRADES: u16 = 10;
+pub(super) const MAX_TRADES: u16 = 200;
+const DEFAULT_TRADES: u16 = 50;
+
+/// One Trade Stream's settings.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub(crate) struct TradeStreamSettings {
+    /// The markets watched, each once; `None` is the default market.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    markets: Option<Vec<MarketSelection>>,
+    /// How many prints show; `None` is the default.
+    #[serde(rename = "maxTrades", skip_serializing_if = "Option::is_none")]
+    max_trades: Option<u16>,
+}
+
+impl From<Value> for TradeStreamSettings {
+    fn from(value: Value) -> Self {
+        let mut settings = Self::default();
+        let Value::Object(members) = value else {
+            return settings;
+        };
+        if let Some(Value::Array(list)) = members.get("markets") {
+            let markets = MarketSelection::read_list(list);
+            // An empty list is a choice; one naming no readable market
+            // reads as the default.
+            if list.is_empty() || !markets.is_empty() {
+                settings = settings.with_markets(markets);
+            }
+        }
+        if let Some(count) = members.get("maxTrades").and_then(Value::as_f64)
+            && count.is_finite()
+        {
+            settings =
+                settings.with_max_trades(count.floor().clamp(0.0, f64::from(u16::MAX)) as u16);
+        }
+        settings
+    }
+}
+
+impl TradeStreamSettings {
+    /// Whether every member is its default (the tab saves none of them).
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The markets watched, in order.
+    pub fn markets(&self) -> Vec<MarketSelection> {
+        self.markets
+            .clone()
+            .unwrap_or_else(|| vec![MarketSelection::bybit_btc_usdt()])
+    }
+
+    /// How many prints show.
+    pub fn max_trades(&self) -> usize {
+        usize::from(self.max_trades.unwrap_or(DEFAULT_TRADES))
+    }
+
+    /// These settings watching `markets` (each once).
+    pub fn with_markets(mut self, markets: Vec<MarketSelection>) -> Self {
+        let mut kept: Vec<MarketSelection> = Vec::new();
+        for market in markets {
+            let identity = market.identity();
+            if !kept.iter().any(|other| other.identity() == identity) {
+                kept.push(market);
+            }
+        }
+        self.markets = (kept != [MarketSelection::bybit_btc_usdt()]).then_some(kept);
+        self
+    }
+
+    /// These settings showing `count` prints, within 10-200.
+    pub fn with_max_trades(mut self, count: u16) -> Self {
+        let count = count.clamp(MIN_TRADES, MAX_TRADES);
+        self.max_trades = (count != DEFAULT_TRADES).then_some(count);
+        self
+    }
+}

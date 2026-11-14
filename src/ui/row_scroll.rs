@@ -1,5 +1,6 @@
-//! The rows' vertical scrolling, which the table drives itself instead of
-//! the platform, so the rows the list shows are always bound.
+//! A long list's vertical scrolling, which the app drives itself instead
+//! of the platform, so the rows the list shows are always bound (the
+//! Market Screener's rows, the market picker's results).
 //!
 //! A scroll the platform makes natively (its scrollbar, the wheel) moves
 //! the list's offset on the main thread at once, and the engine binds the
@@ -8,13 +9,18 @@
 //! non-animated `scroll_to_offset` from the app moves the core's window of
 //! rows and binds the new ones in the commit that sends the scroll, so the
 //! offset never gets ahead of its rows. So the list does not scroll by
-//! itself: the wheel over it, the scroll keys while the pointer is over the
-//! table, the table's own scrollbar and the table's jumps to the top all
-//! set one offset ([`RowScroll`]), which goes to the list at most once an
-//! engine turn. A fast drag sends its latest position, never a queue of old
-//! ones: the rows and the thumb may trail the pointer, but never show
-//! blank. Sideways scrolling stays native (the table's horizontal scroll
-//! view and its pinned symbol column).
+//! itself: the wheel over it, the scroll keys while the pointer is over it,
+//! its own scrollbar and its owner's jumps all set one offset
+//! ([`RowScroll`]), which goes to the list at most once an engine turn. A
+//! fast drag sends its latest position, never a queue of old ones: the rows
+//! and the thumb may trail the pointer, but never show blank. Sideways
+//! scrolling stays native (the screener's horizontal scroll view and its
+//! pinned symbol column).
+//!
+//! The list must be a `virtual_list` of rows all one height (no header,
+//! footer, padding or separators), with `.scrollable(false)`,
+//! `.scrollbar(false)`, `.on_wheel(.. scroll.wheel(event))` and
+//! `.on_layout(.. scroll.measure(height))`.
 
 use std::{
     cell::{Cell, RefCell},
@@ -27,7 +33,6 @@ use nsh_core::{
     scroll::KEY_LINE,
 };
 
-use super::ROW_HEIGHT;
 use crate::theme;
 
 /// A wheel line in points, as the platform scrolls one (a notch is the
@@ -56,7 +61,7 @@ enum Step {
 }
 
 /// The scroll keys: those the platform's keyboard scrolling takes along a
-/// list (Left and Right stay its own, for the table's sideways scroll).
+/// list (Left and Right stay its own, for a sideways scroll).
 const KEYS: [(&str, Step); 10] = [
     ("up", Step::By(-KEY_LINE.0)),
     ("down", Step::By(KEY_LINE.0)),
@@ -73,7 +78,9 @@ const KEYS: [(&str, Step); 10] = [
 /// The rows' vertical offset: the one place it is kept, the latest asked
 /// for, within the rows. Every scroll goes through [`RowScroll::to`].
 #[derive(Clone, Copy)]
-pub(super) struct RowScroll {
+pub struct RowScroll {
+    /// Every row's height.
+    row: f32,
     /// Where the rows are scrolled to, `[0, max]`.
     target: Signal<f32>,
     /// The rows' viewport height, as laid out.
@@ -85,14 +92,15 @@ pub(super) struct RowScroll {
 }
 
 impl RowScroll {
-    /// The offset of `list`, a list of `count` rows [`ROW_HEIGHT`] tall
-    /// (no header, footer, padding or separators), which sends it to the
-    /// list once a turn while it changes.
-    pub fn new(list: ElementRef, count: impl Fn() -> usize + 'static) -> Self {
+    /// The offset of `list`, a list of `count` rows `row_height` tall (no
+    /// header, footer, padding or separators), which sends it to the list
+    /// once a turn while it changes.
+    pub fn new(list: ElementRef, row_height: f32, count: impl Fn() -> usize + 'static) -> Self {
+        let row = row_height;
         let target = signal(0.0_f32);
         let viewport = signal(0.0_f32);
         let count = computed(count);
-        let max = computed(move || (count.get() as f32 * ROW_HEIGHT - viewport.get()).max(0.0));
+        let max = computed(move || (count.get() as f32 * row - viewport.get()).max(0.0));
         // Fewer rows (a narrower search) or a taller viewport: still within
         // the rows.
         effect(move || {
@@ -122,6 +130,7 @@ impl RowScroll {
             });
         });
         Self {
+            row,
             target,
             viewport,
             count,
@@ -145,6 +154,19 @@ impl RowScroll {
     pub fn page(self, pages: f32) {
         let page = (self.viewport.get_untracked() * PAGE).max(KEY_LINE.0);
         self.by(pages * page);
+    }
+
+    /// Scrolls just enough to show the row at `index` whole (the keyboard's
+    /// current row).
+    pub fn reveal(self, index: usize) {
+        let top = index as f32 * self.row;
+        let bottom = top + self.row;
+        let (offset, viewport) = (self.target.get_untracked(), self.viewport.get_untracked());
+        if top < offset {
+            self.to(top);
+        } else if bottom > offset + viewport {
+            self.to(bottom - viewport);
+        }
     }
 
     /// The rows' viewport is `height` tall.
@@ -196,11 +218,13 @@ impl RowScroll {
         });
     }
 
-    /// The scrollbar, the rows' height: dragging its thumb scrolls the
-    /// rows, and pressing the track pages towards the pointer (again while
-    /// held). Hidden while every row shows; the caller places it.
-    pub fn scrollbar(self) -> View {
+    /// The scrollbar, named `label`, the rows' height: dragging its thumb
+    /// scrolls the rows, and pressing the track pages towards the pointer
+    /// (again while held). Hidden while every row shows; the caller places
+    /// it.
+    pub fn scrollbar(self, label: &'static str) -> View {
         let Self {
+            row,
             target,
             viewport,
             count,
@@ -208,7 +232,7 @@ impl RowScroll {
         } = self;
         let thumb = computed(move || {
             let view = viewport.get();
-            let content = count.get() as f32 * ROW_HEIGHT;
+            let content = count.get() as f32 * row;
             if content <= view {
                 return view;
             }
@@ -278,10 +302,10 @@ impl RowScroll {
         let (grant_pointer, move_pointer) = (pointer.clone(), pointer);
         let grant_repeat = repeat;
         let (release_stop, terminate_stop) = (stop.clone(), stop.clone());
-        let label = move || {
+        let rows_label = move || {
             let rows = count.get();
-            let first = (target.get() / ROW_HEIGHT).floor() as usize;
-            let last = ((target.get() + viewport.get()) / ROW_HEIGHT).ceil() as usize;
+            let first = (target.get() / row).floor() as usize;
+            let last = ((target.get() + viewport.get()) / row).ceil() as usize;
             format!(
                 "Rows {} to {} of {rows}",
                 (first + 1).min(rows),
@@ -293,13 +317,13 @@ impl RowScroll {
             .hover(|s| s.bg(theme::SURFACE))
             .style_when(move || max.get() <= 0.0, |s| s.hidden())
             .role(AccessibilityRole::Adjustable)
-            .label("Scroll markets")
+            .label(label)
             .accessibility_value(move || {
                 Some(AccessibilityValue {
                     min: Some(0.0),
                     max: Some(max.get().round()),
                     now: Some(target.get().round()),
-                    text: Some(label().into()),
+                    text: Some(rows_label().into()),
                 })
             })
             .accessibility_actions(vec![

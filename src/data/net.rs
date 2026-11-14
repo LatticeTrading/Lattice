@@ -45,3 +45,4 @@ pub use socket::{
     platform_transport,
 };
 pub use status::{Alias, Failure, Health, SourceStatus, StatusBoard, Unrouted};
+pub(crate) use task::TaskHandle;

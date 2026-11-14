@@ -30,6 +30,31 @@ pub fn display_name(exchange: &str) -> &str {
     }
 }
 
+/// Where `exchange` comes in lists of exchanges: the old app's order
+/// (`SUPPORTED_EXCHANGES`), then any other by id.
+pub fn rank(exchange: &str) -> (usize, &str) {
+    const ORDER: [&str; 13] = [
+        "bybit",
+        "binance",
+        "hyperliquid",
+        "lighterxyz",
+        "aster",
+        "extended",
+        "apex",
+        "kucoin",
+        "bitfinex",
+        "nado",
+        "variational",
+        "phoenix",
+        "perpl",
+    ];
+    let at = ORDER
+        .iter()
+        .position(|id| *id == exchange)
+        .unwrap_or(ORDER.len());
+    (at, exchange)
+}
+
 /// The logo's markup, by the id it is filed under.
 fn markup(id: &str) -> Option<&'static str> {
     macro_rules! logos {

@@ -1,6 +1,6 @@
 //! The shared Lattice shell. NSH mounts this same Rust tree on desktop and web.
 
-mod clock;
+pub(crate) mod clock;
 pub(crate) mod everything_bar;
 mod settings;
 
@@ -15,6 +15,8 @@ pub fn shell() -> impl IntoElement {
     let services = DataServices::provide();
     let active_theme = theme::ActiveTheme::restore();
     let clock = clock::Clock::restore();
+    // Widgets that show times (the Trade Stream) show them as the bar does.
+    provide_context(clock);
     let mut saved = storage::load();
     layout::normalize(&mut saved);
     if let Err(error) = storage::save(&saved) {

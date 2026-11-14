@@ -1,5 +1,6 @@
-//! Shared Lattice controls: text fields, flat buttons, and movable floating
-//! panels.
+//! Shared Lattice controls: text fields, flat buttons, movable floating
+//! panels, engine-driven list scrolling ([`RowScroll`]) and the market
+//! picker ([`market_picker`]).
 //!
 //! NSH's `input` is a complete text field on every host (on Windows the
 //! system's RichEdit text box, on the web an `<input>`), so typing, caret
@@ -8,6 +9,11 @@
 //! values based on an older edit. What these helpers add is Lattice's look and
 //! one consistent way to bind a field to a signal, so the Layout Manager, the
 //! symbol search, and future widgets all behave the same way.
+
+pub mod market_picker;
+mod row_scroll;
+
+pub use row_scroll::RowScroll;
 
 use nsh_base::{SelectItem, select};
 use nsh_core::{
@@ -64,6 +70,81 @@ pub fn setting_row(name: &'static str) -> View {
                 .px(px(10.0))
                 .text_color(theme::TEXT_MUTED)
                 .child(text(name)),
+        )
+}
+
+/// A row of the old app's settings panel (`.settings-row`): its name on
+/// the left, on one line in primary text, and the control the caller adds
+/// pushed to the right edge, 10pt in from both sides.
+pub fn form_row(name: &'static str) -> View {
+    view()
+        .w_full()
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap(px(10.0))
+        .px(px(10.0))
+        .py(px(6.0))
+        .text_size(px(11.0))
+        .child(form_label(name))
+}
+
+/// A [`form_row`] whose control is a list: its name level with the first
+/// entry (the old `.settings-row-list`).
+pub fn form_list_row(name: &'static str) -> View {
+    view()
+        .w_full()
+        .flex_row()
+        .items_start()
+        .justify_between()
+        .gap(px(10.0))
+        .px(px(10.0))
+        .py(px(6.0))
+        .text_size(px(11.0))
+        .child(form_label(name).pt(px(6.0)))
+}
+
+fn form_label(name: &'static str) -> Text {
+    text(name)
+        .flex_none()
+        .number_of_lines(1)
+        .text_size(px(11.0))
+        .text_color(theme::TEXT)
+}
+
+/// A market's tags as the old `MarketTags` drew them: its type (`PERP`),
+/// then its detail (`USDT-M`, an expiry) in the warning color, each in a
+/// small bordered box; the detail's box is left out while it has none.
+pub fn market_tags(
+    kind: impl Fn() -> String + 'static,
+    detail: impl Fn() -> Option<String> + Clone + 'static,
+) -> View {
+    let tag = |content: Text| {
+        content
+            .flex_none()
+            .min_h(px(16.0))
+            .px(px(5.0))
+            .py(px(1.0))
+            .border_1()
+            .border_color(theme::BORDER)
+            .bg(theme::BACKGROUND)
+            .text_size(px(9.0))
+            .font_weight(FontWeight::SEMIBOLD)
+            .letter_spacing(px(0.4))
+            .uppercase()
+            .number_of_lines(1)
+    };
+    let shown = detail.clone();
+    view()
+        .flex_none()
+        .flex_row()
+        .items_center()
+        .gap(px(4.0))
+        .child(tag(text(kind)).text_color(theme::TEXT_FAINT))
+        .child(
+            tag(text(move || detail().unwrap_or_default()))
+                .text_color(theme::WARNING)
+                .style_when(move || shown().is_none(), |s| s.hidden()),
         )
 }
 
@@ -384,7 +465,8 @@ pub fn floating_panel(
     on_close: impl Fn() + Clone + 'static,
     body: impl IntoElement,
 ) -> Overlay {
-    panel_overlay(Opening::Below(*anchor, side), width, title, on_close, body)
+    let opening = Opening::Below(*anchor, side);
+    panel_overlay(opening, width, title, Look::Lattice, None, on_close, body)
 }
 
 /// A [`floating_panel`] that opens in the middle of the window instead of
@@ -395,7 +477,74 @@ pub fn centered_panel(
     on_close: impl Fn() + Clone + 'static,
     body: impl IntoElement,
 ) -> Overlay {
-    panel_overlay(Opening::Centered, width, title, on_close, body)
+    panel_overlay(
+        Opening::Centered,
+        width,
+        title,
+        Look::Lattice,
+        None,
+        on_close,
+        body,
+    )
+}
+
+/// A [`floating_panel`] that reads as the old app's widget settings panel
+/// (`SettingsPanel.css`): a regular-weight title, and a close button that
+/// turns red on hover.
+pub fn settings_panel(
+    anchor: &ElementRef,
+    side: Side,
+    width: Points,
+    title: &str,
+    on_close: impl Fn() + Clone + 'static,
+    body: impl IntoElement,
+) -> Overlay {
+    let opening = Opening::Below(*anchor, side);
+    let look = Look::Classic { title_inset: 10.0 };
+    panel_overlay(opening, width, title, look, None, on_close, body)
+}
+
+/// A modal in the middle of the window, as the old app's symbol search was
+/// (`SymbolSearch.css`): the window dimmed behind it ([`theme::BACKDROP`]),
+/// a press on the dimmed part closing it, a regular-weight title with
+/// `actions` (header buttons, before the close button) beside it. Two
+/// overlays, the backdrop and then the panel above it, in a view that takes
+/// no room where it is placed.
+pub fn modal_panel(
+    width: Points,
+    title: &str,
+    actions: Option<View>,
+    on_close: impl Fn() + Clone + 'static,
+    body: impl IntoElement,
+) -> View {
+    let backdrop = overlay()
+        .inset_0()
+        .child(view().size_full().bg(theme::BACKDROP).on_press({
+            let on_close = on_close.clone();
+            move || on_close()
+        }));
+    let look = Look::Classic { title_inset: 12.0 };
+    let panel = panel_overlay(
+        Opening::Centered,
+        width,
+        title,
+        look,
+        actions,
+        on_close,
+        body,
+    );
+    view().absolute().child(backdrop).child(panel)
+}
+
+/// How a floating panel's title bar reads.
+#[derive(Clone, Copy, PartialEq)]
+enum Look {
+    /// Lattice's own panels (the Layout Manager, the widget picker): a bold
+    /// title, a close button that lights up on hover.
+    Lattice,
+    /// The old app's settings panel and symbol search: a regular title
+    /// `title_inset` from the edge, a close button that turns red.
+    Classic { title_inset: f32 },
 }
 
 /// A floating panel's overlay, opening where `opening` says.
@@ -403,20 +552,26 @@ fn panel_overlay(
     opening: Opening,
     width: Points,
     title: &str,
+    look: Look,
+    actions: Option<View>,
     on_close: impl Fn() + Clone + 'static,
     body: impl IntoElement,
 ) -> Overlay {
     let drag = PanelDrag::new();
     let panel_ref = element_ref();
+    let (inset, weight) = match look {
+        Look::Lattice => (10.0, FontWeight::BOLD),
+        Look::Classic { title_inset } => (title_inset, FontWeight::NORMAL),
+    };
 
-    // Everything left of the close button grabs the panel.
+    // Everything left of the header's buttons grabs the panel.
     let grab = view()
         .h_full()
         .flex_1()
         .min_w(px(0.0))
         .flex()
         .items_center()
-        .pl(px(10.0))
+        .pl(px(inset))
         .label(format!("Move {title}"))
         .child(text(title.to_owned()).pointer_events(PointerEvents::None));
 
@@ -432,7 +587,10 @@ fn panel_overlay(
         .text_color(theme::TEXT_FAINT)
         .role(AccessibilityRole::Button)
         .label(format!("Close {title}"))
-        .hover(|style| style.bg(theme::SURFACE).text_color(theme::TEXT))
+        .hover(move |style| match look {
+            Look::Lattice => style.bg(theme::SURFACE).text_color(theme::TEXT),
+            Look::Classic { .. } => style.bg(theme::PANEL).text_color(theme::DANGER),
+        })
         .active(|style| style.bg(theme::BORDER))
         .on_press({
             let on_close = on_close.clone();
@@ -440,7 +598,7 @@ fn panel_overlay(
         })
         .child(text("×"));
 
-    let header = view()
+    let mut header = view()
         .h(px(40.0))
         .flex_none()
         .flex()
@@ -448,10 +606,13 @@ fn panel_overlay(
         .bg(theme::BACKGROUND)
         .border_b_1()
         .border_color(theme::BORDER)
-        .font_weight(FontWeight::BOLD)
+        .font_weight(weight)
         .text_size(px(12.0))
-        .child(drag.handle(grab))
-        .child(close);
+        .child(drag.handle(grab));
+    if let Some(actions) = actions {
+        header = header.child(actions);
+    }
+    let header = header.child(close);
 
     let panel = view()
         .element_ref(&panel_ref)

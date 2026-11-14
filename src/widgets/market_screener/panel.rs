@@ -8,7 +8,7 @@ use std::rc::Rc;
 use nsh_base::SelectItem;
 use nsh_core::{Checked, prelude::*};
 
-use super::{Screener, columns::METRICS, settings::PRODUCT_CHOICES};
+use super::{Screener, ScreenerSettings, columns::METRICS, settings::PRODUCT_CHOICES};
 use crate::{
     data::ferris::Product,
     layout::TabContext,
@@ -21,7 +21,7 @@ const PANEL_WIDTH: Points = px(300.0);
 const ALL: &str = "all";
 
 /// The settings panel of `screener`'s tab, below the pane's gear.
-pub(super) fn panel(screener: Rc<Screener>, tab: TabContext) -> Overlay {
+pub(super) fn panel(screener: Rc<Screener>, tab: TabContext<ScreenerSettings>) -> Overlay {
     let body = view()
         .test_id("screener-settings")
         .flex_col()
@@ -47,7 +47,7 @@ pub(super) fn panel(screener: Rc<Screener>, tab: TabContext) -> Overlay {
 }
 
 /// "Exchange": every exchange, or one scope of the products shown.
-fn scope_row(screener: Rc<Screener>, tab: TabContext) -> View {
+fn scope_row(screener: Rc<Screener>, tab: TabContext<ScreenerSettings>) -> View {
     let saved = tab.settings;
     let items = {
         let screener = screener.clone();
@@ -96,7 +96,7 @@ fn scope_row(screener: Rc<Screener>, tab: TabContext) -> View {
 
 /// "Products": perpetuals and futures, each shown or not (none is a real
 /// choice: the screener then shows no rows).
-fn products_row(screener: Rc<Screener>, tab: TabContext) -> View {
+fn products_row(screener: Rc<Screener>, tab: TabContext<ScreenerSettings>) -> View {
     let saved = tab.settings;
     let chips = PRODUCT_CHOICES.into_iter().map(move |(product, name)| {
         let shown = move || saved.with(|s| s.products().contains(&product));
@@ -161,7 +161,7 @@ fn products_row(screener: Rc<Screener>, tab: TabContext) -> View {
 /// "Columns": every column the screener can show besides exchange, symbol
 /// and quote, each checked while shown. The last one shown cannot be
 /// unchecked.
-fn columns_list(screener: Rc<Screener>, tab: TabContext) -> View {
+fn columns_list(screener: Rc<Screener>, tab: TabContext<ScreenerSettings>) -> View {
     let saved = tab.settings;
     let rows = METRICS.into_iter().map(move |column| {
         let checked = move || saved.with(|s| s.metrics().contains(&column));

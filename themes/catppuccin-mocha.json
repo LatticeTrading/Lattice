@@ -14,6 +14,9 @@
     "success": "#a6e3a1",
     "positive": "var(--success)",
     "negative": "var(--danger)",
-    "warning": "#f9e2af"
+    "warning": "#f9e2af",
+    "bid": "var(--success)",
+    "ask": "var(--danger)",
+    "backdrop": "rgba(0, 0, 0, 0.6)"
   }
 }

@@ -32,8 +32,7 @@ use crate::{
     storage::{self, StoredPage, StoredWorkspace},
     theme,
     widgets::{
-        self, WidgetKind,
-        market_screener::ScreenerSettings,
+        self, KindSettings, WidgetKind, WidgetSettings,
         picker::{Picker, Target},
     },
 };
@@ -128,7 +127,7 @@ pub(crate) fn widget_ids(workspace: &StoredWorkspace) -> HashSet<WidgetId> {
 pub(crate) fn set_tab_settings(
     workspace: &mut StoredWorkspace,
     widget: WidgetId,
-    settings: &ScreenerSettings,
+    settings: &WidgetSettings,
 ) -> bool {
     workspace
         .pages
@@ -640,21 +639,64 @@ struct Panel {
 }
 
 /// What a widget's view gets from its tab, besides its session: the
-/// settings saved in the tab record, and its pane's settings panel.
-#[derive(Clone)]
-pub(crate) struct TabContext {
+/// settings saved in the tab record (`S`, its kind's settings type), and
+/// its pane's settings panel.
+pub(crate) struct TabContext<S: KindSettings> {
     /// The tab's saved settings.
-    pub settings: Memo<ScreenerSettings>,
+    pub settings: Memo<S>,
     /// Whether the tab is its pane's active one (its view shows).
     pub shown: Memo<bool>,
-    save: Rc<dyn Fn(&ScreenerSettings)>,
+    save: Rc<dyn Fn(&S)>,
     panel: Panel,
 }
 
-impl TabContext {
+impl<S: KindSettings> Clone for TabContext<S> {
+    fn clone(&self) -> Self {
+        Self {
+            settings: self.settings,
+            shown: self.shown,
+            save: self.save.clone(),
+            panel: self.panel,
+        }
+    }
+}
+
+impl<S: KindSettings> TabContext<S> {
+    /// The context of `tab`, whose kind's settings are `S`.
+    fn new(
+        tab: ReadSignal<Tab>,
+        shown: Memo<bool>,
+        workspace: Signal<StoredWorkspace>,
+        panel: Panel,
+    ) -> Self {
+        let widget = tab.with_untracked(|tab| tab.widget);
+        Self {
+            settings: computed(move || {
+                tab.with(|tab| S::of(&tab.settings).cloned().unwrap_or_default())
+            }),
+            shown,
+            save: Rc::new(move |settings: &S| {
+                let next = settings.clone().wrap();
+                // Nothing when unchanged, or when the tab is gone.
+                let changed = workspace.with_untracked(|state| {
+                    widget_ids(state).contains(&widget)
+                        && tab.with_untracked(|tab| tab.settings != next)
+                });
+                if changed {
+                    workspace.update(|state| {
+                        if set_tab_settings(state, widget, &next) {
+                            persist(state);
+                        }
+                    });
+                }
+            }),
+            panel,
+        }
+    }
+
     /// Saves `settings` in the tab record (every breakpoint's copy of the
     /// tab) and persists the workspace.
-    pub fn save(&self, settings: &ScreenerSettings) {
+    pub fn save(&self, settings: &S) {
         (self.save)(settings);
     }
 
@@ -683,30 +725,11 @@ fn tab_content(
     workspace: Signal<StoredWorkspace>,
     panel: Panel,
 ) -> View {
-    // The row is keyed by widget, whose tab id never changes.
+    // The row is keyed by widget, whose tab id and kind never change.
     let (tab_id, widget) = tab.with_untracked(|tab| (tab.id, tab.widget));
     let shown = computed(move || active_tab.get() == tab_id);
-    let context = TabContext {
-        settings: computed(move || tab.with(|tab| tab.settings.clone())),
-        shown,
-        save: Rc::new(move |settings: &ScreenerSettings| {
-            // Nothing when unchanged, or when the tab is gone.
-            let changed = workspace.with_untracked(|state| {
-                widget_ids(state).contains(&widget)
-                    && tab.with_untracked(|tab| tab.settings != *settings)
-            });
-            if changed {
-                workspace.update(|state| {
-                    if set_tab_settings(state, widget, settings) {
-                        persist(state);
-                    }
-                });
-            }
-        }),
-        panel,
-    };
     let attached = sessions.attach(widget, shown);
-    let body = widget_body(&attached, &context);
+    let body = widget_body(&attached, tab, shown, workspace, panel);
     attached.release_on_cleanup();
     view()
         .flex_1()
@@ -718,8 +741,22 @@ fn tab_content(
 }
 
 /// What a widget shows, from its session (`attached.state(..)` holds its
-/// data) and its tab. The Market Screener is the only widget so far, so
-/// every tab is one.
-fn widget_body(attached: &WidgetView, tab: &TabContext) -> View {
-    widgets::market_screener::market_screener(attached, tab)
+/// data) and its tab, by the tab's kind.
+fn widget_body(
+    attached: &WidgetView,
+    tab: ReadSignal<Tab>,
+    shown: Memo<bool>,
+    workspace: Signal<StoredWorkspace>,
+    panel: Panel,
+) -> View {
+    match tab.with_untracked(Tab::kind) {
+        WidgetKind::MarketScreener => widgets::market_screener::market_screener(
+            attached,
+            &TabContext::new(tab, shown, workspace, panel),
+        ),
+        WidgetKind::TradeStream => widgets::trade_stream::trade_stream(
+            attached,
+            &TabContext::new(tab, shown, workspace, panel),
+        ),
+    }
 }

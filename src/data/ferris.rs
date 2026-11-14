@@ -14,14 +14,23 @@
 //! - Market statistics ([`market_stats`]): every market of a scope with
 //!   prices, funding, volume and open interest, polled through one shared
 //!   query per scope ([`Ferris::market_stats_query`]).
+//! - Market catalogs ([`catalog`]): every market of an exchange, one
+//!   shared request per listing scope ([`Ferris::catalog_query`]), which
+//!   pickers offer as [`MarketSelection`]s.
+//! - Trades ([`trades`]): one market's recent prints, a live topic and a
+//!   snapshot shared by every widget watching it ([`Ferris::trades`]);
+//!   markets are [`MarketSelection`]s, which know their topics.
 //!
 //! Ferris descends from a CCXT-compatible client, so its vocabulary
 //! (`fetchMarkets`, unified market/ticker/trade/book/candle shapes) is
 //! CCXT's; the shapes are typed by the services that use them.
 
 mod capabilities;
+pub mod catalog;
+mod market;
 pub mod market_stats;
 mod protocol;
+pub mod trades;
 
 use std::{rc::Rc, time::Duration};
 
@@ -29,10 +38,15 @@ use serde::{Serialize, de::DeserializeOwned};
 
 pub use capabilities::{
     Availability, Capabilities, CapabilityState, DeliveryMode, ExchangeCapabilities, Feature,
-    Features, Product,
+    Features, Product, Requirement,
 };
+pub use catalog::{
+    Catalog, CatalogMarket, CatalogScope, SymbolQuery, catalog_scopes, merge as merge_catalogs,
+};
+pub use market::{MarketSelection, MarketType};
 pub use market_stats::{MarketStatsScope, StatsFieldName, StatsSnapshot, stats_scopes};
 pub use protocol::{Channel, FerrisProtocol, FerrisPush, FerrisTopic};
+pub use trades::{Side, Trade, TradeFeed, TradeRow};
 
 use super::net::{
     ApiError, HttpClient, HttpOptions, Queries, QuerySpec, Request, SharedSocket, SocketConfig,
@@ -123,13 +137,14 @@ impl Operation {
 }
 
 /// The Ferris client. Cloning is cheap: every clone shares one HTTP
-/// client, one socket and one query hub.
+/// client, one socket, one query hub and one set of trade feeds.
 #[derive(Clone)]
 pub struct Ferris {
     config: Rc<FerrisConfig>,
     http: HttpClient,
     socket: SharedSocket<FerrisProtocol>,
     queries: Queries,
+    feeds: trades::TradeFeeds,
 }
 
 impl Ferris {
@@ -165,6 +180,7 @@ impl Ferris {
             http,
             socket,
             queries,
+            feeds: trades::TradeFeeds::default(),
         })
     }
 
@@ -243,6 +259,23 @@ impl Ferris {
             async move { http.send::<StatsSnapshot>(request?).await }
         })
         .refresh_every(scope.capability.poll_interval)
+    }
+
+    /// The market catalog of `scope`: one shared request per scope,
+    /// refetched every minute while watched.
+    pub fn catalog_query(&self, scope: &CatalogScope) -> QuerySpec<Catalog> {
+        let http = self.http.clone();
+        let exchange = scope.exchange.clone();
+        let request = Request::post_json(Operation::FetchMarkets.path(), &scope.body())
+            .map(|request| request.timeout(scope.timeout()));
+        QuerySpec::new(scope.key.clone(), move || {
+            let (http, exchange, request) = (http.clone(), exchange.clone(), request.clone());
+            async move {
+                let payload: serde_json::Value = http.send(request?).await?;
+                catalog::parse(&payload, &exchange)
+            }
+        })
+        .refresh_every(catalog::REFRESH)
     }
 
     /// Subscribes to a live topic on the shared socket.

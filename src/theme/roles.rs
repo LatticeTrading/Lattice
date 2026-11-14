@@ -113,6 +113,15 @@ roles! {
     NEGATIVE = "negative",
     /// Data that needs a second look: a value past its freshness window.
     WARNING = "warning",
+    /// The buy side: a print that bought, a bid.
+    BID = "bid",
+    /// The sell side: a print that sold, an ask.
+    ASK = "ask",
+
+    // Layers.
+    /// What dims the window behind a modal (the market picker): the old
+    /// app's black at 60% in every theme.
+    BACKDROP = "backdrop",
 }
 
 /// NSH's standard token names (shadcn/ui's) and the role each is drawn

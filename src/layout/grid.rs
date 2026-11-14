@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     data::WidgetId,
-    widgets::{WidgetKind, market_screener::ScreenerSettings},
+    widgets::{WidgetKind, WidgetSettings},
 };
 
 pub const GAP: f32 = 8.;
@@ -22,6 +22,7 @@ pub struct Rect {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "TabRecord", into = "TabRecord")]
 pub struct Tab {
     /// Unique within its page's grid only; the same in every breakpoint.
     pub id: usize,
@@ -30,14 +31,11 @@ pub struct Tab {
     /// tab that is loaded, imported or created is a new widget with a fresh
     /// id, whatever page and tab ids it reuses ([`Grid::unify_widgets`]
     /// makes a loaded tab's breakpoint copies share one).
-    #[serde(skip, default = "WidgetId::fresh")]
     pub widget: WidgetId,
-    /// The widget's settings (a Market Screener's: every tab is one), the
-    /// same in every breakpoint's copy. Left out of the saved form while
-    /// they are the defaults, so a tab nobody configured saves as it did
-    /// before settings existed.
-    #[serde(default, skip_serializing_if = "ScreenerSettings::is_default")]
-    pub settings: ScreenerSettings,
+    /// The widget's kind and settings, the same in every breakpoint's copy.
+    /// A tab's kind never changes (another kind would be another widget,
+    /// with a new id).
+    pub settings: WidgetSettings,
 }
 
 /// What tabs were called before widgets existed.
@@ -50,7 +48,56 @@ impl Tab {
             id,
             title: kind.title().into(),
             widget: WidgetId::fresh(),
-            settings: ScreenerSettings::default(),
+            settings: WidgetSettings::new(kind),
+        }
+    }
+
+    pub fn kind(&self) -> WidgetKind {
+        self.settings.kind()
+    }
+}
+
+/// A tab as it is saved. `kind` is the old app's widget id, left out for
+/// a Market Screener, and `settings` is left out while it holds the kind's
+/// defaults, so a screener tab saves exactly as it did before kinds and
+/// settings existed, and those saves load as screeners. An unknown kind
+/// (from a newer build) loads as a Market Screener.
+#[derive(Serialize, Deserialize)]
+struct TabRecord {
+    id: usize,
+    title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    settings: Option<serde_json::Value>,
+}
+
+impl From<TabRecord> for Tab {
+    fn from(record: TabRecord) -> Self {
+        let kind = match record.kind.as_deref() {
+            None => WidgetKind::MarketScreener,
+            Some(id) => WidgetKind::from_id(id).unwrap_or_else(|| {
+                log::warn!("Lattice: tab {} has unknown widget {id:?}", record.id);
+                WidgetKind::MarketScreener
+            }),
+        };
+        Self {
+            id: record.id,
+            title: record.title,
+            widget: WidgetId::fresh(),
+            settings: WidgetSettings::read(kind, record.settings.unwrap_or_default()),
+        }
+    }
+}
+
+impl From<Tab> for TabRecord {
+    fn from(tab: Tab) -> Self {
+        let kind = tab.kind();
+        Self {
+            id: tab.id,
+            title: tab.title,
+            kind: (kind != WidgetKind::MarketScreener).then(|| kind.id().to_owned()),
+            settings: (!tab.settings.is_default()).then(|| tab.settings.to_value()),
         }
     }
 }
@@ -213,13 +260,13 @@ impl Grid {
         }
     }
 
-    /// Gives each tab one widget id and one set of settings in every
-    /// breakpoint's copy of it. A deserialized tab's copies each got a
-    /// fresh id; the first copy's id and settings are kept for all of them
-    /// (the settings differ only in a save edited by hand). A tab is known
+    /// Gives each tab one widget id and one kind and set of settings in
+    /// every breakpoint's copy of it. A deserialized tab's copies each got
+    /// a fresh id; the first copy's id and settings are kept for all of
+    /// them (the settings differ only in a save edited by hand). A tab is known
     /// by its pane and tab ids, as the tab operations find it.
     pub fn unify_widgets(&mut self) {
-        let mut first: HashMap<(usize, usize), (WidgetId, ScreenerSettings)> = HashMap::new();
+        let mut first: HashMap<(usize, usize), (WidgetId, WidgetSettings)> = HashMap::new();
         for pane in self.layouts.iter_mut().flatten() {
             let pane_id = pane.id;
             for tab in &mut pane.tabs {
@@ -235,15 +282,15 @@ impl Grid {
     }
 
     /// Saves `settings` in every copy of `widget`'s tab; false when no tab
-    /// of this grid is that widget.
-    pub fn set_settings(&mut self, widget: WidgetId, settings: &ScreenerSettings) -> bool {
+    /// of this grid is that widget, or it is of another kind.
+    pub fn set_settings(&mut self, widget: WidgetId, settings: &WidgetSettings) -> bool {
         let mut found = false;
         for tab in self
             .layouts
             .iter_mut()
             .flatten()
             .flat_map(|pane| &mut pane.tabs)
-            .filter(|tab| tab.widget == widget)
+            .filter(|tab| tab.widget == widget && tab.kind() == settings.kind())
         {
             settings.clone_into(&mut tab.settings);
             found = true;
