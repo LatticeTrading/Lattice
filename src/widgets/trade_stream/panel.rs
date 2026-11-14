@@ -28,11 +28,11 @@ use super::{
 };
 use crate::{
     data::ferris::{Channel, MarketKey, MarketSelection, Requirement},
-    exchanges, theme,
+    theme,
     ui::{self, Side},
     widgets::{
         TabContext,
-        common::{LogoStyle, MarketPicker, exchange_logo, number_field, tag_text},
+        common::{MarketPicker, market_chooser, market_name, number_field},
     },
 };
 
@@ -42,17 +42,6 @@ const PANEL_WIDTH: Points = px(340.0);
 const STEP: u16 = 10;
 /// The market list's widest (the old `.settings-symbol-list`).
 const LIST_WIDTH: f32 = 260.0;
-/// A market box's height, and its logo segment's width.
-const ENTRY_HEIGHT: f32 = 28.0;
-const LOGO_SEGMENT: f32 = 24.0;
-/// How a market's box draws its exchange's logo: initials without a box,
-/// the segment is one.
-const LOGO: LogoStyle = LogoStyle {
-    size: 14.0,
-    color: theme::TEXT_MUTED,
-    initials_size: 7.0,
-    boxed: false,
-};
 
 /// What the market picker is open for.
 #[derive(Clone, Debug, PartialEq)]
@@ -174,12 +163,7 @@ fn market_entry(
     picking: Signal<Option<Picking>>,
 ) -> View {
     let saved = tab.settings;
-    let name = format!(
-        "{} {} {}",
-        exchanges::display_name(&market.exchange),
-        market.symbol,
-        market.tags()
-    );
+    let name = market_name(&market);
     let identity = market.identity();
     let replacing = {
         let identity = identity.clone();
@@ -189,72 +173,19 @@ fn market_entry(
             )
         }
     };
-    // The old `.market-tag` segments: no box of their own, a divider
-    // before each.
-    let segment = |label: String, color: theme::Role| {
-        view()
-            .flex_none()
-            .flex()
-            .items_center()
-            .px(px(8.0))
-            .border_l_1()
-            .border_color(theme::BORDER)
-            .child(tag_text(text(label)).text_color(color))
-    };
-    let mut chooser = view()
+    let chooser = market_chooser(&market)
         .flex_1()
         .min_w(px(0.0))
-        .min_h(px(ENTRY_HEIGHT))
-        .flex_row()
-        .bg(theme::SURFACE)
-        .border_1()
-        .border_color(theme::BORDER)
         .role(AccessibilityRole::Button)
         .label(format!("Replace {name}"))
         .accessibility_state(move || AccessibilityState {
             expanded: Some(replacing()),
             ..Default::default()
         })
-        // Raised while hovered, so its accent edge draws over the × box's
-        // (the two share their dividing line).
-        .relative()
-        .hover(|s| s.bg(theme::PANEL).border_color(theme::ACCENT).z_index(1))
         .on_press({
             let picked = Rc::new(market.clone());
             move || picking.set(Some(Picking::Replace(picked.clone(), identity.clone())))
-        })
-        .child(
-            view()
-                .w(px(LOGO_SEGMENT))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .border_r_1()
-                .border_color(theme::BORDER)
-                .overflow_hidden()
-                .child(exchange_logo(&market.exchange, LOGO)),
-        )
-        .child(
-            view()
-                .flex_shrink(1.0)
-                .min_w(px(0.0))
-                .max_w(px(92.0))
-                .flex()
-                .items_center()
-                .px(px(8.0))
-                .child(
-                    text(market.symbol.clone())
-                        .min_w(px(0.0))
-                        .truncate()
-                        .text_size(px(11.0))
-                        .text_color(theme::TEXT),
-                ),
-        )
-        .child(segment(market.kind.label().to_owned(), theme::TEXT_FAINT));
-    if let Some(detail) = market.detail() {
-        chooser = chooser.child(segment(detail, theme::WARNING));
-    }
+        });
     let remove = view()
         .w(px(29.0))
         .flex_none()

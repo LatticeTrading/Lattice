@@ -11,7 +11,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::data::ferris::{MarketSelection, MarketType};
+use crate::data::ferris::MarketSelection;
 
 /// The fewest and most prints the stream shows, and its default.
 pub(super) const MIN_TRADES: u16 = 10;
@@ -21,23 +21,7 @@ const DEFAULT_TRADES: u16 = 50;
 /// The old app's default Trade Stream market: Bybit's BTC/USDT linear
 /// perpetual.
 fn default_market() -> MarketSelection {
-    MarketSelection {
-        exchange: "bybit".into(),
-        symbol: "BTC/USDT".into(),
-        base: "BTC".into(),
-        quote: "USDT".into(),
-        request_symbol: "BTC/USDT:USDT".into(),
-        exchange_symbol: "BTCUSDT".into(),
-        kind: MarketType::Perp,
-        category: Some("linear".into()),
-        expiry: None,
-        market_id: None,
-        exchange_market_id: None,
-        dex: None,
-        contract_type: None,
-        settle: None,
-        settlement_asset_id: None,
-    }
+    MarketSelection::bybit_btc_usdt()
 }
 
 /// One Trade Stream's settings.

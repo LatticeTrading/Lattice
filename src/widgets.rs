@@ -18,12 +18,14 @@ pub(crate) mod picker;
 mod registry;
 
 // The widgets, each listed once in the registry below.
+mod chart;
 mod market_screener;
 mod trade_stream;
 
 pub(crate) use host::{Category, SettingsPanel, TabContext, TabHandle};
 
 registry::registry! {
+    chart::Chart,
     market_screener::MarketScreener,
     trade_stream::TradeStream,
 }

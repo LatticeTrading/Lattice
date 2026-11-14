@@ -1,5 +1,5 @@
 //! Settings rows and their controls: rows with a name column or a name at
-//! the edge, a dropdown, and a check row.
+//! the edge, dropdowns, a check row and a checkbox.
 
 use nsh_base::{SelectItem, select};
 use nsh_core::{Checked, prelude::*};
@@ -89,7 +89,53 @@ pub fn dropdown(
         .active(|style| style.bg(theme::BORDER))
         .child(view().flex_1().min_w(px(0.0)).child(text(shown)))
         .child(text("▾").text_color(theme::TEXT_FAINT));
+    select_from(items, value, on_pick, label, trigger)
+        .flex_1()
+        .min_w(px(0.0))
+        .h_full()
+        .border_l_1()
+        .border_color(theme::BORDER)
+}
 
+/// The old settings panel's select (`.settings-select`), the control of a
+/// [`label_edge_row`]: a small bordered box as wide as what it shows (90pt
+/// at least), which works as [`dropdown`] does.
+pub fn compact_dropdown(
+    items: impl Fn() -> Vec<SelectItem> + 'static,
+    value: impl Fn() -> SharedString + 'static,
+    shown: impl Fn() -> String + 'static,
+    on_pick: impl Fn(&str) + 'static,
+    label: &'static str,
+) -> impl IntoElement {
+    let trigger = view()
+        .h(px(24.0))
+        .min_w(px(90.0))
+        .flex_row()
+        .items_center()
+        .justify_between()
+        .gap(px(8.0))
+        .pl(px(8.0))
+        .pr(px(6.0))
+        .bg(theme::SURFACE)
+        .border_1()
+        .border_color(theme::BORDER)
+        .text_size(px(11.0))
+        .text_color(theme::TEXT)
+        .hover(|style| style.border_color(theme::TEXT_FAINT))
+        .child(text(shown).number_of_lines(1))
+        .child(text("▾").text_color(theme::TEXT_FAINT));
+    select_from(items, value, on_pick, label, trigger).flex_none()
+}
+
+/// The select both dropdowns are: `trigger` opens the list of `items`,
+/// the one whose id is `value` marked, and a pick calls `on_pick`.
+fn select_from(
+    items: impl Fn() -> Vec<SelectItem> + 'static,
+    value: impl Fn() -> SharedString + 'static,
+    on_pick: impl Fn(&str) + 'static,
+    label: &'static str,
+    trigger: View,
+) -> impl Styled + IntoElement {
     select()
         .items(items)
         .value(value)
@@ -113,11 +159,54 @@ pub fn dropdown(
         .item_style(|style| style.h(px(30.0)).px(px(10.0)).flex().items_center())
         // The rows' states are classes; every role is a Tailwind color.
         .item_class("focus:bg-surface selected:text-accent")
-        .flex_1()
-        .min_w(px(0.0))
-        .h_full()
-        .border_l_1()
-        .border_color(theme::BORDER)
+}
+
+/// The old settings panel's checkbox (`.checkbox-box`), the control of a
+/// [`label_edge_row`]: a 14pt box, filled with the accent around a small
+/// square while `checked`. Pressing it calls `on_toggle`; `label` names it
+/// for assistive tech.
+pub fn check_box(
+    label: &'static str,
+    checked: impl Fn() -> bool + Copy + 'static,
+    on_toggle: impl Fn() + 'static,
+) -> View {
+    let edge = move |unchecked: theme::Role| {
+        move || {
+            if checked() {
+                theme::ACCENT.get()
+            } else {
+                unchecked.get()
+            }
+        }
+    };
+    view()
+        .size(px(14.0))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .border_1()
+        .border_color(edge(theme::BORDER))
+        .bg(edge(theme::SURFACE))
+        .role(AccessibilityRole::Checkbox)
+        .label(label)
+        .accessibility_state(move || AccessibilityState {
+            checked: Some(if checked() {
+                Checked::True
+            } else {
+                Checked::False
+            }),
+            ..Default::default()
+        })
+        .hover(move |style| style.border_color(edge(theme::TEXT_FAINT)))
+        .on_press(on_toggle)
+        .child(
+            // What reads on the accent, as the check row's mark.
+            view()
+                .size(px(8.0))
+                .bg(theme::BACKGROUND)
+                .style_when(move || !checked(), |s| s.hidden()),
+        )
 }
 
 /// A row that checks and unchecks an option: its name, then a box with a

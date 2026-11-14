@@ -129,6 +129,12 @@ impl<K: Eq + Hash, S> FeedLease<K, S> {
     pub fn state(&self) -> &S {
         &self.node.state
     }
+
+    /// The feed itself, for a task the lease starts on it to hold weakly
+    /// (a page of history).
+    pub fn node(&self) -> &Rc<FeedNode<K, S>> {
+        &self.node
+    }
 }
 
 impl<K: Eq + Hash, S> Drop for FeedLease<K, S> {

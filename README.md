@@ -7,9 +7,10 @@ and WebAssembly web targets.
 The shell has the multi-page workspace, responsive grid with movable and
 resizable panes, tabs, themes, and versioned persistence (layout codes
 included). Market data comes from the Ferris backend through a shared data
-layer (HTTP, WebSocket, polling). Two widgets are ported: the Market Screener
-and the Trade Stream; the others still to port have empty folders under
-`src/widgets/`. The Everything Bar's symbol search and connection status are
+layer (HTTP, WebSocket, polling). Three widgets are ported: the Chart
+(candles and ticks, drawn on the GPU through NSH's WGSL shader views), the
+Market Screener and the Trade Stream; the others still to port have empty
+folders under `src/widgets/`. The Everything Bar's symbol search and connection status are
 placeholders. On desktop the platform's normal title bar keeps minimize,
 maximize/restore, and close; on web the browser owns the window chrome.
 
@@ -80,7 +81,7 @@ visual and native-caption acceptance remains a user-run check.
 - `src/theme.rs`, `src/theme/roles.rs`: the theme engine and its color roles.
 - `src/assets.rs`, `assets/`: compile-time fonts and app assets (icons, exchange logos).
 - `src/data.rs`, `src/data/`: the data layer (`net/`: shared HTTP, WebSocket, polling, and live-feed plumbing; `ferris/`: the Ferris integration, with per-exchange rules in `ferris/venues.rs`; `session.rs`: per-widget data sessions).
-- `src/widgets.rs`, `src/widgets/`: the widget registry, the widget picker, shared widget parts (`common/`: market picker, exchange logos, number field), and one folder per widget (`market_screener/`, `trade_stream/`).
+- `src/widgets.rs`, `src/widgets/`: the widget registry, the widget picker, shared widget parts (`common/`: market picker, exchange logos, number field), and one folder per widget (`chart/`, `market_screener/`, `trade_stream/`).
 - `src/exchanges.rs`, `src/format.rs`: exchange names, order, and logos; number formatting.
 - `src/platform/`: future native integrations (empty).
 

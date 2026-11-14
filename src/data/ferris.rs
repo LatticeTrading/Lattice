@@ -20,11 +20,15 @@
 //! - Trades ([`trades`]): one market's recent prints, a live topic and a
 //!   snapshot shared by every widget watching it ([`Ferris::trades`]);
 //!   markets are [`MarketSelection`]s, which know their topics.
+//! - Candles ([`candles`]): one market's OHLCV bars at one timeframe, a
+//!   live topic and its history shared by every widget charting it
+//!   ([`Ferris::candles`]).
 //!
 //! Ferris descends from a CCXT-compatible client, so its vocabulary
 //! (`fetchMarkets`, unified market/ticker/trade/book/candle shapes) is
 //! CCXT's; the shapes are typed by the services that use them.
 
+pub mod candles;
 mod capabilities;
 pub mod catalog;
 mod market;
@@ -37,6 +41,7 @@ use std::{rc::Rc, time::Duration};
 
 use serde::{Serialize, de::DeserializeOwned};
 
+pub use candles::{Candle, CandleFeed, Timeframe};
 pub use capabilities::{
     Availability, Capabilities, CapabilityState, DeliveryMode, ExchangeCapabilities, Feature,
     Features, Product, Requirement,
@@ -139,7 +144,8 @@ impl Operation {
 /// client, one socket, one query hub and one set of feed hubs.
 ///
 /// Each service module owns its part of the client (`impl Ferris` in
-/// `capabilities.rs`, `catalog.rs`, `market_stats.rs`, `trades.rs`): a
+/// `capabilities.rs`, `catalog.rs`, `market_stats.rs`, `trades.rs`,
+/// `candles.rs`): a
 /// polled one makes its queries with [`Self::post_query`], a streaming one
 /// keeps its feeds in its own hub of `feeds`, so a new service adds no
 /// field here.

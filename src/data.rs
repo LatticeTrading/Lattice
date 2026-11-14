@@ -41,8 +41,12 @@ impl DataServices {
     /// them to everything made under it from now on. They shut down with
     /// that owner.
     pub fn provide() -> Self {
+        Self::provide_with(ferris::FerrisConfig::default())
+    }
+
+    /// [`Self::provide`] with Ferris at `config` (a test's backend).
+    pub fn provide_with(config: ferris::FerrisConfig) -> Self {
         let status = net::StatusBoard::new();
-        let config = ferris::FerrisConfig::default();
         let ferris = ferris::Ferris::new(config, status).unwrap_or_else(|error| {
             log::error!("Lattice: invalid Ferris configuration ({error}); using production");
             ferris::Ferris::new(ferris::FerrisConfig::production(), status)

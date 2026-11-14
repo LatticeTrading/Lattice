@@ -104,10 +104,6 @@ impl MarketPicker {
 
     /// While there is a current selection, a "Clear" button (`label` for
     /// assistive tech) calls `on_clear` and closes the picker.
-    #[allow(
-        dead_code,
-        reason = "for single-market settings (charts, books), not ported yet"
-    )]
     pub fn on_clear(mut self, label: &str, on_clear: impl Fn() + 'static) -> Self {
         self.clear = Some((label.to_owned(), Rc::new(on_clear)));
         self

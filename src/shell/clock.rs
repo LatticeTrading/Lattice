@@ -114,6 +114,22 @@ pub(crate) fn format_time(secs: i64, prefs: ClockPrefs) -> String {
     }
 }
 
+/// `secs` (since the Unix epoch) as a day and a time of day on the clock,
+/// without seconds: `Nov 14 14:05`, or `Nov 14 02:05 PM` in 12-hour time
+/// (a chart's time axis).
+pub(crate) fn format_day_time(secs: i64, prefs: ClockPrefs) -> String {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let local = secs + i64::from(prefs.offset) * 60;
+    let (_, month, day) = crate::format::civil_date(local.div_euclid(86_400));
+    let month = MONTHS[(month - 1).clamp(0, 11) as usize];
+    let time = format_time(secs, prefs);
+    // `14:05:09` or `02:05:09 PM`, less its seconds.
+    let (clock, suffix) = time.split_at(8.min(time.len()));
+    format!("{month} {day} {}{suffix}", &clock[..5.min(clock.len())])
+}
+
 /// An offset's name: `UTC+0`, `UTC-6`, `UTC+5:30`.
 pub(crate) fn offset_label(offset: i16) -> String {
     let sign = if offset < 0 { '-' } else { '+' };

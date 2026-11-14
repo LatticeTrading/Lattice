@@ -78,6 +78,10 @@ pub struct Venue {
     pub routes_by_type: &'static [MarketType],
     /// A REST snapshot is asked for by catalog id, not by symbol.
     pub rest_by_market_id: bool,
+    /// Its candle history is asked for by catalog id (the display pair
+    /// without one) and product `type`: its catalog categories describe
+    /// the venue, they do not pick a product there.
+    pub candles_by_type: bool,
     /// Its derivatives come in linear and inverse families: their category
     /// is their family, and their symbols are settled by it
     /// (`BASE/QUOTE:SETTLE`, dated futures `-YYMMDD`).
@@ -151,6 +155,7 @@ const DEFAULT: Venue = Venue {
     catalog_keys_by_id: false,
     routes_by_type: &[],
     rest_by_market_id: false,
+    candles_by_type: false,
     linear_inverse: false,
     futures_need_day: false,
     unsettled_symbols: false,
@@ -278,6 +283,7 @@ pub static VENUES: &[Venue] = &[
         logo: logo!("aster"),
         // `{}` is perpetuals.
         catalog_profiles: &[(None, &[Product::Perp]), (Some("spot"), &[Product::Spot])],
+        candles_by_type: true,
         stats_profiles: PERP_SPOT,
         ..DEFAULT
     },
@@ -285,6 +291,8 @@ pub static VENUES: &[Venue] = &[
         id: "extended",
         name: "Extended",
         logo: logo!("extended"),
+        // Its routed symbol is a 400 there (checked live 2026-11-14).
+        candles_by_type: true,
         derive_symbol: Some(market::extended_symbol),
         stats_profiles: PERP,
         settlement_volume: SettlementVolume::Always,

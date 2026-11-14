@@ -181,6 +181,20 @@ pub fn compare_text(left: &str, right: &str) -> Ordering {
     fold(left).cmp(&fold(right)).then_with(|| left.cmp(right))
 }
 
+/// The date of the day `days` after 1970-01-01: its year, month (1 to 12)
+/// and day of the month (Howard Hinnant's days-to-civil algorithm).
+pub fn civil_date(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    (yoe + era * 400 + i64::from(month <= 2), month, day)
+}
+
 /// A Unix time in milliseconds as ISO 8601 UTC (`2026-11-12T08:30:00.000Z`,
 /// what the old app's tooltips showed), or `unknown` without one or outside
 /// years 0-9999.
@@ -191,16 +205,7 @@ pub fn iso_time(ms: Option<f64>) -> String {
     };
     let ms = ms.floor() as i64;
     let (days, in_day) = (ms.div_euclid(DAY_MS), ms.rem_euclid(DAY_MS));
-    // Howard Hinnant's days-to-civil algorithm.
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
+    let (year, month, day) = civil_date(days);
     if !(0..=9999).contains(&year) {
         return "unknown".to_owned();
     }
