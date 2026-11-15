@@ -1,0 +1,27 @@
+{
+  "name": "Amber Terminal",
+  "appearance": "dark",
+  "colors": {
+    "background": "#0d0800",
+    "surface": "#1a1105",
+    "panel": "#140c02",
+    "border": "#3a2708",
+    "text": "#ffb000",
+    "text-muted": "#c28400",
+    "text-faint": "#7d5600",
+    "accent": "#ffe2a0",
+    "danger": "#ff5a36",
+    "success": "#9bd42c",
+    "positive": "var(--success)",
+    "negative": "var(--danger)",
+    "warning": "#f5e642",
+    "bid": "var(--success)",
+    "ask": "var(--danger)",
+    "link-green": "var(--success)",
+    "link-red": "var(--danger)",
+    "link-blue": "#5fb3d9",
+    "link-yellow": "var(--warning)",
+    "link-orange": "#ff8a1f",
+    "backdrop": "rgba(0, 0, 0, 0.6)"
+  }
+}

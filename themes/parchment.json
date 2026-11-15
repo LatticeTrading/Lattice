@@ -1,0 +1,27 @@
+{
+  "name": "Parchment",
+  "appearance": "light",
+  "colors": {
+    "background": "#f4ead5",
+    "surface": "#e8dcc0",
+    "panel": "#eee3ca",
+    "border": "#cdbd98",
+    "text": "#3b2f20",
+    "text-muted": "#6b5a43",
+    "text-faint": "#94826a",
+    "accent": "#2f4b7c",
+    "danger": "#a8281e",
+    "success": "#4f7028",
+    "positive": "var(--success)",
+    "negative": "var(--danger)",
+    "warning": "#a66a00",
+    "bid": "var(--success)",
+    "ask": "var(--danger)",
+    "link-green": "var(--success)",
+    "link-red": "var(--danger)",
+    "link-blue": "var(--accent)",
+    "link-yellow": "var(--warning)",
+    "link-orange": "#c05a1c",
+    "backdrop": "rgba(0, 0, 0, 0.6)"
+  }
+}

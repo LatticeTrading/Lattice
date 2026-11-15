@@ -1,0 +1,27 @@
+{
+  "name": "Lavender",
+  "appearance": "light",
+  "colors": {
+    "background": "#f8f5ff",
+    "surface": "#ece6fb",
+    "panel": "#f2eefd",
+    "border": "#d3c8f0",
+    "text": "#2e2545",
+    "text-muted": "#655a85",
+    "text-faint": "#9388b0",
+    "accent": "#7c4ddb",
+    "danger": "#d43f6a",
+    "success": "#2f9a82",
+    "positive": "var(--success)",
+    "negative": "var(--danger)",
+    "warning": "#b7820a",
+    "bid": "var(--success)",
+    "ask": "var(--danger)",
+    "link-green": "var(--success)",
+    "link-red": "var(--danger)",
+    "link-blue": "#3f7fe0",
+    "link-yellow": "var(--warning)",
+    "link-orange": "#e2783a",
+    "backdrop": "rgba(0, 0, 0, 0.6)"
+  }
+}

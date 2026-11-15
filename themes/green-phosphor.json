@@ -1,0 +1,27 @@
+{
+  "name": "Green Phosphor",
+  "appearance": "dark",
+  "colors": {
+    "background": "#030a05",
+    "surface": "#0a1a0e",
+    "panel": "#06120a",
+    "border": "#17381f",
+    "text": "#a9f5b8",
+    "text-muted": "#62b077",
+    "text-faint": "#3b7a4d",
+    "accent": "#d6ffe0",
+    "danger": "#ff5f52",
+    "success": "#39ff14",
+    "positive": "var(--success)",
+    "negative": "var(--danger)",
+    "warning": "#ffd24a",
+    "bid": "var(--success)",
+    "ask": "var(--danger)",
+    "link-green": "var(--success)",
+    "link-red": "var(--danger)",
+    "link-blue": "#4ac8ff",
+    "link-yellow": "var(--warning)",
+    "link-orange": "#ff9a3d",
+    "backdrop": "rgba(0, 0, 0, 0.6)"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "Cotton Candy",
+  "appearance": "dark",
+  "colors": {
+    "background": "#1a1630",
+    "surface": "#251f42",
+    "panel": "#1f1a39",
+    "border": "#3d3565",
+    "text": "#f3ecff",
+    "text-muted": "#b3a6d9",
+    "text-faint": "#7a6fa3",
+    "accent": "#ff9ad5",
+    "danger": "#ff6b8b",
+    "success": "#7ee8c5",
+    "positive": "var(--success)",
+    "negative": "var(--danger)",
+    "warning": "#ffd98a",
+    "bid": "var(--success)",
+    "ask": "var(--danger)",
+    "link-green": "var(--success)",
+    "link-red": "var(--danger)",
+    "link-blue": "#8fc7ff",
+    "link-yellow": "var(--warning)",
+    "link-orange": "#ffab7a",
+    "backdrop": "rgba(0, 0, 0, 0.6)"
+  }
+}

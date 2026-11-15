@@ -1,0 +1,27 @@
+{
+  "name": "Sakura",
+  "appearance": "light",
+  "colors": {
+    "background": "#fff7f9",
+    "surface": "#fde8ee",
+    "panel": "#fff0f4",
+    "border": "#f3c9d6",
+    "text": "#4a2a36",
+    "text-muted": "#8a5a6b",
+    "text-faint": "#b58a99",
+    "accent": "#d63f8c",
+    "danger": "#d1382c",
+    "success": "#2f9e77",
+    "positive": "var(--success)",
+    "negative": "var(--danger)",
+    "warning": "#c98a00",
+    "bid": "var(--success)",
+    "ask": "var(--danger)",
+    "link-green": "var(--success)",
+    "link-red": "var(--danger)",
+    "link-blue": "#5b8def",
+    "link-yellow": "var(--warning)",
+    "link-orange": "#ef7d3c",
+    "backdrop": "rgba(0, 0, 0, 0.6)"
+  }
+}

@@ -21,7 +21,7 @@ mod tests;
 use std::{collections::BTreeMap, sync::LazyLock};
 
 use nsh_core::{
-    element::{Tokens, set_color_scheme, set_tokens},
+    element::{set_color_scheme, set_tokens, Tokens},
     platform::Appearance,
     prelude::*,
 };
@@ -47,18 +47,26 @@ const BUNDLED: &[(&str, &str)] = &[
     bundled!("dark"),
     bundled!("light"),
     // The rest alphabetically, so a long dropdown is easy to scan.
+    bundled!("amber-terminal"),
+    bundled!("bubblegum"),
     bundled!("catppuccin-latte"),
     bundled!("catppuccin-mocha"),
+    bundled!("cotton-candy"),
     bundled!("dracula"),
     bundled!("everforest-dark"),
     bundled!("github-dark"),
     bundled!("github-light"),
+    bundled!("green-phosphor"),
     bundled!("gruvbox-dark"),
+    bundled!("lavender"),
     bundled!("monokai"),
     bundled!("night-owl"),
     bundled!("nord"),
     bundled!("one-dark-pro"),
+    bundled!("parchment"),
+    bundled!("retro-desktop"),
     bundled!("rose-pine"),
+    bundled!("sakura"),
     bundled!("solarized-dark"),
     bundled!("solarized-light"),
     bundled!("tokyo-night"),

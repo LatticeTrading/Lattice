@@ -1,0 +1,27 @@
+{
+  "name": "Retro Desktop",
+  "appearance": "light",
+  "colors": {
+    "background": "#d4d0c8",
+    "surface": "#c0c0c0",
+    "panel": "#dedbd3",
+    "border": "#808080",
+    "text": "#000000",
+    "text-muted": "#3a3a3a",
+    "text-faint": "#6a6a6a",
+    "accent": "#000080",
+    "danger": "#b00000",
+    "success": "#007a33",
+    "positive": "var(--success)",
+    "negative": "var(--danger)",
+    "warning": "#9a7b00",
+    "bid": "var(--success)",
+    "ask": "var(--danger)",
+    "link-green": "var(--success)",
+    "link-red": "var(--danger)",
+    "link-blue": "var(--accent)",
+    "link-yellow": "var(--warning)",
+    "link-orange": "#c65300",
+    "backdrop": "rgba(0, 0, 0, 0.6)"
+  }
+}

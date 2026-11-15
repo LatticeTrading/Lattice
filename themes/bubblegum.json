@@ -1,0 +1,27 @@
+{
+  "name": "Bubblegum",
+  "appearance": "dark",
+  "colors": {
+    "background": "#1f0f1a",
+    "surface": "#2d1626",
+    "panel": "#261220",
+    "border": "#4a2740",
+    "text": "#ffe6f3",
+    "text-muted": "#d19bbb",
+    "text-faint": "#96647f",
+    "accent": "#ff6ec7",
+    "danger": "#ff5c6c",
+    "success": "#5eeac0",
+    "positive": "var(--success)",
+    "negative": "var(--danger)",
+    "warning": "#ffd166",
+    "bid": "var(--success)",
+    "ask": "var(--danger)",
+    "link-green": "var(--success)",
+    "link-red": "var(--danger)",
+    "link-blue": "#7cc4ff",
+    "link-yellow": "var(--warning)",
+    "link-orange": "#ff9f6b",
+    "backdrop": "rgba(0, 0, 0, 0.6)"
+  }
+}
