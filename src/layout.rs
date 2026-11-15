@@ -87,6 +87,10 @@ impl DragState {
     }
 }
 
+/// A wheel line over a pane's tabs, in points: a notch (three lines) moves
+/// them by about a tab.
+const TAB_WHEEL_LINE: f32 = 30.0;
+
 fn workspace_width() -> f32 {
     (window().width.0 - 16.0).max(1.0)
 }
@@ -516,6 +520,91 @@ fn pane_view(
         })
     });
 
+    // The `+` after the tabs, made with them.
+    let add = move || {
+        view()
+            .h_full()
+            .w(px(32.0))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(px(14.0))
+            .text_color(move || {
+                if picker.is_open_for(add_here) {
+                    theme::ACCENT.get()
+                } else {
+                    theme::TEXT_MUTED.get()
+                }
+            })
+            .border_r_1()
+            .border_color(theme::BORDER)
+            .role(AccessibilityRole::Button)
+            .label("Add widget tab")
+            .test_id(&format!("pane-add-{id}"))
+            .accessibility_state(move || AccessibilityState {
+                expanded: Some(picker.is_open_for(add_here)),
+                has_popup: true,
+                ..Default::default()
+            })
+            .hover(|s| s.bg(theme::BACKGROUND))
+            .active(|s| s.bg(theme::BORDER))
+            .on_press(move || picker.toggle(add_here))
+            .child(text("+"))
+    };
+
+    // The tabs' scroll view, how wide it and the tabs are, and how far it
+    // is scrolled: where a wheel left it, or a drag since (a touch pans it
+    // natively, and reports where).
+    let strip = element_ref();
+    let strip_width = signal(0.0_f32);
+    let tabs_width = signal(0.0_f32);
+    let offset = signal(0.0_f32);
+    let dragged = signal(false);
+    // How far the tabs reach past their room.
+    let hidden = computed(move || (tabs_width.get() - strip_width.get()).max(0.0));
+    let overflows = computed(move || hidden.get() > 0.5);
+    // A wheel over the tabs moves them sideways whichever way it turns: an
+    // ordinary mouse wheel has no sideways turn, and left to the platform
+    // it scrolls the page, the tabs being a sideways scroll inside it.
+    let wheel = move |event: &WheelEvent| {
+        if event.modifiers.ctrl {
+            return;
+        }
+        let delta = event.delta.points(px(TAB_WHEEL_LINE));
+        let by = if delta.x.0.abs() > delta.y.0.abs() {
+            delta.x.0
+        } else {
+            delta.y.0
+        };
+        if !by.is_finite() {
+            return;
+        }
+        let max = hidden.get_untracked();
+        let to = (offset.get_untracked().min(max) + by).clamp(0.0, max);
+        // Its own reports come back late: the offset is this one's.
+        dragged.set(false);
+        offset.set(to);
+        strip.scroll_to(point(px(to), px(0.0)), false);
+    };
+    // A tab added is the last and the active one: the tabs scroll to their
+    // end, so it shows however narrow the pane.
+    let tab_count = computed(move || tabs.with(Vec::len));
+    let shown_tabs = std::cell::Cell::new(tab_count.get_untracked());
+    effect(move || {
+        let count = tab_count.get();
+        if count > shown_tabs.replace(count) {
+            // `spawn` here adds a pane.
+            nsh_core::prelude::spawn(async move {
+                // Once the new tab is laid out.
+                next_frame().await;
+                strip.scroll_to_end(false);
+                dragged.set(false);
+                offset.set(f32::MAX);
+            });
+        }
+    });
+
     let header = view()
         .h(px(32.0))
         .flex_shrink_0()
@@ -524,41 +613,53 @@ fn pane_view(
         .bg(theme::SURFACE)
         .border_b_1()
         .border_color(theme::BORDER)
-        .child(dynamic(move || {
-            tab_strip(id, &tabs.get(), active_tab.get(), workspace)
-        }))
         .child(
-            view()
+            // The room left of the controls: the tabs and the `+` after
+            // them, which scroll sideways once the pane is narrower than
+            // they are, so the controls never leave it.
+            scroll()
+                .horizontal()
+                .scrollbar(false)
+                .element_ref(&strip)
+                .test_id(&format!("pane-tabs-{id}"))
                 .h_full()
-                .w(px(32.0))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_size(px(14.0))
-                .text_color(move || {
-                    if picker.is_open_for(add_here) {
-                        theme::ACCENT.get()
-                    } else {
-                        theme::TEXT_MUTED.get()
+                .flex_1()
+                .min_w(px(0.0))
+                .on_layout(move |bounds: &Bounds<Points>| strip_width.set(bounds.size.width.0))
+                .on_scroll_drag_start(move |_: &Point<Points>| dragged.set(true))
+                .on_scroll(move |event: &ScrollEvent| {
+                    if dragged.get_untracked() {
+                        offset.set(event.offset.x.0);
                     }
                 })
-                .border_r_1()
-                .border_color(theme::BORDER)
-                .role(AccessibilityRole::Button)
-                .label("Add widget tab")
-                .test_id(&format!("pane-add-{id}"))
-                .accessibility_state(move || AccessibilityState {
-                    expanded: Some(picker.is_open_for(add_here)),
-                    has_popup: true,
-                    ..Default::default()
-                })
-                .hover(|s| s.bg(theme::BACKGROUND))
-                .active(|s| s.bg(theme::BORDER))
-                .on_press(move || picker.toggle(add_here))
-                .child(text("+")),
+                .child(
+                    view()
+                        .h_full()
+                        .flex_none()
+                        .flex_row()
+                        .on_layout(move |bounds: &Bounds<Points>| {
+                            tabs_width.set(bounds.size.width.0)
+                        })
+                        // Made again when the tabs start or stop reaching
+                        // past their room: they take the wheel only while
+                        // they do (a listener inside a scroll view keeps
+                        // the wheel from everything around it), so over
+                        // tabs that all show it still scrolls the page.
+                        .child(dynamic(move || {
+                            view()
+                                .h_full()
+                                .flex_none()
+                                .flex_row()
+                                .items_center()
+                                .test_id(&format!("pane-tab-row-{id}"))
+                                .when(overflows.get(), |row| row.on_wheel(wheel))
+                                .child(dynamic(move || {
+                                    tab_strip(id, &tabs.get(), active_tab.get(), workspace)
+                                }))
+                                .child(add())
+                        })),
+                ),
         )
-        .child(view().flex_1())
         .child(link_button)
         .child(
             view()
@@ -655,6 +756,7 @@ fn pane_view(
         .border_1()
         .border_color(theme::BORDER)
         .bg(theme::SURFACE)
+        .test_id(&format!("pane-{id}"))
         .child(header)
         .child(content)
         .child(
@@ -694,11 +796,14 @@ fn tab_strip(
             let selected = tab_id == active_tab;
             view()
                 .h_full()
+                // Whole however narrow the pane: the strip scrolls.
+                .flex_none()
                 .flex()
                 .items_center()
                 .gap(px(6.0))
                 .px(px(12.0))
                 .text_size(px(11.0))
+                .test_id(&format!("pane-tab-{id}-{tab_id}"))
                 .text_color(if selected {
                     theme::TEXT
                 } else {

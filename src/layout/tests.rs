@@ -237,3 +237,163 @@ fn responder_survives_live_updates_and_commits_on_release() {
         .unwrap();
     app.wait_for("Saved 4 2 24 34").unwrap();
 }
+
+/// A pane as narrow as a resize makes it, holding more tabs than fit, and
+/// a button that adds one more.
+#[component]
+fn NarrowHarness() -> impl IntoElement {
+    let mut narrow = saved_workspace();
+    for _ in 0..3 {
+        add_tab(&mut narrow, 1, WidgetKind::MarketScreener);
+    }
+    let rect = active_grid(&narrow).layouts[4][0].rect;
+    active_grid_mut(&mut narrow).layouts[4][0].rect =
+        grid::resized(rect, -10000.0, 0.0, WIDTH, columns(4));
+    let saved = signal(narrow);
+    view()
+        .size_full()
+        .flex_col()
+        .child(view().h(px(24.0)).flex_none().child(
+            ui::button("Add a tab", ui::Tone::Normal).on_press(move || {
+                saved.update(|state| add_tab(state, 1, WidgetKind::MarketScreener));
+            }),
+        ))
+        .child(workspace(saved, crate::widgets::picker::Picker::new()))
+}
+
+/// Where a view with a test id is laid out: its left edge and its width.
+fn span(app: &Headless, test_id: &str) -> (f32, f32) {
+    let node = app
+        .screen()
+        .layout_nodes()
+        .into_iter()
+        .find(|node| node.test_id.as_deref() == Some(test_id))
+        .unwrap_or_else(|| panic!("no view `{test_id}`"));
+    (node.bounds.origin.x.0, node.bounds.size.width.0)
+}
+
+#[test]
+fn a_narrow_pane_keeps_its_controls_and_scrolls_its_tabs() {
+    let mut app = Headless::start(EngineConfig {
+        viewport: Size::new(px(1280.0), px(900.0)),
+        ..EngineConfig::new(Root::of::<NarrowHarness>())
+    })
+    .unwrap();
+    app.wait_for("id:pane-tab-1-5").unwrap();
+    let (pane_left, pane_width) = span(&app, "pane-1");
+    assert!(pane_width >= grid::MIN_PANE_WIDTH, "{pane_width}");
+    let pane_right = pane_left + pane_width;
+
+    // The controls are whole, at the pane's right edge.
+    let mut left = pane_right - 1.0;
+    for control in ["pane-move-1", "pane-settings-1"] {
+        let (x, width) = span(&app, control);
+        assert_eq!(width, 32.0, "{control}");
+        assert!(x + width <= left && x > pane_left, "{control} at {x}");
+        left = x;
+    }
+    // The tabs have the room left of them, less than the tabs take, with
+    // the first tab whole at its start.
+    let (strip_left, strip_width) = span(&app, "pane-tabs-1");
+    assert_eq!(strip_left, pane_left + 1.0);
+    assert_eq!(strip_left + strip_width, left);
+    let (first_left, first_width) = span(&app, "pane-tab-1-1");
+    assert_eq!(first_left, strip_left);
+    assert!(first_width < strip_width, "{first_width} in {strip_width}");
+    let tabs: f32 = [1, 3, 4, 5]
+        .iter()
+        .map(|tab| span(&app, &format!("pane-tab-1-{tab}")).1)
+        .sum();
+    assert!(tabs + 32.0 > strip_width + 50.0, "{tabs} in {strip_width}");
+
+    // A wheel over the tabs moves them sideways, whichever way it turns.
+    let first = |app: &Headless| span(app, "pane-tab-1-1").0;
+    let near = |a: f32, b: f32| (a - b).abs() < 0.01;
+    wheel(
+        &mut app,
+        "pane-tab-row-1",
+        WheelDelta::Lines(point(0.0, 3.0)),
+    );
+    assert!(near(first(&app), strip_left - 90.0), "{}", first(&app));
+    wheel(
+        &mut app,
+        "pane-tab-row-1",
+        WheelDelta::Lines(point(0.0, -1.0)),
+    );
+    assert!(near(first(&app), strip_left - 60.0), "{}", first(&app));
+    let sideways = WheelDelta::Points(point(px(-200.0), px(5.0)));
+    wheel(&mut app, "pane-tab-row-1", sideways);
+    assert!(near(first(&app), strip_left), "{}", first(&app));
+    // A drag pans them too, and the wheel goes on from where it left them.
+    app.scroll("id:pane-tabs-1", px(40.0)).unwrap();
+    wheel(
+        &mut app,
+        "pane-tab-row-1",
+        WheelDelta::Lines(point(0.0, 1.0)),
+    );
+    assert!(near(first(&app), strip_left - 70.0), "{}", first(&app));
+
+    // A tab added shows at once: the tabs are then at their end, and the
+    // wheel goes back from there.
+    app.press("Add a tab").unwrap();
+    app.wait_for("id:pane-tab-1-6").unwrap();
+    app.wait(std::time::Duration::from_millis(200)).unwrap();
+    assert!(app.scroll("id:pane-tabs-1", px(40.0)).is_err());
+    let end = first(&app);
+    wheel(
+        &mut app,
+        "pane-tab-row-1",
+        WheelDelta::Lines(point(0.0, -1.0)),
+    );
+    assert!(near(first(&app), end + 30.0), "{} from {end}", first(&app));
+
+    // Tabs that all show leave the wheel to the page: they listen for it
+    // only while they reach past their room.
+    let listens = std::sync::Arc::new(std::sync::Mutex::new(HashMap::new()));
+    app.observe({
+        let listens = listens.clone();
+        move |_, batch: &nsh_core::MountBatch| {
+            for item in &batch.items {
+                if let nsh_core::MountItem::Events { id, events, .. } = item {
+                    let wheel = events.contains(EventKind::Wheel);
+                    listens.lock().unwrap().insert(*id, wheel);
+                }
+            }
+        }
+    });
+    let hears_wheel = |app: &Headless| {
+        let row = node(app, "pane-tab-row-1");
+        listens.lock().unwrap().get(&row).copied()
+    };
+    app.drag("id:pane-resize-1", point(px(900.0), px(0.0)))
+        .unwrap();
+    app.wait(std::time::Duration::from_millis(200)).unwrap();
+    assert!(near(first(&app), span(&app, "pane-tabs-1").0));
+    assert_ne!(hears_wheel(&app), Some(true));
+    app.drag("id:pane-resize-1", point(px(-900.0), px(0.0)))
+        .unwrap();
+    app.wait(std::time::Duration::from_millis(200)).unwrap();
+    assert_eq!(hears_wheel(&app), Some(true));
+}
+
+/// The view with a test id.
+fn node(app: &Headless, test_id: &str) -> nsh_core::NodeId {
+    let nodes = app.screen().layout_nodes().into_iter();
+    nodes
+        .filter(|node| node.test_id.as_deref() == Some(test_id))
+        .map(|node| node.id)
+        .next()
+        .unwrap_or_else(|| panic!("no view `{test_id}`"))
+}
+
+/// A wheel turned by `delta` over the view with a test id.
+fn wheel(app: &mut Headless, test_id: &str, delta: WheelDelta) {
+    let at = point(px(0.0), px(0.0));
+    let event = WheelEvent::new(at, at, delta, Default::default());
+    app.engine().control().dispatch_event(
+        node(app, test_id),
+        EventKind::Wheel,
+        EventPayload::Wheel(event),
+    );
+    app.wait(std::time::Duration::from_millis(100)).unwrap();
+}

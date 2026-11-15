@@ -1,17 +1,20 @@
 //! The shared Everything Bar.
 //!
-//! Desktop uses the platform's normal title bar for window controls. The web
-//! build gets no title bar because the browser owns that chrome.
+//! On Windows it is the window's title bar too: the window has no system
+//! frame, the bar's empty stretches drag it, and the bar ends in the window
+//! buttons ([`window_button`]). macOS and Linux keep the system's title bar,
+//! and the web build gets none because the browser owns that chrome.
 //!
 //! Left to right: the wordmark, the Layout Manager's button and the pages;
 //! in the middle the link button, the symbol search ([`search`]) and New
-//! Widget; then the clock, the connection status ([`connections`]) and
-//! Settings.
+//! Widget; then the clock, the connection status ([`connections`]),
+//! Settings and, on Windows, minimize, maximize/restore and close.
 
 use nsh_base::tooltip;
 use nsh_core::{
-    desktop::{TitleBarOptions, WindowAttributes},
-    element::desktop::current_window,
+    desktop::{TitleBarOptions, WindowAttributes, WindowControl, WindowFrameStyle, WindowMode},
+    element::{ImageSrc, desktop::current_window},
+    platform::Os,
     prelude::*,
 };
 
@@ -156,13 +159,28 @@ pub fn bar(
     let status = services.as_ref().map(|services| services.status);
     let connections = Connections::new();
     let bar_ref = element_ref();
-    // Keep minimize, maximize/restore, and close in the real desktop title
-    // bar; the Everything Bar holds only app controls. Off desktops (the
-    // browser owns the chrome on web) this does nothing.
+    // On Windows the bar is the title bar: the window drops the system's
+    // frame (it keeps its resize borders, shadow and snapping) and the bar
+    // draws minimize, maximize/restore and close. macOS and Linux keep them
+    // in the system's title bar. Off desktops (the browser owns the chrome
+    // on web) this does nothing.
+    let own_chrome = os() == Os::Windows;
+    let main_window = current_window();
     let mut window_attributes = WindowAttributes::default();
     window_attributes.title = Some("Lattice".to_owned());
-    window_attributes.title_bar = Some(TitleBarOptions::default());
-    current_window().set(window_attributes);
+    if own_chrome {
+        window_attributes.frame = Some(WindowFrameStyle::None);
+    } else {
+        window_attributes.title_bar = Some(TitleBarOptions::default());
+    }
+    main_window.set(window_attributes);
+    // The window's state changes with every move and resize; the bar only
+    // redraws its middle button when the mode does.
+    let maximized = computed(move || {
+        main_window
+            .state()
+            .is_some_and(|state| state.mode == WindowMode::Maximized)
+    });
 
     // The old app's breakpoint for compact controls.
     let compact = computed(|| window().width.0 <= 768.0);
@@ -339,14 +357,69 @@ pub fn bar(
             .child(settings)
     });
 
-    let left_slot = view().flex_1().h_full().flex().items_center().child(left);
+    // Apart from `right`, which maximizing must not rebuild.
+    let window_buttons = dynamic(move || {
+        own_chrome.then(|| {
+            let width = if compact.get() { 36.0 } else { 40.0 };
+            let (zoom_label, zoom_icon) = if maximized.get() {
+                (
+                    "Restore window",
+                    include_str!("../../assets/icons/window-restore.svg"),
+                )
+            } else {
+                (
+                    "Maximize window",
+                    include_str!("../../assets/icons/window-maximize.svg"),
+                )
+            };
+            view()
+                .h_full()
+                .flex_none()
+                .flex()
+                .items_center()
+                .child(window_button(
+                    width,
+                    WindowControl::Minimize,
+                    "Minimize window",
+                    include_str!("../../assets/icons/window-minimize.svg"),
+                    theme::WARNING,
+                ))
+                .child(window_button(
+                    width,
+                    WindowControl::Maximize,
+                    zoom_label,
+                    zoom_icon,
+                    theme::SUCCESS,
+                ))
+                .child(window_button(
+                    width,
+                    WindowControl::Close,
+                    "Close window",
+                    include_str!("../../assets/icons/window-close.svg"),
+                    theme::DANGER,
+                ))
+        })
+    });
+
+    // The slots either side of the search are what there is to take the
+    // window by: their empty stretches, the wordmark and the clock drag it,
+    // and a double click maximizes it. The buttons in them still press.
+    let left_slot = view()
+        .flex_1()
+        .h_full()
+        .flex()
+        .items_center()
+        .window_drag(own_chrome)
+        .child(left);
     let right_slot = view()
         .flex_1()
         .h_full()
         .flex()
         .items_center()
         .justify_end()
-        .child(right);
+        .window_drag(own_chrome)
+        .child(right)
+        .child(window_buttons);
     let controls = view()
         .size_full()
         .flex_row()
@@ -610,6 +683,26 @@ fn fitted_segment(label: &str) -> View {
         .text_color(theme::TEXT_MUTED)
         .text_size(px(12.0))
         .child(text(label.to_owned()))
+}
+
+/// One of the window's buttons, in the old app's colors: amber, green and
+/// red under the pointer. It has no press handler: the platform hit-tests
+/// the view as the system's own button (Windows 11's snap layouts open over
+/// maximize) and carries its press out.
+fn window_button(
+    width: f32,
+    control: WindowControl,
+    label: &'static str,
+    icon: &'static str,
+    hovered: theme::Role,
+) -> View {
+    icon_segment(width)
+        .role(AccessibilityRole::Button)
+        .label(label)
+        .window_control(control)
+        .transition_colors()
+        .hover(move |style| style.bg(theme::BACKGROUND).text_color(hovered))
+        .child(svg(ImageSrc::svg_markup(icon)).size(px(12.0)))
 }
 
 fn icon_segment(width: f32) -> View {

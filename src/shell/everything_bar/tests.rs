@@ -63,6 +63,31 @@ fn open(app: &mut Headless) {
     app.wait_for("id:layout-manager").unwrap();
 }
 
+/// The bar on its own, on a desktop of `os`.
+fn start_on(os: Os) -> Headless {
+    let mut config = EngineConfig::new(Root::of::<Harness>());
+    config.viewport = Size::new(px(1280.0), px(800.0));
+    config.storage = Some(MemoryStorage::new([]));
+    config.environment.os = os;
+    config.environment.idiom = Idiom::Desktop;
+    let mut app = Headless::start(config).unwrap();
+    app.wait_for("Pages 2 active 2").unwrap();
+    app
+}
+
+#[test]
+fn windows_gets_its_window_buttons_from_the_bar_and_other_platforms_keep_their_own() {
+    let buttons = ["Minimize window", "Maximize window", "Close window"];
+    let shown = |os: Os| {
+        let app = start_on(os);
+        buttons.map(|button| app.screen().matches(&format!("label:{button}")).unwrap())
+    };
+    assert_eq!(shown(Os::Windows), [true; 3]);
+    for os in [Os::MacOs, Os::Linux, Os::Web] {
+        assert_eq!(shown(os), [false; 3], "{os:?}");
+    }
+}
+
 #[test]
 fn close_button_layout_button_and_escape_close_the_manager() {
     let mut app = start();

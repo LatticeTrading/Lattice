@@ -13,6 +13,10 @@ use crate::{
 pub const GAP: f32 = 8.;
 pub const ROW: f32 = 8.;
 pub const ROW_STEP: f32 = ROW + GAP;
+/// The narrowest a pane is resized to: its header's controls (link, gear,
+/// move, close) and, beside them, room for its first tab. The rest of its
+/// tabs scroll.
+pub const MIN_PANE_WIDTH: f32 = 320.;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rect {
@@ -212,8 +216,8 @@ pub fn moved(rect: Rect, dx: f32, dy: f32, width: f32, cols: u32) -> Rect {
 }
 
 pub fn resized(rect: Rect, dx: f32, dy: f32, width: f32, cols: u32) -> Rect {
-    // Keep room for the future tab strip, even at the narrowest breakpoint.
-    let min_w = ((160. + GAP) / column_step(width, cols)).ceil() as u32;
+    // Never wider than the columns right of it, at the narrowest breakpoint.
+    let min_w = ((MIN_PANE_WIDTH + GAP) / column_step(width, cols)).ceil() as u32;
     Rect {
         w: (rect.w as f32 + dx / column_step(width, cols))
             .round()
@@ -567,8 +571,13 @@ mod tests {
         compact(layout, Some(1));
         assert_eq!(layout[1].rect.y, 32);
         layout[0].rect = resized(original, -10000., -10000., 1264., 48);
-        assert!(layout[0].rect.w >= 6);
+        // The narrowest pane: the columns that make `MIN_PANE_WIDTH`.
+        assert_eq!(layout[0].rect.w, 13);
+        assert!(13. * column_step(1264., 48) - GAP >= MIN_PANE_WIDTH);
+        assert!(12. * column_step(1264., 48) - GAP < MIN_PANE_WIDTH);
         assert_eq!(layout[0].rect.h, 6);
+        // Narrower than that only where the window is: every column left.
+        assert_eq!(resized(original, -10000., 0., 240., 8).w, 8);
         compact(layout, Some(1));
         assert_eq!(layout[1].rect.y, 6);
         assert_eq!(resized(original, 1., 1., 1264., 48), original);

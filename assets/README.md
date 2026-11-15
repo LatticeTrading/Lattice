@@ -41,6 +41,13 @@ removing drawings, and closing and opening it): Lattice's own, paths only,
 drawn in `currentColor`; `src/widgets/chart/drawings.rs` and
 `src/widgets/chart/drawings/toolbar.rs` inline them.
 
+`icons/window-minimize.svg`, `icons/window-maximize.svg` and
+`icons/window-close.svg` are the old Everything Bar's window buttons
+(`lattice-pro/src/components/layout/EverythingBar.tsx`, its
+`.window-control-btn` paths, the maximize square as a path);
+`icons/window-restore.svg` is Lattice's own, in the same 12pt box and
+stroke. All are drawn in `currentColor`.
+
 They are the only icon files; other controls draw text glyphs (`⚙`, `+`).
 What uses them inlines them at compile time (`include_str!` in
 `src/shell/everything_bar.rs`, `src/shell/everything_bar/search.rs` and
