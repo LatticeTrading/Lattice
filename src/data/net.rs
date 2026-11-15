@@ -20,7 +20,10 @@
 //!   started by the first lease and ended by the last; [`FeedHubs`] holds
 //!   one hub per feed type.
 //! - [`StatusBoard`]: each socket and query hub reports its health there,
-//!   which is what the connection indicator shows.
+//!   which is what the connection indicator shows. What a source carries
+//!   and for whom is read from the source itself when the connection panel
+//!   asks ([`SharedSocket::details`], [`Queries::details`]): every
+//!   subscription, watch and lease notes who made it ([`Consumer`]).
 //!
 //! Everything runs on the engine thread. A long-lived task (a socket's
 //! driver, a poll loop) is owned by its service, never by whichever widget
@@ -30,6 +33,7 @@
 //! call, not the shared socket or poll loop (desktop builds; on the web a
 //! panic aborts the module, see `guard.rs`).
 
+mod consumer;
 mod error;
 mod feed;
 mod guard;
@@ -40,6 +44,7 @@ mod socket;
 mod status;
 mod task;
 
+pub use consumer::{Consumer, Held};
 pub use error::{ApiError, ErrorKind};
 pub use feed::{FeedHub, FeedHubs, FeedLease, FeedNode};
 pub use http::{ErrorDecoder, HttpClient, HttpOptions, Request};
@@ -49,5 +54,8 @@ pub use socket::{
     Inbound, Route, SharedSocket, SocketConfig, SocketProtocol, Subscription, TopicPhase,
     platform_transport,
 };
-pub use status::{Alias, Failure, Health, SourceStatus, StatusBoard, Unrouted};
+pub use status::{
+    Alias, Failure, Feed, FeedState, Health, Link, LinkState, SourceDetails, SourceStatus,
+    StatusBoard, Subject, Transport, Unrouted,
+};
 pub(crate) use task::TaskHandle;

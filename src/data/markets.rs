@@ -36,8 +36,12 @@ use super::{
         stats_scopes,
         universe::{FeedSnap, Universe},
     },
-    net::{ApiError, QueryState, Watch},
+    net::{ApiError, Consumer, QueryState, Watch},
 };
+
+/// Who the directory's requests are for, as the connection panel names it:
+/// the directory is no widget, and outlives whichever view leased it first.
+const DIRECTORY: Consumer = Consumer::Part("Market directory");
 
 /// One exchange of the [`Directory`].
 pub struct Listed {
@@ -453,7 +457,7 @@ impl Running {
         let wanted = computed(move || held.get() > 0);
         let ranking = computed(move || ranked.get() > 0);
         // Kept while the services live: one small request every few minutes.
-        let capabilities = ferris.watch_capabilities();
+        let capabilities = DIRECTORY.scope(|| ferris.watch_capabilities());
         let discovery = capabilities.state();
         // Refetched every few minutes: the same document changes nothing.
         let document = computed(move || discovery.with(|state| state.data.clone().map(Shared)));
@@ -478,8 +482,10 @@ impl Running {
                             true
                         },
                         |scope| {
-                            let watch =
-                                owner.run(|| ferris.queries().watch(ferris.catalog_query(scope)));
+                            let watch = owner.run(|| {
+                                DIRECTORY
+                                    .scope(|| ferris.queries().watch(ferris.catalog_query(scope)))
+                            });
                             (scope.clone(), watch)
                         },
                     );
@@ -541,8 +547,11 @@ impl Running {
                             same
                         },
                         |scope| {
-                            let watch = owner
-                                .run(|| ferris.queries().watch(ferris.market_stats_query(scope)));
+                            let watch = owner.run(|| {
+                                DIRECTORY.scope(|| {
+                                    ferris.queries().watch(ferris.market_stats_query(scope))
+                                })
+                            });
                             (scope.clone(), watch)
                         },
                     );

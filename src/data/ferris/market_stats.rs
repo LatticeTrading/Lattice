@@ -24,8 +24,9 @@ use serde_json::{Map, Value};
 
 use super::{
     Capabilities, CapabilityState, ExchangeCapabilities, Ferris, Operation, Product, Venue,
+    protocol::{described, params_label},
 };
-use crate::data::net::{QuerySpec, canonical_json};
+use crate::data::net::{QuerySpec, Subject, canonical_json};
 
 /// A statistics field, as the API names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -401,6 +402,20 @@ impl Ferris {
             scope.capability.poll_interval,
             Ok::<StatsSnapshot, _>,
         )
+        .subject(Subject {
+            exchange: scope.exchange.clone(),
+            name: "All markets".to_owned(),
+            detail: described([
+                "Market statistics".to_owned(),
+                scope
+                    .fields
+                    .iter()
+                    .map(|field| field.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                params_label(&scope.params),
+            ]),
+        })
     }
 }
 

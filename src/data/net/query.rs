@@ -40,9 +40,13 @@ use nsh_core::{
 };
 
 use super::{
+    consumer::{Held, Holder},
     error::ApiError,
     guard::{contain, contained},
-    status::{Failure, Health, SourceStatus, StatusBoard, Unrouted},
+    status::{
+        Failure, Feed, FeedState, Health, SourceDetails, SourceStatus, StatusBoard, Subject,
+        Transport, Unrouted,
+    },
     task::TaskHandle,
 };
 
@@ -64,6 +68,7 @@ pub struct QuerySpec<T> {
     fetch: Rc<dyn Fn() -> BoxFuture<Result<T, ApiError>>>,
     refresh: Option<Duration>,
     fresh_for: Option<Duration>,
+    subject: Option<Subject>,
 }
 
 impl<T> Clone for QuerySpec<T> {
@@ -73,6 +78,7 @@ impl<T> Clone for QuerySpec<T> {
             fetch: self.fetch.clone(),
             refresh: self.refresh,
             fresh_for: self.fresh_for,
+            subject: self.subject.clone(),
         }
     }
 }
@@ -91,6 +97,7 @@ impl<T: 'static> QuerySpec<T> {
             fetch: Rc::new(move || Box::pin(fetch())),
             refresh: None,
             fresh_for: None,
+            subject: None,
         }
     }
 
@@ -110,8 +117,23 @@ impl<T: 'static> QuerySpec<T> {
         self
     }
 
+    /// What the connection panel calls the request: whose it is, what it
+    /// is of and what is asked of it. Without it, it goes by its key.
+    #[must_use]
+    pub fn subject(mut self, subject: Subject) -> Self {
+        self.subject = Some(subject);
+        self
+    }
+
     pub fn key(&self) -> &str {
         &self.key
+    }
+
+    /// Its subject, or its key for one.
+    fn named(&self) -> Subject {
+        self.subject
+            .clone()
+            .unwrap_or_else(|| Subject::named(self.key.as_str()))
     }
 
     fn freshness(&self) -> Duration {
@@ -273,8 +295,12 @@ struct Core {
 
 struct Entry {
     fetch: Fetcher,
+    /// What the connection panel calls it.
+    subject: Subject,
     data: Option<Erased>,
     error: Option<ApiError>,
+    /// The latest fetch's error and when it failed, as the panel shows it.
+    failure: Option<Failure>,
     updated_at: Option<Instant>,
     updated_at_ms: Option<f64>,
     settled_at: Option<Instant>,
@@ -293,14 +319,18 @@ struct Watcher {
     refresh: Option<Duration>,
     /// Writes the watcher's signal; false once its owner is gone.
     push: Push,
+    /// Who watches.
+    holder: Holder,
 }
 
 impl Entry {
-    fn new(fetch: Fetcher) -> Self {
+    fn new(fetch: Fetcher, subject: Subject) -> Self {
         Self {
             fetch,
+            subject,
             data: None,
             error: None,
+            failure: None,
             updated_at: None,
             updated_at_ms: None,
             settled_at: None,
@@ -375,15 +405,17 @@ impl Queries {
             let key = spec.key.clone();
             Rc::new(move |snapshot| state.try_set(QueryState::of(snapshot, &key)))
         };
+        let holder = Holder::current();
         let (snapshot, started) = {
             let mut entries = core.entries.borrow_mut();
             let entry = entries
                 .entry(spec.key.clone())
-                .or_insert_with(|| Entry::new(spec.erased()));
+                .or_insert_with(|| Entry::new(spec.erased(), spec.named()));
             entry.watchers.push(Watcher {
                 id,
                 refresh: spec.refresh,
                 push,
+                holder,
             });
             entry.idle_since = None;
             let started = entry.in_flight.is_none() && !entry.is_fresh(spec.freshness(), now());
@@ -420,7 +452,7 @@ impl Queries {
             let mut entries = core.entries.borrow_mut();
             let entry = entries
                 .entry(spec.key.clone())
-                .or_insert_with(|| Entry::new(spec.erased()));
+                .or_insert_with(|| Entry::new(spec.erased(), spec.named()));
             if entry.is_fresh(spec.freshness(), now())
                 && let Some(data) = &entry.data
             {
@@ -461,6 +493,41 @@ impl Queries {
     /// Fetches `key` now, unless a fetch is already in flight.
     pub fn refresh(&self, key: &str) {
         self.0.fetch_now(key);
+    }
+
+    /// The hub in full, as it stands now: its report, and every watched
+    /// request with who watches it and when its value last came. Read from
+    /// the hub's own entries, so it costs nothing until something asks (the
+    /// open connection panel).
+    pub fn details(&self) -> SourceDetails {
+        let core = &self.0;
+        let mut feeds: Vec<Feed> = core
+            .entries
+            .borrow()
+            .iter()
+            .filter(|(_, entry)| !entry.watchers.is_empty())
+            .map(|(key, entry)| Feed {
+                key: key.clone(),
+                subject: entry.subject.clone(),
+                state: FeedState::Request {
+                    loaded: entry.data.is_some(),
+                    fetching: entry.in_flight.is_some(),
+                    failures: entry.failures,
+                    every: entry.interval(),
+                },
+                held: Held::of(entry.watchers.iter().map(|watcher| &watcher.holder)),
+                last_data_ms: entry.updated_at_ms,
+                failure: entry.failure.clone(),
+            })
+            .collect();
+        // The entries are a hash map: by key, so the order never jumps.
+        feeds.sort_by(|a, b| a.key.cmp(&b.key));
+        SourceDetails {
+            status: core.describe(),
+            transport: Transport::Http,
+            link: None,
+            feeds,
+        }
     }
 
     /// Drops every key and abandons every request.
@@ -531,6 +598,7 @@ impl Core {
                 Ok(value) => {
                     entry.data = Some(value);
                     entry.error = None;
+                    entry.failure = None;
                     entry.failures = 0;
                     entry.updated_at = Some(at);
                     entry.updated_at_ms = Some(unix_ms());
@@ -538,7 +606,9 @@ impl Core {
                 Err(error) => {
                     log::debug!("{}: {key}: {error}", self.label);
                     entry.failures += 1;
-                    *self.last_failure.borrow_mut() = Some(Failure::from(&error));
+                    let failure = Failure::from(&error);
+                    *self.last_failure.borrow_mut() = Some(failure.clone());
+                    entry.failure = Some(failure);
                     entry.error = Some(error);
                 }
             }

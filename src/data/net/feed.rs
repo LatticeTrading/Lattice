@@ -13,6 +13,10 @@
 //!
 //! [`FeedHubs`] holds one hub per feed type, so a client offers any number
 //! of streaming services from one field.
+//!
+//! A feed asks for its data on behalf of its leases: each lease notes who
+//! made it, and what the feed asks for while it starts (its topic, another
+//! feed) is held by them all (see [`super::Consumer`]).
 
 use std::{
     any::{Any, TypeId},
@@ -21,6 +25,8 @@ use std::{
     hash::Hash,
     rc::{Rc, Weak},
 };
+
+use super::consumer::{Consumers, Holder};
 
 type Listener = Rc<dyn Fn()>;
 type Registry<K, S> = RefCell<HashMap<K, Weak<FeedNode<K, S>>>>;
@@ -31,6 +37,8 @@ pub struct FeedNode<K: Eq + Hash, S> {
     state: S,
     listeners: RefCell<Vec<(u64, Listener)>>,
     next_listener: Cell<u64>,
+    /// Who holds its leases: who the feed's own demand is for.
+    consumers: Consumers,
     hub: Weak<Registry<K, S>>,
 }
 
@@ -95,6 +103,7 @@ impl<K: Eq + Hash + Clone, S> FeedHub<K, S> {
         start: impl FnOnce(&Rc<FeedNode<K, S>>),
         on_change: impl Fn() + 'static,
     ) -> FeedLease<K, S> {
+        let holder = Holder::current();
         let running = self.0.borrow().get(&key).and_then(Weak::upgrade);
         let node = running.unwrap_or_else(|| {
             let node = Rc::new(FeedNode {
@@ -102,15 +111,18 @@ impl<K: Eq + Hash + Clone, S> FeedHub<K, S> {
                 state: make(),
                 listeners: RefCell::new(Vec::new()),
                 next_listener: Cell::new(0),
+                consumers: Consumers::default(),
                 hub: Rc::downgrade(&self.0),
             });
-            start(&node);
+            // What it asks for is for its leases, this one and later ones.
+            node.consumers.scope(|| start(&node));
             self.0.borrow_mut().insert(key, Rc::downgrade(&node));
             node
         });
         let id = node.next_listener.get();
         node.next_listener.set(id + 1);
         node.listeners.borrow_mut().push((id, Rc::new(on_change)));
+        node.consumers.add(id, holder);
         FeedLease { node, id }
     }
 }
@@ -142,6 +154,7 @@ impl<K: Eq + Hash, S> Drop for FeedLease<K, S> {
             .listeners
             .borrow_mut()
             .retain(|(id, _)| *id != self.id);
+        self.node.consumers.remove(self.id);
     }
 }
 

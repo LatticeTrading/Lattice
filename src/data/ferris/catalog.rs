@@ -32,8 +32,9 @@ use serde_json::{Map, Value, json};
 
 use super::{
     Availability, Capabilities, Ferris, MarketSelection, MarketType, Operation, Product, Venue,
+    protocol::{described, params_label},
 };
-use crate::data::net::{ApiError, QuerySpec, canonical_json};
+use crate::data::net::{ApiError, QuerySpec, Subject, canonical_json};
 
 /// How long a catalog is fresh, and how often a watched one is refetched.
 const REFRESH: Duration = Duration::from_secs(60);
@@ -88,6 +89,11 @@ impl Ferris {
             REFRESH,
             move |payload: Value| parse(&payload, &exchange),
         )
+        .subject(Subject {
+            exchange: scope.exchange.clone(),
+            name: "All markets".to_owned(),
+            detail: described(["Market catalog".to_owned(), params_label(&scope.params)]),
+        })
     }
 }
 

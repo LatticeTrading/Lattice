@@ -27,7 +27,7 @@ use serde_json::{Map, Value, json};
 
 use nsh_core::websocket::WebSocketData;
 
-use crate::data::net::{ApiError, Inbound, Route, SocketProtocol, canonical_json};
+use crate::data::net::{ApiError, Inbound, Route, SocketProtocol, Subject, canonical_json};
 
 /// A market data channel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -47,6 +47,16 @@ impl Channel {
             Self::OrderBook => "orderbook",
             Self::Ohlcv => "ohlcv",
             Self::Ticker => "ticker",
+        }
+    }
+
+    /// Its name for people (the connection panel).
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Trades => "Trades",
+            Self::OrderBook => "Order book",
+            Self::Ohlcv => "Candles",
+            Self::Ticker => "Price",
         }
     }
 
@@ -175,6 +185,42 @@ impl FerrisTopic {
         }
     }
 
+    /// What the connection panel calls it: its exchange, its symbol (or
+    /// how many markets a statistics projection covers) and what is asked
+    /// of it (`Order book · 50 levels`).
+    pub fn subject(&self) -> Subject {
+        match self {
+            Self::Market {
+                channel,
+                exchange,
+                symbol,
+                params,
+            } => Subject {
+                exchange: exchange.clone(),
+                name: symbol.clone(),
+                detail: described([channel.label().to_owned(), params_label(params)]),
+            },
+            Self::MarketStats {
+                exchange,
+                params,
+                market_ids,
+                fields,
+            } => Subject {
+                exchange: exchange.clone(),
+                name: match market_ids {
+                    None => "All markets".to_owned(),
+                    Some(ids) if ids.len() == 1 => "1 market".to_owned(),
+                    Some(ids) => format!("{} markets", ids.len()),
+                },
+                detail: described([
+                    "Statistics stream".to_owned(),
+                    fields.join(", "),
+                    params_label(params),
+                ]),
+            },
+        }
+    }
+
     fn frame(&self, op: &str) -> String {
         match self {
             Self::Market {
@@ -225,6 +271,32 @@ pub(super) fn params_object(params: Value) -> Result<Map<String, Value>, ApiErro
         Value::Object(params) => Ok(params),
         _ => Err(ApiError::invalid_request("Ferris params must be an object")),
     }
+}
+
+/// Request params in a few words, for people: `50 levels`, `1m`,
+/// `linear`, and `name=value` for the rest.
+pub(super) fn params_label(params: &Map<String, Value>) -> String {
+    let words = params.iter().map(|(name, value)| {
+        let value = match value {
+            Value::String(text) => text.clone(),
+            other => other.to_string(),
+        };
+        match name.as_str() {
+            "levels" => format!("{value} levels"),
+            "timeframe" | "category" | "type" => value,
+            _ => format!("{name}={value}"),
+        }
+    });
+    described(words)
+}
+
+/// The parts that say something, joined as the connection panel shows them.
+pub(super) fn described(parts: impl IntoIterator<Item = String>) -> String {
+    parts
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 fn sorted(items: impl IntoIterator<Item = String>) -> Vec<String> {
@@ -289,6 +361,10 @@ impl SocketProtocol for FerrisProtocol {
 
     fn alias_scope<'k>(&self, key: &'k str) -> Option<&'k str> {
         FerrisTopic::scope_of(key)
+    }
+
+    fn subject(&self, topic: &FerrisTopic) -> Subject {
+        topic.subject()
     }
 
     fn decode(&self, frame: &WebSocketData, known: &dyn Fn(&str) -> bool) -> Inbound<FerrisPush> {

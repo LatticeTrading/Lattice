@@ -12,7 +12,8 @@
 //! - A session has an NSH owner of its own (a root under the data services,
 //!   so it sees their context), not a view's: what its state makes (signals,
 //!   effects, a `Subscription::release_on_cleanup`, a task from `spawn`)
-//!   lives as long as the session.
+//!   lives as long as the session. The owner's context names the widget
+//!   ([`Consumer`]), so the data asked for under it is known to be its.
 //! - Views attach and detach; the session knows whether any attached view
 //!   is visible ([`SessionScope::is_visible`]). Rendering-only work (frame
 //!   batching, display clocks, copying data into view signals) goes in
@@ -37,6 +38,8 @@ use std::{
 
 use nsh_core::{element::create_root, prelude::*};
 
+use super::net::Consumer;
+
 /// One widget instance, for this run of the app: what its session is keyed
 /// by.
 ///
@@ -54,6 +57,13 @@ impl WidgetId {
     pub fn fresh() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+/// The widget as the data it asks for names it (the connection panel).
+impl From<WidgetId> for Consumer {
+    fn from(widget: WidgetId) -> Self {
+        Self::Widget(widget.0)
     }
 }
 
@@ -203,7 +213,13 @@ impl Sessions {
         if let Some(core) = self.0.sessions.borrow().get(&widget) {
             return core.clone();
         }
-        let (owner, visible) = self.0.owner.run(|| create_root(|| signal(false)));
+        let (owner, visible) = self.0.owner.run(|| {
+            create_root(|| {
+                // Whatever is asked for under the session is the widget's.
+                provide_context(Consumer::from(widget));
+                signal(false)
+            })
+        });
         let core = Rc::new(Core {
             widget,
             owner,

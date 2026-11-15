@@ -5,20 +5,23 @@
 //!
 //! Left to right: the wordmark, the Layout Manager's button and the pages;
 //! in the middle the link button, the symbol search ([`search`]) and New
-//! Widget; then the clock, the connection status and Settings.
+//! Widget; then the clock, the connection status ([`connections`]) and
+//! Settings.
 
 use nsh_base::tooltip;
 use nsh_core::{
     desktop::{TitleBarOptions, WindowAttributes},
-    element::{ImageSrc, desktop::current_window},
+    element::desktop::current_window,
     prelude::*,
 };
 
+use self::connections::Connections;
 use super::{
     clock::{self, Clock},
     settings,
 };
 use crate::{
+    data::DataServices,
     layout, storage,
     storage::StoredWorkspace,
     theme::{self, ActiveTheme},
@@ -26,6 +29,7 @@ use crate::{
     widgets::picker::{Picker, Target},
 };
 
+mod connections;
 mod search;
 #[cfg(test)]
 mod tests;
@@ -146,6 +150,11 @@ pub fn bar(
     let manager = Manager::new();
     let now = clock::ticking_seconds();
     let settings_open = signal(false);
+    // None for a bar rendered on its own, as some tests do: the indicator
+    // then has nothing to say.
+    let services = DataServices::try_get();
+    let status = services.as_ref().map(|services| services.status);
+    let connections = Connections::new();
     let bar_ref = element_ref();
     // Keep minimize, maximize/restore, and close in the real desktop title
     // bar; the Everything Bar holds only app controls. Off desktops (the
@@ -314,19 +323,7 @@ pub fn bar(
             )
             .child(text(move || clock::format_time(now.get(), clock.get())));
 
-        let connection = view()
-            .size(px(14.0))
-            .pointer_events(PointerEvents::None)
-            .child(
-                svg(ImageSrc::svg_markup(include_str!(
-                    "../../assets/icons/connection-status.svg"
-                )))
-                .size_full(),
-            );
-        let connection = icon_segment(control_width)
-            .disabled(true)
-            .label("Connection status")
-            .child(connection);
+        let connection = connections.indicator(control_width, status);
         let settings = icon_segment(control_width)
             .label("Application settings")
             .on_press(move || settings_open.update(|open| *open = !*open))
@@ -386,6 +383,12 @@ pub fn bar(
                     settings_open.set(false)
                 })
             })
+        }))
+        // Made when it opens and gone when it closes: nothing is read for
+        // it meanwhile.
+        .child(dynamic(move || {
+            let services = services.clone().filter(|_| connections.is_open())?;
+            Some(connections.panel(services, workspace, clock, now))
         }))
 }
 

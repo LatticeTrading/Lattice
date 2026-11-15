@@ -49,7 +49,7 @@ use std::{
 
 use nsh_core::{
     prelude::*,
-    time::{Instant, now},
+    time::{Instant, now, unix_ms},
     websocket::{
         WebSocketData, WebSocketEvent, WebSocketEvents, WebSocketRequest, WebSocketTask,
         WebSocketTransport,
@@ -57,8 +57,12 @@ use nsh_core::{
 };
 
 use super::{
+    consumer::{Held, Holder},
     guard::contain,
-    status::{Alias, Failure, Health, SourceStatus, StatusBoard, Unrouted},
+    status::{
+        Alias, Failure, Feed, FeedState, Health, Link as LinkDetails, LinkState, SourceDetails,
+        SourceStatus, StatusBoard, Subject, Transport, Unrouted,
+    },
     task::TaskHandle,
 };
 
@@ -112,6 +116,11 @@ pub trait SocketProtocol: 'static {
     fn alias_scope<'k>(&self, key: &'k str) -> Option<&'k str> {
         let _ = key;
         None
+    }
+    /// What the connection panel calls the topic: whose it is, what it is
+    /// of and what is asked of it. The default knows only its key.
+    fn subject(&self, topic: &Self::Topic) -> Subject {
+        Subject::named(self.key(topic))
     }
 }
 
@@ -289,6 +298,14 @@ impl<P: SocketProtocol> SharedSocket<P> {
     pub fn shutdown(&self) {
         self.0.shutdown();
     }
+
+    /// The socket in full, as it stands now: its report, its connection,
+    /// and every wanted topic with who wants it and when its data last
+    /// came. Read from the socket's own state, so it costs nothing until
+    /// something asks (the open connection panel).
+    pub fn details(&self) -> SourceDetails {
+        self.0.details()
+    }
 }
 
 /// One subscriber's hold on a topic. Dropping it lets the topic go once no
@@ -373,6 +390,12 @@ struct State<P: SocketProtocol> {
     proven: bool,
     missed_keepalives: u32,
     last_response: Option<Instant>,
+    /// When the keepalive whose answer has not come yet went out.
+    ping_sent: Option<Instant>,
+    /// The current connection's last answered keepalive's round trip.
+    latency: Option<Duration>,
+    /// While retrying: when the next attempt is made.
+    retry_at: Option<Instant>,
     /// Unsubscribe frames on the current connection whose confirmation has
     /// not arrived, by key; a confirmation is not the server dropping a
     /// topic that was subscribed again since.
@@ -425,6 +448,8 @@ struct Topic<P: SocketProtocol> {
     phase: TopicPhase,
     /// When it is unsubscribed, once its last subscriber has left.
     release_at: Option<Instant>,
+    /// When its data last arrived, on any connection.
+    last_data: Option<Instant>,
     /// The server's latest warning or error about it, until data flows.
     issue: Option<Failure>,
     /// While acknowledged with no data: the key of unrouted frames on its
@@ -436,6 +461,8 @@ struct Subscriber<M> {
     id: u64,
     on_message: MessageCallback<M>,
     on_phase: Option<PhaseCallback>,
+    /// Who subscribed.
+    holder: Holder,
 }
 
 type MessageCallback<M> = Rc<dyn Fn(&M)>;
@@ -474,6 +501,9 @@ impl<P: SocketProtocol> State<P> {
             proven: false,
             missed_keepalives: 0,
             last_response: None,
+            ping_sent: None,
+            latency: None,
+            retry_at: None,
             unsubscribes: HashMap::new(),
             last_failure: None,
             sweeper: None,
@@ -510,6 +540,7 @@ impl<P: SocketProtocol> Core<P> {
         on_phase: Option<PhaseCallback>,
     ) -> Subscription {
         let key = self.protocol.key(&topic);
+        let holder = Holder::current();
         let mut after = After {
             status: true,
             ..After::default()
@@ -523,6 +554,7 @@ impl<P: SocketProtocol> Core<P> {
                 id,
                 on_message,
                 on_phase: on_phase.clone(),
+                holder,
             };
             let (topic_key, phase) = match state.topics.get_mut(&key) {
                 Some(existing) => {
@@ -537,6 +569,7 @@ impl<P: SocketProtocol> Core<P> {
                         subscribers: vec![subscriber],
                         phase: TopicPhase::Connecting,
                         release_at: None,
+                        last_data: None,
                         issue: None,
                         alias: None,
                     };
@@ -583,6 +616,8 @@ impl<P: SocketProtocol> Core<P> {
         let generation = state.generation;
         state.proven = false;
         state.missed_keepalives = 0;
+        state.ping_sent = None;
+        state.retry_at = None;
         state.unsubscribes.clear();
         let me = self.me.clone();
         let events: WebSocketEvents = Box::new(move |event| {
@@ -621,6 +656,9 @@ impl<P: SocketProtocol> Core<P> {
         state.link = Link::Idle;
         state.failures += 1;
         state.proven = false;
+        state.ping_sent = None;
+        state.latency = None;
+        state.retry_at = None;
         state.last_failure = Some(failure);
         after.status = true;
         // A topic past its last subscriber has nothing left to release.
@@ -638,6 +676,7 @@ impl<P: SocketProtocol> Core<P> {
             .copied()
             .unwrap_or(Duration::from_secs(1));
         state.attempt += 1;
+        state.retry_at = Some(now() + delay);
         let (me, generation) = (self.me.clone(), state.generation);
         state.link = Link::Retrying {
             _timer: TaskHandle::spawn(async move {
@@ -658,6 +697,7 @@ impl<P: SocketProtocol> Core<P> {
             }
             if state.topics.is_empty() {
                 state.link = Link::Idle;
+                state.retry_at = None;
             } else {
                 self.connect(&mut state, &mut after);
             }
@@ -712,6 +752,9 @@ impl<P: SocketProtocol> Core<P> {
         state.failures = 0;
         state.proven = false;
         state.missed_keepalives = 0;
+        state.ping_sent = None;
+        state.latency = None;
+        state.retry_at = None;
         state.unsubscribes.clear();
         // Nothing is wanted any more, so there is nothing left to diagnose.
         state.unrouted = Unrouted::default();
@@ -805,8 +848,9 @@ impl<P: SocketProtocol> Core<P> {
             if !matches!(state.link, Link::Open { .. }) {
                 return;
             }
+            let at = now();
             if !matches!(inbound, Inbound::Malformed) {
-                state.last_response = Some(now());
+                state.last_response = Some(at);
                 if !state.proven {
                     // A connection that delivers is a good one: backoff and
                     // failure count start over.
@@ -827,6 +871,7 @@ impl<P: SocketProtocol> Core<P> {
                             after.status = true;
                         }
                         set_phase(topic, TopicPhase::Live, &mut after);
+                        topic.last_data = Some(at);
                         let callbacks: Vec<_> = topic
                             .subscribers
                             .iter()
@@ -890,7 +935,14 @@ impl<P: SocketProtocol> Core<P> {
                     }
                     None
                 }
-                Inbound::Pong | Inbound::Ignored | Inbound::Malformed => None,
+                Inbound::Pong => {
+                    // Read when the panel asks; a round trip is no news.
+                    if let Some(sent) = state.ping_sent.take() {
+                        state.latency = Some(at.saturating_duration_since(sent));
+                    }
+                    None
+                }
+                Inbound::Ignored | Inbound::Malformed => None,
             }
         };
         self.finish(after);
@@ -1074,7 +1126,9 @@ impl<P: SocketProtocol> Core<P> {
         socket
             .send(WebSocketData::Text(self.protocol.ping_frame()?))
             .ok()?;
-        Some(now())
+        let sent = now();
+        state.ping_sent = Some(sent);
+        Some(sent)
     }
 
     /// Whether the connection answered since the ping `sent`; false once the
@@ -1239,6 +1293,56 @@ impl<P: SocketProtocol> Core<P> {
             self.describe(&state)
         };
         self.status.publish(status);
+    }
+
+    fn details(&self) -> SourceDetails {
+        let state = self.state.borrow();
+        // The clocks side by side: times kept on the engine's clock are
+        // shown on the wall's.
+        let (clock, wall) = (now(), unix_ms());
+        let since = |at: Instant| clock.saturating_duration_since(at).as_secs_f64() * 1_000.0;
+        let feeds = state
+            .topics
+            .values()
+            .filter(|topic| topic.release_at.is_none())
+            .map(|topic| Feed {
+                key: topic.key.to_string(),
+                subject: self.protocol.subject(&topic.topic),
+                state: FeedState::Topic {
+                    phase: topic.phase,
+                    alias: topic.alias.clone(),
+                },
+                held: Held::of(
+                    topic
+                        .subscribers
+                        .iter()
+                        .map(|subscriber| &subscriber.holder),
+                ),
+                last_data_ms: topic.last_data.map(|at| wall - since(at)),
+                failure: topic.issue.clone(),
+            })
+            .collect();
+        let link = LinkDetails {
+            state: match &state.link {
+                Link::Idle => LinkState::Idle,
+                Link::Connecting { .. } => LinkState::Connecting,
+                Link::Open { .. } => LinkState::Open,
+                Link::Retrying { .. } => LinkState::Retrying,
+            },
+            responsive: state.proven,
+            missed_keepalives: state.missed_keepalives,
+            latency: state.latency,
+            retry_at_ms: state
+                .retry_at
+                .map(|at| wall + at.saturating_duration_since(clock).as_secs_f64() * 1_000.0),
+            attempt: state.attempt,
+        };
+        SourceDetails {
+            status: self.describe(&state),
+            transport: Transport::Socket,
+            link: Some(link),
+            feeds,
+        }
     }
 
     fn describe(&self, state: &State<P>) -> SourceStatus {

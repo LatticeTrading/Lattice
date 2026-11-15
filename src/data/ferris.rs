@@ -69,7 +69,7 @@ pub use venues::{CatalogProfile, SettlementVolume, StatsProfile, VENUES, Venue};
 
 use super::net::{
     ApiError, FeedHubs, HttpClient, HttpOptions, Queries, QuerySpec, Request, SharedSocket,
-    SocketConfig, StatusBoard, Subscription, TopicPhase,
+    SocketConfig, SourceDetails, StatusBoard, Subscription, TopicPhase,
 };
 
 /// The production API.
@@ -293,6 +293,13 @@ impl Ferris {
     ) -> Subscription {
         self.socket
             .subscribe_with_phase(topic, on_message, on_phase)
+    }
+
+    /// Its sources in full, as they stand now, in the order the connection
+    /// panel lists them: the socket with every topic, then the query hub
+    /// with every watched request, each with who wants it.
+    pub fn sources(&self) -> Vec<SourceDetails> {
+        vec![self.socket.details(), self.queries.details()]
     }
 
     /// Closes the socket and drops every query (the app is going away).

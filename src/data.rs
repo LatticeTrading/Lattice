@@ -4,8 +4,9 @@
 //! - [`net`] knows nothing about any one API: an HTTP client with deadlines
 //!   and one error model, one multiplexed WebSocket per API shared by every
 //!   subscriber ([`net::SharedSocket`]), shared keyed polling and caching
-//!   ([`net::Queries`]), and the status board the connection indicator
-//!   reads ([`net::StatusBoard`]).
+//!   ([`net::Queries`]), the status board the connection indicator reads
+//!   ([`net::StatusBoard`]), and who asked for what ([`net::Consumer`]),
+//!   which the connection panel lists ([`DataServices::connections`]).
 //! - [`ferris`] is the first integration built on it: Lattice's own market
 //!   data backend, treated like any other external API.
 //! - [`session`] gives each widget a session that owns its data for as long
@@ -90,5 +91,13 @@ impl DataServices {
     /// its own, as some tests do).
     pub fn try_get() -> Option<Self> {
         use_context::<Self>()
+    }
+
+    /// Every source in full, as it stands now: what the connection panel
+    /// lists while it is open. [`Self::status`] says when a source's health
+    /// changed; this reads what each carries and for whom, from the sources
+    /// themselves. A new integration adds its sources here.
+    pub fn connections(&self) -> Vec<net::SourceDetails> {
+        self.ferris.sources()
     }
 }

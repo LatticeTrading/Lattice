@@ -131,6 +131,19 @@ pub(crate) fn widget_ids(workspace: &StoredWorkspace) -> HashSet<WidgetId> {
         .collect()
 }
 
+/// Every widget's name (its kind's), on every page: what the connection
+/// panel calls whoever asked for data. A widget of a kind this build does
+/// not know has none.
+pub(crate) fn widget_titles(workspace: &StoredWorkspace) -> HashMap<WidgetId, &'static str> {
+    workspace
+        .pages
+        .iter()
+        .flat_map(|page| page.grid.layouts.iter().flatten())
+        .flat_map(|pane| pane.tabs.iter())
+        .filter_map(|tab| Some((tab.widget, tab.kind()?.title())))
+        .collect()
+}
+
 /// Saves `settings` in `widget`'s tab record, whichever page it is on;
 /// false when no tab is that widget.
 pub(crate) fn set_tab_settings(

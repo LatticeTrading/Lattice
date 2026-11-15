@@ -214,6 +214,16 @@ const FERRIS: &str = "https://ferris.test";
 /// chart in the workspace.
 #[component]
 fn Shell() -> impl IntoElement {
+    stubbed_shell(1)
+}
+
+/// [`Shell`] with a second chart, of the same market.
+#[component]
+fn TwoCharts() -> impl IntoElement {
+    stubbed_shell(2)
+}
+
+fn stubbed_shell(charts: usize) -> View {
     let services = DataServices::provide_with(FerrisConfig {
         http_base: FERRIS.to_owned(),
         ws_url: "ws://127.0.0.1:9/v1/ws".to_owned(),
@@ -223,7 +233,9 @@ fn Shell() -> impl IntoElement {
     provide_context(clock);
     let mut saved = StoredWorkspace::default();
     layout::normalize(&mut saved);
-    layout::spawn(&mut saved, WidgetKind::Chart);
+    for _ in 0..charts {
+        layout::spawn(&mut saved, WidgetKind::Chart);
+    }
     let workspace = signal(saved);
     let picker = crate::widgets::picker::Picker::new();
     services
@@ -350,6 +362,10 @@ fn stub_ferris(request: HttpRequest, reply: StubReply) {
 }
 
 fn start_shell() -> Headless {
+    start_root(Root::of::<Shell>())
+}
+
+fn start_root(root: Root) -> Headless {
     let capabilities =
         json!({ "exchanges": [stub_exchange("bybit"), stub_exchange("hyperliquid")] });
     let mut discovered = StubResponse::default();
@@ -365,7 +381,7 @@ fn start_shell() -> Headless {
             StubRoute::Handler(Arc::new(stub_ferris)),
         ),
     ]));
-    let mut config = EngineConfig::new(Root::of::<Shell>());
+    let mut config = EngineConfig::new(root);
     config.viewport = Size::new(px(1280.0), px(800.0));
     config.storage = Some(MemoryStorage::new([]));
     config.network = Some(network);
@@ -388,6 +404,142 @@ fn assert_results(app: &mut Headless, expected: &[&str]) {
             "result {index} should be {label}"
         );
     }
+}
+
+/// The connection status: the bar's indicator and the panel it opens.
+const INDICATOR: &str = "id:connection-status";
+const CONNECTIONS: &str = "id:connection-status-panel";
+
+/// Whether the connection panel shows the text `text`.
+fn panel_shows(app: &Headless, text: &str) -> bool {
+    app.screen()
+        .matches(&format!("{CONNECTIONS} >> text:{text}"))
+        .unwrap()
+}
+
+#[test]
+fn the_connection_indicator_opens_nothing_without_data_services() {
+    // The bar on its own: nothing above it has a source to report.
+    let app = start();
+    assert!(!app.screen().enabled(INDICATOR).unwrap());
+    assert!(
+        app.screen()
+            .matches("label:Connection status: neutral")
+            .unwrap()
+    );
+    assert!(!app.screen().matches(CONNECTIONS).unwrap());
+}
+
+#[test]
+fn the_connection_panel_lists_what_the_widgets_stream_and_poll() {
+    let mut app = start_root(Root::of::<TwoCharts>());
+
+    // The indicator has the sources' health: the charts ask for a stream,
+    // and nothing listens where the socket connects.
+    app.wait_until("the indicator showing trouble", WAIT, |screen| {
+        ["warning", "error"]
+            .iter()
+            .any(|word| screen.matches(&format!("label:Connection status: {word}")) == Ok(true))
+    })
+    .unwrap();
+
+    // A press opens the panel, folded: the socket the charts stream on and
+    // the requests the market directory polls.
+    app.press(INDICATOR).unwrap();
+    app.wait_for(CONNECTIONS).unwrap();
+    assert!(panel_shows(&app, "2 sources"));
+    for heading in ["Ferris realtime", "WS", "Ferris requests", "HTTP"] {
+        assert!(panel_shows(&app, heading), "{heading} should be a heading");
+    }
+    assert!(!panel_shows(&app, "BTC/USDT:USDT"));
+
+    // The socket's topics: the candles both charts share, one topic, which
+    // waits for a socket nothing answers here.
+    app.press("id:connection-source-ferris.socket").unwrap();
+    app.wait_for(&format!("{CONNECTIONS} >> text:BTC/USDT:USDT"))
+        .unwrap();
+    let topics = app
+        .screen()
+        .count(&format!("{CONNECTIONS} >> text:BTC/USDT:USDT"))
+        .unwrap();
+    assert_eq!(topics, 1);
+    assert!(panel_shows(&app, "Candles · linear · 1m"));
+    assert!(panel_shows(&app, "Chart ×2"));
+    assert!(panel_shows(&app, "Waiting for source"));
+    assert!(panel_shows(&app, "—"), "no candle has streamed");
+
+    // The requests: the capabilities and every catalog, which the market
+    // directory keeps for the search and the pickers.
+    app.press("id:connection-source-ferris.queries").unwrap();
+    app.wait_for(&format!("{CONNECTIONS} >> text:Capabilities"))
+        .unwrap();
+    assert!(panel_shows(&app, "What each exchange supports · every 5m"));
+    assert!(panel_shows(&app, "Market catalog · every 1m"));
+    let polled = app
+        .screen()
+        .count(&format!("{CONNECTIONS} >> text:Market directory"))
+        .unwrap();
+    assert!(polled >= 3, "the capabilities and two exchanges' catalogs");
+    assert!(panel_shows(&app, "Up to date"));
+
+    // Folding a source takes its rows away again.
+    app.press("id:connection-source-ferris.socket").unwrap();
+    app.wait_for_gone(&format!("{CONNECTIONS} >> text:BTC/USDT:USDT"), WAIT)
+        .unwrap();
+
+    // The report names what is wrong and who it is wrong for.
+    app.press("Copy report").unwrap();
+    app.wait_for("· Report copied").unwrap();
+    let report = app.screen().clipboard().unwrap();
+    assert!(report.starts_with("Lattice connection issues\nCaptured: "));
+    assert!(
+        report.contains("\nBybit · BTC/USDT:USDT · Waiting for source\n  Components: Chart ×2\n")
+    );
+
+    // Its close button, the indicator and Escape close it.
+    app.press("Close connection status").unwrap();
+    app.wait_for_gone(CONNECTIONS, WAIT).unwrap();
+    app.press(INDICATOR).unwrap();
+    app.wait_for(CONNECTIONS).unwrap();
+    assert!(!panel_shows(&app, "Capabilities"), "it opens folded");
+    app.press(INDICATOR).unwrap();
+    app.wait_for_gone(CONNECTIONS, WAIT).unwrap();
+    app.press(INDICATOR).unwrap();
+    app.wait_for(CONNECTIONS).unwrap();
+    app.press_key("Escape").unwrap();
+    app.wait_for_gone(CONNECTIONS, WAIT).unwrap();
+}
+
+#[test]
+fn the_connection_panel_previews_under_the_pointer_and_stays_when_pressed() {
+    let mut app = start_shell();
+    let rest = std::time::Duration::from_millis(600);
+
+    // The pointer resting on the indicator opens a preview, which goes
+    // once it has left.
+    app.hover(INDICATOR).unwrap();
+    app.wait_for(CONNECTIONS).unwrap();
+    app.hover("id:clock").unwrap();
+    app.wait_for_gone(CONNECTIONS, WAIT).unwrap();
+
+    // Moving onto the preview keeps it.
+    app.hover(INDICATOR).unwrap();
+    app.wait_for(CONNECTIONS).unwrap();
+    app.hover(CONNECTIONS).unwrap();
+    app.wait(rest).unwrap();
+    assert!(app.screen().matches(CONNECTIONS).unwrap());
+    app.hover("id:clock").unwrap();
+    app.wait_for_gone(CONNECTIONS, WAIT).unwrap();
+
+    // A press keeps it wherever the pointer goes, until it is closed.
+    app.hover(INDICATOR).unwrap();
+    app.wait_for(CONNECTIONS).unwrap();
+    app.press(INDICATOR).unwrap();
+    app.hover("id:clock").unwrap();
+    app.wait(rest).unwrap();
+    assert!(app.screen().matches(CONNECTIONS).unwrap());
+    app.press(INDICATOR).unwrap();
+    app.wait_for_gone(CONNECTIONS, WAIT).unwrap();
 }
 
 const SEARCH: &str = "id:symbol-search";

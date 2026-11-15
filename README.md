@@ -16,8 +16,9 @@ views, the Market Screener, the Trade Stream and the Funding Rates (a
 watchlist of perpetuals' funding); the others still to port have empty folders
 under `src/widgets/`. The Everything Bar's symbol search finds any
 market and sends it to the widgets linked to the bar's link color (the
-Chart, from its pane header's link button); its connection status is a
-placeholder. On desktop the platform's normal title bar keeps minimize,
+Chart, from its pane header's link button); its connection indicator shows
+the health of the app's data sources and opens a panel of everything the
+widgets stream and poll. On desktop the platform's normal title bar keeps minimize,
 maximize/restore, and close; on web the browser owns the window chrome.
 
 Before changing code, read `docs/nsh-development.md`, the development guide

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{Channel, Ferris, Operation};
-use crate::data::net::{ApiError, QuerySpec, Watch};
+use crate::data::net::{ApiError, QuerySpec, Subject, Watch};
 
 /// The whole capabilities document.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -261,6 +261,11 @@ impl Ferris {
             async move { http.get::<Capabilities>("/v1/capabilities").await }
         })
         .refresh_every(REFRESH)
+        .subject(Subject {
+            exchange: String::new(),
+            name: "Capabilities".to_owned(),
+            detail: "What each exchange supports".to_owned(),
+        })
     }
 
     /// The capabilities: the cached copy while fresh, else fetched.
