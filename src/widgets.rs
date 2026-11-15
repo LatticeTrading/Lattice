@@ -20,6 +20,7 @@ mod registry;
 // The widgets, each listed once in the registry below.
 mod chart;
 mod market_screener;
+mod order_book;
 mod trade_stream;
 
 pub(crate) use host::{Category, Linking, SettingsPanel, TabContext, TabHandle};
@@ -27,6 +28,7 @@ pub(crate) use host::{Category, Linking, SettingsPanel, TabContext, TabHandle};
 registry::registry! {
     chart::Chart,
     market_screener::MarketScreener,
+    order_book::OrderBook,
     trade_stream::TradeStream,
 }
 

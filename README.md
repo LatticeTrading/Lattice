@@ -7,10 +7,11 @@ and WebAssembly web targets.
 The shell has the multi-page workspace, responsive grid with movable and
 resizable panes, tabs, themes, and versioned persistence (layout codes
 included). Market data comes from the Ferris backend through a shared data
-layer (HTTP, WebSocket, polling). Three widgets are ported: the Chart
-(candles and ticks, drawn on the GPU through NSH's WGSL shader views), the
-Market Screener and the Trade Stream; the others still to port have empty
-folders under `src/widgets/`. The Everything Bar's symbol search finds any
+layer (HTTP, WebSocket, polling). Four widgets are ported: the Chart
+(candles and ticks) and the Order Book (one or two markets' depth on a price
+ladder), both drawn on the GPU through NSH's WGSL shader views, the Market
+Screener and the Trade Stream; the others still to port have empty folders
+under `src/widgets/`. The Everything Bar's symbol search finds any
 market and sends it to the widgets linked to the bar's link color (the
 Chart, from its pane header's link button); its connection status is a
 placeholder. On desktop the platform's normal title bar keeps minimize,
@@ -83,7 +84,7 @@ visual and native-caption acceptance remains a user-run check.
 - `src/theme.rs`, `src/theme/roles.rs`: the theme engine and its color roles.
 - `src/assets.rs`, `assets/`: compile-time fonts and app assets (icons, exchange logos).
 - `src/data.rs`, `src/data/`: the data layer (`net/`: shared HTTP, WebSocket, polling, and live-feed plumbing; `ferris/`: the Ferris integration, with per-exchange rules in `ferris/venues.rs`; `session.rs`: per-widget data sessions; `markets.rs`: the app's one directory of every market, which the search and the market picker read).
-- `src/widgets.rs`, `src/widgets/`: the widget registry, the widget picker, shared widget parts (`common/`: market picker, exchange logos, number field), and one folder per widget (`chart/`, `market_screener/`, `trade_stream/`).
+- `src/widgets.rs`, `src/widgets/`: the widget registry, the widget picker, shared widget parts (`common/`: market picker, exchange logos, number field, double clicks), and one folder per widget (`chart/`, `market_screener/`, `order_book/`, `trade_stream/`).
 - `src/link.rs`: color linking (the link colors, and the Everything Bar's).
 - `src/exchanges.rs`, `src/format.rs`: exchange names and logos; number formatting.
 - `src/platform/`: future native integrations (empty).

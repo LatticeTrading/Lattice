@@ -29,9 +29,10 @@ use super::{
 };
 use crate::{
     exchanges,
+    format::price_text,
     shell::clock::{self, Clock, ClockPrefs},
     theme, ui,
-    widgets::common::Shared,
+    widgets::common::{CLICK_SLOP, Clicks, Shared},
 };
 
 /// The plot's insets (the old chart's paddings).
@@ -47,10 +48,6 @@ const LABEL: f32 = 14.0;
 /// is this wide everywhere, which is how labels are placed without
 /// measuring them.
 const ADVANCE: f32 = 0.6;
-/// How far a press may move and still be a click, and how long after a
-/// click another makes a double click.
-const CLICK_SLOP: f32 = 3.0;
-const DOUBLE_CLICK_MS: f64 = 400.0;
 
 /// The chart of `session`, as its tab's settings say.
 pub(super) fn chart_view(session: &Rc<ChartSession>, saved: Memo<ChartSettings>) -> View {
@@ -164,20 +161,6 @@ fn unavailable(frame: View) -> View {
         .text_size(px(12.0))
         .text_color(theme::DANGER)
         .child(text("GPU rendering is unavailable in this environment."))
-}
-
-/// A price as the old chart wrote it: fewer decimals the larger it is.
-fn price_text(price: f64) -> String {
-    if !price.is_finite() {
-        return "--".to_owned();
-    }
-    let places = match price.abs() {
-        size if size >= 10_000.0 => 1,
-        size if size >= 1_000.0 => 2,
-        size if size >= 1.0 => 3,
-        _ => 5,
-    };
-    format!("{price:.places$}")
 }
 
 /// A bar's time as the axis and the crosshair name it: the time of day for
@@ -567,35 +550,6 @@ fn zoom_slots(session: &ChartSession, event: &WheelEvent, x: f32) {
     let (width, _) = session.plot.get_untracked();
     let anchor = f64::from((x / width).clamp(0.0, 1.0));
     session.move_view(|view, bars| view.zoomed(wheel_factor(steps, 1.1), anchor, bars));
-}
-
-/// Tells a double click among a responder's releases: two that barely
-/// moved, soon after one another.
-#[derive(Clone, Default)]
-struct Clicks(Rc<Cell<Option<f64>>>);
-
-impl Clicks {
-    /// Whether the press `event` ends was the second click of a double
-    /// click.
-    fn doubled(&self, event: &ResponderEvent) -> bool {
-        let moved = event
-            .gesture
-            .delta
-            .x
-            .0
-            .abs()
-            .max(event.gesture.delta.y.0.abs());
-        if moved > CLICK_SLOP {
-            self.0.set(None);
-            return false;
-        }
-        let before = self.0.replace(Some(event.timestamp));
-        let double = before.is_some_and(|before| event.timestamp - before <= DOUBLE_CLICK_MS);
-        if double {
-            self.0.set(None);
-        }
-        double
-    }
 }
 
 /// The surface over the plot: the crosshair, panning and zooming.

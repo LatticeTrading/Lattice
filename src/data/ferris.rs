@@ -24,6 +24,9 @@
 //! - Candles ([`candles`]): one market's OHLCV bars at one timeframe, a
 //!   live topic and its history shared by every widget charting it
 //!   ([`Ferris::candles`]).
+//! - Order books ([`order_book`]): one market's bids and asks at a depth,
+//!   a live topic and a snapshot shared by every widget showing them
+//!   ([`Ferris::order_book`]).
 //!
 //! Ferris descends from a CCXT-compatible client, so its vocabulary
 //! (`fetchMarkets`, unified market/ticker/trade/book/candle shapes) is
@@ -34,6 +37,7 @@ mod capabilities;
 pub mod catalog;
 mod market;
 pub mod market_stats;
+pub mod order_book;
 mod protocol;
 pub mod trades;
 pub mod universe;
@@ -53,6 +57,7 @@ pub use catalog::{
 };
 pub use market::{MarketKey, MarketSelection, MarketType, RestTarget};
 pub use market_stats::{MarketStatsScope, StatsFieldName, StatsSnapshot, stats_scopes};
+pub use order_book::{BookLevel, OrderBook, OrderBookFeed};
 pub use protocol::{Channel, FerrisProtocol, FerrisPush, FerrisTopic};
 pub use trades::{Side, Trade, TradeFeed, TradeRow};
 pub use venues::{CatalogProfile, SettlementVolume, StatsProfile, VENUES, Venue};
@@ -147,7 +152,7 @@ impl Operation {
 ///
 /// Each service module owns its part of the client (`impl Ferris` in
 /// `capabilities.rs`, `catalog.rs`, `market_stats.rs`, `trades.rs`,
-/// `candles.rs`): a
+/// `candles.rs`, `order_book.rs`): a
 /// polled one makes its queries with [`Self::post_query`], a streaming one
 /// keeps its feeds in its own hub of `feeds`, so a new service adds no
 /// field here.

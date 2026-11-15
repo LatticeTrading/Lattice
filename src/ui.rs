@@ -17,7 +17,7 @@ mod row_scroll;
 
 pub use form::{
     check_box, check_row, compact_dropdown, dropdown, label_column_row, label_edge_list_row,
-    label_edge_row,
+    label_edge_row, select_from,
 };
 pub use link::link_button;
 pub use panel::{Side, centered_panel, floating_panel, modal_panel, settings_panel};

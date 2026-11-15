@@ -1,7 +1,6 @@
 //! Shared feeds: one live state per key, started by its first lease and
-//! ended by its last. The machinery a streaming service (trades today;
-//! order books and candles next) builds on, knowing nothing of what it
-//! streams.
+//! ended by its last. The machinery a streaming service (trades, candles,
+//! order books) builds on, knowing nothing of what it streams.
 //!
 //! A service keeps its feeds in a [`FeedHub`], keyed by what tells two
 //! apart (a market). [`FeedHub::lease`] gives a lease on the running feed

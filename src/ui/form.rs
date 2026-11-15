@@ -128,8 +128,10 @@ pub fn compact_dropdown(
 }
 
 /// The select both dropdowns are: `trigger` opens the list of `items`,
-/// the one whose id is `value` marked, and a pick calls `on_pick`.
-fn select_from(
+/// the one whose id is `value` marked, and a pick calls `on_pick`. A
+/// control with a trigger of its own (the order book's top bar) uses it
+/// too, so every list looks alike.
+pub fn select_from(
     items: impl Fn() -> Vec<SelectItem> + 'static,
     value: impl Fn() -> SharedString + 'static,
     on_pick: impl Fn(&str) + 'static,

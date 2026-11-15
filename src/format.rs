@@ -6,6 +6,37 @@
 
 use std::cmp::Ordering;
 
+/// A price as the old app's GPU widgets wrote it (`formatPrice` of
+/// `chart-gl/theme.ts`, which the chart and the order book shared): fewer
+/// decimals the larger it is, `--` for one that is no number.
+pub fn price_text(price: f64) -> String {
+    if !price.is_finite() {
+        return "--".to_owned();
+    }
+    let places = match price.abs() {
+        size if size >= 10_000.0 => 1,
+        size if size >= 1_000.0 => 2,
+        size if size >= 1.0 => 3,
+        _ => 5,
+    };
+    format!("{price:.places$}")
+}
+
+/// An amount as the old order book wrote it (`formatCompactCount`):
+/// millions with two decimals (`1.25M`), thousands with one (`19.3k`),
+/// anything smaller as the nearest whole number.
+pub fn compact_count(value: f64) -> String {
+    if value >= 1_000_000.0 {
+        format!("{:.2}M", value / 1_000_000.0)
+    } else if value >= 1_000.0 {
+        format!("{:.1}k", value / 1_000.0)
+    } else {
+        // Halves round up, as JavaScript's `Math.round`; never `-0`.
+        let whole = (value + 0.5).floor();
+        format!("{:.0}", if whole == 0.0 { 0.0 } else { whole })
+    }
+}
+
 /// Unit letters of [`compact_amount`]: thousands up to quintillions.
 const COMPACT_UNITS: [&str; 6] = ["k", "M", "B", "T", "P", "E"];
 

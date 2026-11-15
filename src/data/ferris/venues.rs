@@ -113,6 +113,20 @@ pub struct Venue {
     pub stats_large_timeout: Duration,
     /// Where its statistics put 24h volume.
     pub settlement_volume: SettlementVolume,
+
+    /// The depths its book topics come in, ascending: a book streams the
+    /// smallest of them that holds the depth asked for (the largest, past
+    /// them all). Empty: a book streams at the depth asked for.
+    pub book_levels: &'static [u32],
+    /// The most levels a side of its public book has, when fewer than
+    /// asked for may come.
+    pub book_level_cap: Option<u32>,
+    /// Its REST book takes its depth as `limit` only: `levels` among its
+    /// params is refused.
+    pub book_depth_by_limit: bool,
+    /// What a view of its public book must say about it (the old app's
+    /// `orderBookNotice`).
+    pub book_notice: Option<&'static str>,
 }
 
 impl Venue {
@@ -167,6 +181,10 @@ const DEFAULT: Venue = Venue {
     stats_typed_scopes_large: false,
     stats_large_timeout: secs(20),
     settlement_volume: SettlementVolume::Never,
+    book_levels: &[],
+    book_level_cap: None,
+    book_depth_by_limit: false,
+    book_notice: None,
 };
 
 macro_rules! logo {
@@ -228,6 +246,7 @@ pub static VENUES: &[Venue] = &[
         // Bybit without parameters means its linear category, as the old
         // app sent.
         stats_default_params: &[("category", "linear")],
+        book_levels: &[1, 50, 200, 1000],
         ..DEFAULT
     },
     Venue {
@@ -296,6 +315,10 @@ pub static VENUES: &[Venue] = &[
         derive_symbol: Some(market::extended_symbol),
         stats_profiles: PERP,
         settlement_volume: SettlementVolume::Always,
+        book_notice: Some(
+            "Extended's public orderbook is indicative, not executable RFQ depth. \
+             Book-derived prices are not execution quotes.",
+        ),
         ..DEFAULT
     },
     Venue {
@@ -321,6 +344,11 @@ pub static VENUES: &[Venue] = &[
             ("spot", "Spot", Product::Spot, TYPE_SPOT),
         ],
         settlement_volume: SettlementVolume::CoinMargined,
+        book_level_cap: Some(100),
+        book_notice: Some(
+            "KuCoin public books are limited to 100 levels per side. Contract sizes \
+             are native contract quantities, not base-asset amounts.",
+        ),
         ..DEFAULT
     },
     Venue {
@@ -331,6 +359,12 @@ pub static VENUES: &[Venue] = &[
         rest_by_market_id: true,
         repair_symbol: Some(market::bitfinex_symbol),
         stats_profiles: PERP_SPOT,
+        book_level_cap: Some(100),
+        book_notice: Some(
+            "Bitfinex live books retain at most 100 levels; stock checksum validation \
+             covers only the top 25. Upstream channel reuse can cause shared \
+             reconnects and continuity errors.",
+        ),
         ..DEFAULT
     },
     Venue {
@@ -360,6 +394,7 @@ pub static VENUES: &[Venue] = &[
         name: "Perpl",
         logo: logo!("perpl"),
         stats_profiles: UNTYPED_PERP,
+        book_depth_by_limit: true,
         ..DEFAULT
     },
 ];
