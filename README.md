@@ -1,6 +1,6 @@
 # Lattice
 
-Native Rust trading terminal built with **Native Shell (NSH) 0.5.0**, a port
+Native Rust trading terminal built with **Native Shell (NSH) 0.5.1**, a port
 of the lattice-pro web app. Lattice has one shared Rust UI for native desktop
 and WebAssembly web targets.
 
