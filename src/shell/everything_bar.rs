@@ -345,7 +345,12 @@ pub fn bar(
         let settings = icon_segment(control_width)
             .label("Application settings")
             .on_press(move || settings_open.update(|open| *open = !*open))
-            .child(text("⚙"));
+            .child(
+                svg(ImageSrc::svg_markup(include_str!(
+                    "../../assets/icons/settings.svg"
+                )))
+                .size(px(12.0)),
+            );
 
         view()
             .h_full()

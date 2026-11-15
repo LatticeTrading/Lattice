@@ -46,7 +46,7 @@ use crate::{
     },
 };
 use grid::{GAP, Pane, ROW_STEP, Tab, TabWidget, breakpoint, column_step, columns};
-use nsh_core::prelude::*;
+use nsh_core::{element::ImageSrc, prelude::*};
 
 #[derive(Clone, PartialEq)]
 struct DragState {
@@ -690,7 +690,10 @@ fn pane_view(
                 .hover(|s| s.bg(theme::BACKGROUND))
                 .active(|s| s.bg(theme::BORDER))
                 .on_press(move || settings_open.update(|open| *open = !*open))
-                .child(text("⚙")),
+                .child(
+                    svg(ImageSrc::svg_markup(include_str!("../assets/icons/settings.svg")))
+                        .size(px(12.0)),
+                ),
         )
         .child(
             view()
