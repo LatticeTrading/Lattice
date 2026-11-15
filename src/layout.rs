@@ -23,9 +23,14 @@
 //! links it to a color; [`link_market`] shows a market on the widgets
 //! linked to one. Which widget a tab shows is the widgets'
 //! business ([`widgets::view`]); layout names none. A pane's `+` opens the app's widget picker
-//! ([`Picker`]) for that pane, which adds a tab of the widget picked.
+//! ([`Picker`]) for that pane, which adds a tab of the widget picked. A tab
+//! dragged goes to another place among its pane's tabs, or into another pane
+//! of its page (`layout/tab_drag.rs`), as the same widget: its content is
+//! made again there, attached to the session it had.
 
 mod grid;
+mod tab_drag;
+pub(crate) mod templates;
 #[cfg(test)]
 mod tests;
 pub(crate) use grid::Grid;
@@ -47,6 +52,7 @@ use crate::{
 };
 use grid::{GAP, Pane, ROW_STEP, Tab, TabWidget, breakpoint, column_step, columns};
 use nsh_core::{element::ImageSrc, prelude::*};
+use tab_drag::{PaneDrag, TabDrags};
 
 #[derive(Clone, PartialEq)]
 struct DragState {
@@ -317,6 +323,18 @@ pub(crate) fn close_tab(workspace: &mut StoredWorkspace, pane_id: usize, tab_id:
     active_grid_mut(workspace).close_tab(pane_id, tab_id);
 }
 
+/// Moves a tab of the active page's pane `from` to a gap among pane `to`'s
+/// tabs ([`Grid::move_tab`]); false when that changes nothing.
+pub(crate) fn move_tab(
+    workspace: &mut StoredWorkspace,
+    from: usize,
+    tab_id: usize,
+    to: usize,
+    gap: usize,
+) -> bool {
+    active_grid_mut(workspace).move_tab(from, tab_id, to, gap)
+}
+
 /// NSH's touch responder also carries desktop mouse drags, including moves
 /// outside the handle. Share the same lifecycle for move and resize controls.
 fn drag_handle(
@@ -399,6 +417,10 @@ pub(crate) fn workspace(workspace: Signal<StoredWorkspace>, picker: Picker) -> i
             drag_state.set(None);
         }
     });
+    // Tabs dragged from pane to pane, within the grid's scroll view and the
+    // box the panes are placed in, which a tab held at an edge scrolls.
+    let (viewport, content) = (element_ref(), element_ref());
+    let drags = TabDrags::new(workspace, viewport, content);
 
     let width = computed(workspace_width);
     let step = computed(move || {
@@ -433,12 +455,14 @@ pub(crate) fn workspace(workspace: Signal<StoredWorkspace>, picker: Picker) -> i
     });
 
     scroll()
+        .element_ref(&viewport)
         .flex_1()
         .min_h(px(0.0))
         .w_full()
         .scrollbar(true)
         .child(
             view()
+                .element_ref(&content)
                 .relative()
                 .w_full()
                 .h(move || px(height.get().max(1.0)))
@@ -446,9 +470,11 @@ pub(crate) fn workspace(workspace: Signal<StoredWorkspace>, picker: Picker) -> i
                     panes,
                     |(page, pane)| (*page, pane.id),
                     move |pane, _| {
-                        pane_view(pane, step, workspace, drag_state, picker, sessions.clone())
+                        let sessions = sessions.clone();
+                        pane_view(pane, step, workspace, drag_state, drags, picker, sessions)
                     },
-                )),
+                ))
+                .child(drags.ghost()),
         )
 }
 
@@ -460,6 +486,7 @@ fn pane_view(
     step: Memo<f32>,
     workspace: Signal<StoredWorkspace>,
     drag_state: Signal<Option<DragState>>,
+    drags: TabDrags,
     picker: Picker,
     sessions: Sessions,
 ) -> impl IntoElement {
@@ -564,6 +591,22 @@ fn pane_view(
     // How far the tabs reach past their room.
     let hidden = computed(move || (tabs_width.get() - strip_width.get()).max(0.0));
     let overflows = computed(move || hidden.get() > 0.5);
+    // Moves the tabs sideways by so much, within what they hide; whether
+    // they moved.
+    let scroll_by = move |by: f32| {
+        let max = hidden.get_untracked();
+        let from = offset.get_untracked().min(max);
+        let to = (from + by).clamp(0.0, max);
+        // Its own reports come back late: the offset is this one's.
+        dragged.set(false);
+        offset.set(to);
+        strip.scroll_to(point(px(to), px(0.0)), false);
+        to != from
+    };
+    // The pane takes tabs dragged to it ([`tab_drag`]), anywhere on its
+    // box, and lets go of its own.
+    let frame = element_ref();
+    let drag = drags.pane(page, id, frame, strip, scroll_by);
     // A wheel over the tabs moves them sideways whichever way it turns: an
     // ordinary mouse wheel has no sideways turn, and left to the platform
     // it scrolls the page, the tabs being a sideways scroll inside it.
@@ -577,15 +620,9 @@ fn pane_view(
         } else {
             delta.y.0
         };
-        if !by.is_finite() {
-            return;
+        if by.is_finite() {
+            scroll_by(by);
         }
-        let max = hidden.get_untracked();
-        let to = (offset.get_untracked().min(max) + by).clamp(0.0, max);
-        // Its own reports come back late: the offset is this one's.
-        dragged.set(false);
-        offset.set(to);
-        strip.scroll_to(point(px(to), px(0.0)), false);
     };
     // A tab added is the last and the active one: the tabs scroll to their
     // end, so it shows however narrow the pane.
@@ -646,15 +683,17 @@ fn pane_view(
                         // the wheel from everything around it), so over
                         // tabs that all show it still scrolls the page.
                         .child(dynamic(move || {
+                            let overflows = overflows.get();
                             view()
                                 .h_full()
                                 .flex_none()
                                 .flex_row()
                                 .items_center()
                                 .test_id(&format!("pane-tab-row-{id}"))
-                                .when(overflows.get(), |row| row.on_wheel(wheel))
+                                .when(overflows, |row| row.on_wheel(wheel))
                                 .child(dynamic(move || {
-                                    tab_strip(id, &tabs.get(), active_tab.get(), workspace)
+                                    let (tabs, active) = (tabs.get(), active_tab.get());
+                                    tab_strip(id, &tabs, active, overflows, workspace, drag)
                                 }))
                                 .child(add())
                         })),
@@ -733,6 +772,7 @@ fn pane_view(
         );
 
     let content = view()
+        .relative()
         .flex_1()
         .min_h(px(0.0))
         .flex_col()
@@ -747,7 +787,10 @@ fn pane_view(
                 };
                 tab_content(tab, active_tab, &sessions, workspace, panel)
             },
-        ));
+        ))
+        .child(tab_drag::drop_hint(move || {
+            drag.targeted() && tab_count.get() == 0
+        }));
 
     view()
         .absolute()
@@ -757,8 +800,16 @@ fn pane_view(
         .h(move || px((rect.get().h as f32 * ROW_STEP - GAP).max(1.0)))
         .flex_col()
         .border_1()
-        .border_color(theme::BORDER)
+        // Outlined while the tab in hand would go to it.
+        .border_color(move || {
+            if drag.targeted() {
+                theme::ACCENT.get()
+            } else {
+                theme::BORDER.get()
+            }
+        })
         .bg(theme::SURFACE)
+        .element_ref(&frame)
         .test_id(&format!("pane-{id}"))
         .child(header)
         .child(content)
@@ -786,18 +837,23 @@ fn pane_view(
         )
 }
 
-/// A pane's tabs: stateless buttons, cheap to make again.
+/// A pane's tabs: buttons, cheap to make again, each of them one a drag
+/// picks up ([`PaneDrag::tab`]). `overflows`: they reach past their room.
 fn tab_strip(
     id: usize,
     tabs: &[Tab],
     active_tab: usize,
+    overflows: bool,
     workspace: Signal<StoredWorkspace>,
+    drag: PaneDrag,
 ) -> Vec<View> {
+    drag.remake();
     tabs.iter()
-        .map(|tab| {
+        .enumerate()
+        .map(|(index, tab)| {
             let tab_id = tab.id;
             let selected = tab_id == active_tab;
-            view()
+            let button = view()
                 .h_full()
                 // Whole however narrow the pane: the strip scrolls.
                 .flex_none()
@@ -819,12 +875,6 @@ fn tab_strip(
                 })
                 .border_r_1()
                 .border_color(theme::BORDER)
-                .on_press(move || {
-                    workspace.update(|state| {
-                        activate_tab(state, id, tab_id);
-                        persist(state);
-                    });
-                })
                 .child(text(tab.title.clone()))
                 .child(
                     view()
@@ -836,7 +886,13 @@ fn tab_strip(
                             });
                         })
                         .child(text("×")),
-                )
+                );
+            drag.tab(button, tab, index + 1 == tabs.len(), overflows, move || {
+                workspace.update(|state| {
+                    activate_tab(state, id, tab_id);
+                    persist(state);
+                });
+            })
         })
         .collect()
 }

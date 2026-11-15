@@ -37,8 +37,13 @@
 //! it, brings it out again. The plot is still the shared one: it asks the
 //! chart's editor about the pointer before it pans.
 //!
-//! Indicators ([`indicators`]): a badge floating beside the plot's header,
-//! right of the exchange, opens the menu of them (an exponential moving
+//! The timeframe ([`timeframe`]): the plot's header says the market and
+//! its exchange, and the first badge floating beside it ([`badges`]) says
+//! the interval charted and opens the menu of them, so it is changed
+//! without the settings panel.
+//!
+//! Indicators ([`indicators`]): the badge right of the timeframe's, which
+//! says `INDICATORS`, opens the menu of them (an exponential moving
 //! average, a triple exponential one, Bollinger Bands). Each one added is
 //! computed from the bars charted, whatever the market, and drawn over
 //! them in its color; the prices fitted to the bars make room for its
@@ -59,6 +64,7 @@
 //! need a plot of their own under the bars (an oscillator, volume) have
 //! none yet.
 
+mod badges;
 mod drawings;
 mod indicators;
 mod panel;
@@ -66,6 +72,7 @@ mod session;
 mod settings;
 #[cfg(test)]
 mod tests;
+mod timeframe;
 mod view;
 
 use std::rc::Rc;

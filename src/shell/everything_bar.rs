@@ -5,7 +5,8 @@
 //! buttons ([`window_button`]). macOS and Linux keep the system's title bar,
 //! and the web build gets none because the browser owns that chrome.
 //!
-//! Left to right: the wordmark, the Layout Manager's button and the pages;
+//! Left to right: the wordmark, the Layout Manager's button (its panel
+//! also leads to the default layouts, [`layouts`]) and the pages;
 //! in the middle the link button, the symbol search ([`search`]) and New
 //! Widget; then the clock, the connection status ([`connections`]),
 //! Settings and, on Windows, minimize, maximize/restore and close.
@@ -33,6 +34,7 @@ use crate::{
 };
 
 mod connections;
+mod layouts;
 mod search;
 #[cfg(test)]
 mod tests;
@@ -61,6 +63,9 @@ struct Feedback {
 #[derive(Clone, Copy)]
 struct Manager {
     open: Signal<bool>,
+    /// Whether the open panel is the default layouts' gallery ([`layouts`])
+    /// rather than the manager itself. Every opening starts at the manager.
+    browsing: Signal<bool>,
     code: Signal<String>,
     pending: Signal<Option<Pending>>,
     feedback: Signal<Option<Feedback>>,
@@ -70,6 +75,7 @@ impl Manager {
     fn new() -> Self {
         Self {
             open: signal(false),
+            browsing: signal(false),
             code: signal(String::new()),
             pending: signal(None),
             feedback: signal(None),
@@ -78,8 +84,17 @@ impl Manager {
 
     fn close(self) {
         self.open.set(false);
+        self.browsing.set(false);
         self.pending.set(None);
         self.feedback.set(None);
+    }
+
+    /// Shows the default layouts in the manager's place, or the manager
+    /// again. What either was asking or saying goes with it.
+    fn browse(self, browsing: bool) {
+        self.pending.set(None);
+        self.feedback.set(None);
+        self.browsing.set(browsing);
     }
 
     fn toggle(self) {
@@ -184,6 +199,9 @@ pub fn bar(
 
     // The old app's breakpoint for compact controls.
     let compact = computed(|| window().width.0 <= 768.0);
+    // Whether the default layouts' gallery has room for one preview a row
+    // only.
+    let narrow = computed(|| window().width.0 < layouts::NARROW_BELOW);
     // The pages and the active one are all the bar shows of the workspace:
     // a widget's settings being saved rebuilds nothing here.
     let pages = computed(move || {
@@ -450,10 +468,14 @@ pub fn bar(
         // Outside the bar's `dynamic`s so the panel, and the field's focus and
         // caret, survive workspace changes such as clearing a page.
         .child(dynamic(move || {
-            manager
-                .open
-                .get()
-                .then(|| layout_manager(workspace, manager, &bar_ref))
+            if !manager.open.get() {
+                return None;
+            }
+            Some(if manager.browsing.get() {
+                layouts::panel(workspace, manager, narrow.get(), &bar_ref)
+            } else {
+                layout_manager(workspace, manager, &bar_ref)
+            })
         }))
         .child(dynamic(move || {
             settings_open.get().then(|| {
@@ -613,6 +635,14 @@ fn layout_manager(
         })
     });
 
+    let browse = ui::button("Browse Default Layouts", Tone::Normal)
+        .h(ui::ROW_HEIGHT)
+        .w_full()
+        .label("Browse default layouts")
+        .on_press(move || manager.browse(true))
+        .child(view().flex_1())
+        .child(text("›").text_color(theme::TEXT_FAINT));
+
     let body = view()
         .test_id("layout-manager")
         .max_h(px(520.0))
@@ -646,7 +676,14 @@ fn layout_manager(
                 .child(import),
         )
         .child(confirmation)
-        .child(feedback);
+        .child(feedback)
+        .child(
+            view()
+                .w_full()
+                .border_t_1()
+                .border_color(theme::BORDER)
+                .child(browse),
+        );
 
     ui::floating_panel(
         anchor,

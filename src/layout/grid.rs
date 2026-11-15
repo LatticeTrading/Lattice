@@ -157,6 +157,22 @@ pub(crate) struct Pane {
     pub active_tab: usize,
 }
 
+impl Pane {
+    /// Takes the tab at `index` out. When it was the active one, the tab
+    /// that took its place is (the one before it when it was last, none in
+    /// a pane left empty).
+    fn take_tab(&mut self, index: usize) -> Tab {
+        let tab = self.tabs.remove(index);
+        if self.active_tab == tab.id {
+            self.active_tab = self
+                .tabs
+                .get(index.min(self.tabs.len().saturating_sub(1)))
+                .map_or(0, |tab| tab.id);
+        }
+        tab
+    }
+}
+
 pub fn breakpoint(width: f32) -> usize {
     [480., 768., 996., 1200.].partition_point(|edge| width >= *edge)
 }
@@ -459,17 +475,61 @@ impl Grid {
                 let Some(index) = pane.tabs.iter().position(|tab| tab.id == tab_id) else {
                     continue;
                 };
-                pane.tabs.remove(index);
-                if pane.active_tab == tab_id {
-                    pane.active_tab = pane
-                        .tabs
-                        .get(index.min(pane.tabs.len().saturating_sub(1)))
-                        .or_else(|| pane.tabs.first())
-                        .map(|tab| tab.id)
-                        .unwrap_or(0);
-                }
+                pane.take_tab(index);
             }
         }
+    }
+
+    /// Moves a tab to a gap among pane `to`'s tabs, in every breakpoint;
+    /// `gap` counts the tabs before it there, the moved tab included while
+    /// it is still one of them (past the last tab is after it). Within its
+    /// pane the tab changes place and the pane keeps its active tab. In
+    /// another pane it becomes the active tab, and the pane it left shows
+    /// the tab that took its place; a pane left without tabs stays, empty.
+    /// The tab keeps its id, its widget and its settings.
+    ///
+    /// False, with nothing changed, when the tab is already there, or a
+    /// breakpoint lacks the tab or either pane (moved in the others only,
+    /// the tab would be in two panes).
+    pub fn move_tab(&mut self, from: usize, tab_id: usize, to: usize, gap: usize) -> bool {
+        let place = |layout: &[Pane]| {
+            let source = layout.iter().position(|pane| pane.id == from)?;
+            let index = layout[source]
+                .tabs
+                .iter()
+                .position(|tab| tab.id == tab_id)?;
+            let target = layout.iter().position(|pane| pane.id == to)?;
+            Some((source, index, target))
+        };
+        let Some(places) = self
+            .layouts
+            .iter()
+            .map(|layout| place(layout))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
+        let mut moved = false;
+        for (layout, (source, index, target)) in self.layouts.iter_mut().zip(places) {
+            let gap = gap.min(layout[target].tabs.len());
+            if source == target {
+                // The gaps either side of the tab are where it is.
+                let to = gap - usize::from(index < gap);
+                if to == index {
+                    continue;
+                }
+                let tabs = &mut layout[source].tabs;
+                let tab = tabs.remove(index);
+                tabs.insert(to, tab);
+            } else {
+                let tab = layout[source].take_tab(index);
+                let pane = &mut layout[target];
+                pane.active_tab = tab.id;
+                pane.tabs.insert(gap, tab);
+            }
+            moved = true;
+        }
+        moved
     }
 }
 
@@ -542,6 +602,103 @@ mod tests {
         grid.close_tab(pane_id, second_tab);
         assert!(grid.layouts[4][0].tabs.is_empty());
         assert_eq!(grid.layouts[4][0].active_tab, 0);
+    }
+
+    /// The tab ids of a pane, in order, in one breakpoint.
+    fn tab_ids(grid: &Grid, breakpoint: usize, pane_id: usize) -> Vec<usize> {
+        let pane = grid.layouts[breakpoint]
+            .iter()
+            .find(|pane| pane.id == pane_id)
+            .unwrap();
+        pane.tabs.iter().map(|tab| tab.id).collect()
+    }
+
+    /// A pane's active tab in one breakpoint.
+    fn active(grid: &Grid, breakpoint: usize, pane_id: usize) -> usize {
+        let pane = grid.layouts[breakpoint]
+            .iter()
+            .find(|pane| pane.id == pane_id)
+            .unwrap();
+        pane.active_tab
+    }
+
+    #[test]
+    fn a_tab_moves_among_its_panes_tabs_and_into_another_pane() {
+        let mut grid = Grid::default();
+        let a = grid.spawn(WidgetKind::MarketScreener);
+        grid.add_tab(a, WidgetKind::Chart);
+        grid.add_tab(a, WidgetKind::MarketScreener);
+        let b = grid.spawn(WidgetKind::Chart);
+        let [one, two, three] = tab_ids(&grid, 4, a)[..] else {
+            panic!("three tabs");
+        };
+        let four = tab_ids(&grid, 4, b)[0];
+        grid.activate_tab(a, two);
+
+        // Within its pane a tab changes place, between the gaps counted
+        // with it still there, and the active tab stays.
+        let original = grid.clone();
+        assert!(grid.move_tab(a, one, a, 3));
+        assert_eq!(tab_ids(&grid, 4, a), [two, three, one]);
+        assert!(grid.move_tab(a, one, a, 0));
+        assert_eq!(grid, original);
+        assert!(grid.move_tab(a, three, a, 1));
+        assert_eq!(tab_ids(&grid, 4, a), [one, three, two]);
+        assert_eq!(active(&grid, 4, a), two);
+        // The gaps either side of it, a missing tab and a missing pane
+        // change nothing.
+        let unchanged = grid.clone();
+        for (from, tab, to, gap) in [
+            (a, three, a, 1),
+            (a, three, a, 2),
+            (a, 99, b, 0),
+            (99, one, b, 0),
+            (a, one, 99, 0),
+            (b, one, a, 0),
+        ] {
+            assert!(
+                !grid.move_tab(from, tab, to, gap),
+                "{from} {tab} {to} {gap}"
+            );
+            assert_eq!(grid, unchanged);
+        }
+        grid = original;
+
+        // Into another pane it goes to the gap, as the same tab, and is the
+        // active one there; the pane it left shows the tab that took its
+        // place. Every breakpoint moves alike.
+        let widget = grid.layouts[4][0].tabs[1].clone();
+        assert!(grid.move_tab(a, two, b, 0));
+        for breakpoint in 0..5 {
+            assert_eq!(tab_ids(&grid, breakpoint, a), [one, three]);
+            assert_eq!(tab_ids(&grid, breakpoint, b), [two, four]);
+            assert_eq!(active(&grid, breakpoint, a), three);
+            assert_eq!(active(&grid, breakpoint, b), two);
+            assert_eq!(grid.layouts[breakpoint][1].tabs[0], widget);
+        }
+        // An inactive tab leaves its pane's active tab alone; a gap past
+        // the tabs is after the last.
+        assert!(grid.move_tab(a, one, b, 99));
+        assert_eq!(tab_ids(&grid, 4, b), [two, four, one]);
+        assert_eq!(active(&grid, 4, a), three);
+        assert_eq!(active(&grid, 4, b), one);
+        // The last tab leaves its pane empty, and comes back.
+        assert!(grid.move_tab(a, three, b, 1));
+        assert!(tab_ids(&grid, 4, a).is_empty());
+        assert_eq!(active(&grid, 4, a), 0);
+        assert_eq!(grid.layouts[4].len(), 2);
+        assert!(grid.move_tab(b, three, a, 0));
+        assert_eq!(tab_ids(&grid, 4, a), [three]);
+        assert_eq!(active(&grid, 4, a), three);
+        // The active last tab hands over to the one before it.
+        assert!(grid.move_tab(b, one, a, 0));
+        assert_eq!(active(&grid, 4, b), four);
+
+        // A breakpoint without the destination refuses the move in all.
+        grid.layouts[0].retain(|pane| pane.id != a);
+        let uneven = grid.clone();
+        assert!(!grid.move_tab(b, two, a, 0));
+        assert_eq!(grid, uneven);
     }
 
     #[test]

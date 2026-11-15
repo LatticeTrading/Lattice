@@ -1,11 +1,7 @@
 //! The indicators' badge and the menu it opens.
 //!
-//! The badge floats on the plot beside its header, right of the exchange
-//! it ends with: small, bordered and see-through until the pointer is
-//! over it, as the badge that opens the drawing toolbar is. It is laid
-//! over the plot's view, after it, so a press on it is its own. In a pane
-//! too narrow for the header it stays inside the plot's area, over the
-//! header's end.
+//! The badge is the second beside the plot's header ([`badges`]), right
+//! of the timeframe's: its icon and the word `INDICATORS`.
 //!
 //! A press opens the menu below it: a row a kind of indicator
 //! ([`Kind::ALL`]), its whole name and its short one. Pressing a row adds
@@ -19,22 +15,20 @@ use nsh_core::{
 
 use super::{Indicator, Kind, icon};
 use crate::{
-    theme, ui,
+    theme,
     widgets::{
         TabContext,
-        chart::ChartSettings,
-        common::plot::{self, Plot},
+        chart::{ChartSettings, badges},
     },
 };
 
-/// The badge: how wide and tall it is, how far right of the header's end,
-/// and its icon's side.
-const BADGE_WIDTH: f32 = 22.0;
-const BADGE_HEIGHT: f32 = 16.0;
-const BADGE_GAP: f32 = 8.0;
+/// What the badge says, its icon's side and how far the icon is from the
+/// word.
+const WORD: &str = "INDICATORS";
 const BADGE_ICON: f32 = 12.0;
-/// How opaque the badge is until the pointer is over it.
-const BADGE_OPACITY: f32 = 0.6;
+const BADGE_SPACE: f32 = 4.0;
+/// How wide the badge is.
+pub(crate) const BADGE_WIDTH: f32 = badges::width(WORD.len(), BADGE_ICON + BADGE_SPACE);
 /// The menu's narrowest, and a row's height (a select's).
 const MENU_WIDTH: f32 = 250.0;
 const ROW_HEIGHT: f32 = 30.0;
@@ -43,64 +37,28 @@ const ROW_HEIGHT: f32 = 30.0;
 const NAME: &str = "Indicators";
 
 /// The badge that opens the menu of indicators for the chart in `tab`,
-/// floating on `plot` (the chart's) beside its header, which says what
-/// `title` does.
-pub(crate) fn badge(tab: &TabContext<ChartSettings>, plot: &Plot, title: Memo<String>) -> View {
+/// `left` points from the plot's view's left edge.
+pub(crate) fn badge(tab: &TabContext<ChartSettings>, left: impl Fn() -> f32 + 'static) -> View {
     let tab = tab.clone();
     let open = signal(false);
     let anchor = element_ref();
-    let size = plot.size;
-    let (area_left, _) = plot::AREA_ORIGIN;
-    let (_, top) = plot::HEADER_ORIGIN;
     let menu = dynamic(move || open.get().then(|| menu(&tab, &anchor, open)));
-    view()
-        .element_ref(&anchor)
-        .absolute()
-        .left(move || {
-            // Beside the header, on a whole point, and never past the
-            // plot's area.
-            let beside = (title.with(|title| plot::header_end(title)) + BADGE_GAP).ceil();
-            let (width, _) = size.get();
-            px(beside.min(area_left + width - BADGE_WIDTH).max(area_left))
-        })
-        .top(px(top))
-        .w(px(BADGE_WIDTH))
-        .h(px(BADGE_HEIGHT))
-        .flex()
+    // The icon and the word in a row of their own: the menu is the
+    // badge's child too, and is not spaced from them.
+    let said = view()
+        .flex_row()
         .items_center()
-        .justify_center()
-        .bg(theme::SURFACE.opacity(BADGE_OPACITY))
-        .border_1()
-        .border_color(theme::BORDER)
-        .text_color(theme::TEXT_MUTED)
-        .role(AccessibilityRole::Button)
-        .label(NAME)
-        .accessibility_state(move || AccessibilityState {
-            expanded: Some(open.get()),
-            has_popup: true,
-            ..Default::default()
-        })
-        .test_id("chart-indicators")
-        .tooltip(ui::hint(|| NAME.to_owned()))
-        .hover(|s| {
-            s.bg(theme::SURFACE)
-                .border_color(theme::TEXT_FAINT)
-                .text_color(theme::TEXT)
-        })
-        .active(|s| s.bg(theme::BORDER))
-        .style_when(
-            move || open.get(),
-            |s| {
-                s.bg(theme::SURFACE)
-                    .border_color(theme::ACCENT)
-                    .text_color(theme::ACCENT)
-            },
-        )
-        .on_press(move || open.update(|open| *open = !*open))
+        .gap(px(BADGE_SPACE))
         .child(icon(
             || include_str!("../../../../assets/icons/indicators.svg"),
             BADGE_ICON,
         ))
+        .child(text(WORD).number_of_lines(1));
+    badges::floating(left, || BADGE_WIDTH, open)
+        .element_ref(&anchor)
+        .label(NAME)
+        .test_id("chart-indicators")
+        .child(said)
         .child(menu)
 }
 

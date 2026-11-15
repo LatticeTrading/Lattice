@@ -413,7 +413,7 @@ fn start_root(root: Root) -> Headless {
     config.environment.os = Os::Windows;
     config.environment.idiom = Idiom::Desktop;
     let mut app = Headless::start(config).unwrap();
-    app.wait_for("BTC/USDT  ·  1m  ·  Bybit").unwrap();
+    app.wait_for("BTC/USDT  ·  Bybit").unwrap();
     app
 }
 
@@ -593,7 +593,7 @@ fn a_pick_in_the_search_charts_it_on_the_widgets_linked_to_the_bars_color() {
     // The chart is linked to blue, as the bar is: the pick becomes its
     // market, the field empties and the results go.
     app.press("Hyperliquid BTC/USDC PERP USDC-M").unwrap();
-    app.wait_for("BTC/USDC  ·  1m  ·  Hyperliquid").unwrap();
+    app.wait_for("BTC/USDC  ·  Hyperliquid").unwrap();
     app.wait_for_gone(RESULTS, WAIT).unwrap();
     assert_eq!(app.screen().input_text(SEARCH).unwrap(), Some(""));
 
@@ -613,7 +613,7 @@ fn a_pick_in_the_search_charts_it_on_the_widgets_linked_to_the_bars_color() {
     ));
     app.type_text(SEARCH, "\n").unwrap();
     app.wait_for_gone(RESULTS, WAIT).unwrap();
-    assert!(app.shows("BTC/USDC  ·  1m  ·  Hyperliquid"));
+    assert!(app.shows("BTC/USDC  ·  Hyperliquid"));
 
     // The chart's header links it to red; the next pick is its market.
     app.press("id:pane-link-1").unwrap();
@@ -625,7 +625,7 @@ fn a_pick_in_the_search_charts_it_on_the_widgets_linked_to_the_bars_color() {
     // Down moves the keyboard's row to the second result, Bybit's.
     app.press_key("down").unwrap();
     app.type_text(SEARCH, "\n").unwrap();
-    app.wait_for("ETH/USDT  ·  1m  ·  Bybit").unwrap();
+    app.wait_for("ETH/USDT  ·  Bybit").unwrap();
 
     // The chart's settings have the same choice, as the old panel did.
     app.press("Widget settings").unwrap();
@@ -648,7 +648,7 @@ fn a_market_picker_offers_the_markets_the_bar_keeps() {
     app.wait_for("Hyperliquid ETH/USDC PERP USDC-M").unwrap();
     assert_eq!(app.screen().count("role:option").unwrap(), 7);
     app.press("Hyperliquid ETH/USDC PERP USDC-M").unwrap();
-    app.wait_for("ETH/USDC  ·  1m  ·  Hyperliquid").unwrap();
+    app.wait_for("ETH/USDC  ·  Hyperliquid").unwrap();
     app.wait_for_gone("id:market-picker", WAIT).unwrap();
 }
 

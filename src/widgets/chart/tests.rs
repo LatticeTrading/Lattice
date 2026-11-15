@@ -251,7 +251,7 @@ fn a_chart_loads_its_candles_and_follows_the_pointer() {
     // The 1m candles of Bybit's BTC/USDT, by default. Their history is
     // 1600 bars: the newest 500 in one reply, then the 1100 before them in
     // two, the first stopping at its thousandth bar.
-    app.wait_for("BTC/USDT  ·  1m  ·  Bybit").unwrap();
+    app.wait_for("BTC/USDT  ·  Bybit").unwrap();
     app.wait_for_gone("Loading historical candles...", WAIT)
         .unwrap();
     app.wait_for("1108.08").unwrap();
@@ -343,7 +343,7 @@ fn a_chart_loads_its_candles_and_follows_the_pointer() {
     // Its select charts the timeframe picked.
     app.press("Timeframe").unwrap();
     app.press("5m").unwrap();
-    app.wait_for("BTC/USDT  ·  5m  ·  Bybit").unwrap();
+    app.wait_for("label:Timeframe 5m").unwrap();
 }
 
 /// The point at `time` and `price`.
@@ -707,7 +707,7 @@ fn drawings_are_made_picked_moved_and_removed_on_the_plot() {
     let pause = Duration::from_millis(200);
     let by = |x: f32, y: f32| Point::new(px(x), px(y));
 
-    app.wait_for("BTC/USDT  ·  1m  ·  Bybit").unwrap();
+    app.wait_for("BTC/USDT  ·  Bybit").unwrap();
     app.wait_for_gone("Loading historical candles...", WAIT)
         .unwrap();
     app.wait_for("1108.08").unwrap();
@@ -1182,23 +1182,35 @@ fn indicators_are_added_hidden_set_and_removed_on_the_plot() {
     };
     let pause = Duration::from_millis(200);
 
-    app.wait_for("BTC/USDT  ·  1m  ·  Bybit").unwrap();
+    app.wait_for("BTC/USDT  ·  Bybit").unwrap();
     app.wait_for_gone("Loading historical candles...", WAIT)
         .unwrap();
     app.wait_for("1108.08").unwrap();
     assert!(saved().is_empty() && lines(app.screen()) == 0);
 
-    // The badge floats on the plot beside its header: 8 points right of
-    // the 25 characters it says (7.2 points each, from 14), level with
-    // it.
+    // The badges float on the plot beside its header, level with it. The
+    // timeframe's is 8 points right of the 18 characters the header says
+    // (7.2 points each, from 14), on a whole point; the indicators' is 4
+    // points right of that one (its two characters, 6 points each, and 6
+    // either side), and says its name after its icon (12 points and 4).
     let surface = placed(&app, "chart-plot").expect("the plot");
     let (left, top) = (surface.origin.x.0 - 12.0, surface.origin.y.0 - 12.0);
+    let timeframe = placed(&app, "chart-timeframe").expect("the timeframe's badge");
+    assert_eq!(
+        (timeframe.size.width.0, timeframe.size.height.0),
+        (24.0, 16.0)
+    );
+    assert_eq!(
+        (timeframe.origin.x.0 - left, timeframe.origin.y.0 - top),
+        (152.0, 14.0)
+    );
     let badge = placed(&app, "chart-indicators").expect("the badge");
-    assert_eq!((badge.size.width.0, badge.size.height.0), (22.0, 16.0));
+    assert_eq!((badge.size.width.0, badge.size.height.0), (88.0, 16.0));
     assert_eq!(
         (badge.origin.x.0 - left, badge.origin.y.0 - top),
-        (202.0, 14.0)
+        (180.0, 14.0)
     );
+    assert!(app.shows("INDICATORS"));
 
     // Its menu lists the kinds; a press on one adds it to the chart as it
     // starts, and closes the menu.
@@ -1313,4 +1325,79 @@ fn indicators_are_added_hidden_set_and_removed_on_the_plot() {
         .unwrap();
     app.wait(pause).unwrap();
     assert!(!app.shows("EMA 50") && placed(&app, "chart-indicator-0").is_none());
+}
+
+#[test]
+fn the_timeframe_badge_charts_the_interval_picked() {
+    let network = Arc::new(StubNetwork::new([(
+        format!("POST {FERRIS}/v1/fetchOHLCV"),
+        StubRoute::Handler(Arc::new(stub_candles)),
+    )]));
+    let storage = MemoryStorage::new([]);
+    let mut config = EngineConfig::new(Root::of::<Harness>());
+    config.viewport = Size::new(px(1280.0), px(800.0));
+    config.storage = Some(storage.clone());
+    config.network = Some(network);
+    config.environment.os = Os::Windows;
+    config.environment.idiom = Idiom::Desktop;
+    let mut app = Headless::start(config).unwrap();
+    // What the chart's tab saved as its timeframe.
+    let saved = move || -> Option<Value> {
+        let entries = storage.entries();
+        let workspace: Value = serde_json::from_str(entries.get("lattice.workspace.v1")?).ok()?;
+        member(&workspace, "timeframe").cloned()
+    };
+    // How far right of the plot's view's left edge the view `id` starts.
+    let from_left = |app: &Headless, id: &str| -> f32 {
+        let surface = placed(app, "chart-plot").expect("the plot");
+        let view = placed(app, id).expect("the view");
+        view.origin.x.0 - (surface.origin.x.0 - 12.0)
+    };
+
+    // The header leaves the interval to the badge beside it: 1m, the
+    // default, which saves nothing.
+    app.wait_for("BTC/USDT  ·  Bybit").unwrap();
+    app.wait_for("label:Timeframe 1m").unwrap();
+    assert_eq!(saved(), None);
+
+    // Its menu lists every interval; a press on one charts it and closes
+    // the menu.
+    app.press("id:chart-timeframe").unwrap();
+    app.wait_for("id:chart-timeframe-menu").unwrap();
+    for interval in Interval::ALL {
+        let row = format!("chart-timeframe-{}", interval.id());
+        assert!(placed(&app, &row).is_some(), "{row}");
+    }
+    app.press("id:chart-timeframe-15m").unwrap();
+    app.wait_for_gone("id:chart-timeframe-menu", WAIT).unwrap();
+    app.wait_for("label:Timeframe 15m").unwrap();
+    app.wait_until("the timeframe saved", WAIT, |_| {
+        saved() == Some(json!("15m"))
+    })
+    .unwrap();
+    // The badge is as wide as what it says, a character more, and the
+    // indicators' moved over by it.
+    let badge = placed(&app, "chart-timeframe").expect("the badge");
+    assert_eq!(badge.size.width.0, 30.0);
+    assert_eq!(from_left(&app, "chart-timeframe"), 152.0);
+    assert_eq!(from_left(&app, "chart-indicators"), 186.0);
+
+    // Escape closes the menu and changes nothing.
+    app.press("id:chart-timeframe").unwrap();
+    app.wait_for("id:chart-timeframe-menu").unwrap();
+    app.press_key("Escape").unwrap();
+    app.wait_for_gone("id:chart-timeframe-menu", WAIT).unwrap();
+    assert_eq!(saved(), Some(json!("15m")));
+
+    // Ticks are one of them, and the default one saves nothing again.
+    app.press("id:chart-timeframe").unwrap();
+    app.press("id:chart-timeframe-tick").unwrap();
+    app.wait_for("label:Timeframe Tick").unwrap();
+    app.wait_until("ticks saved", WAIT, |_| saved() == Some(json!("tick")))
+        .unwrap();
+    app.press("id:chart-timeframe").unwrap();
+    app.press("id:chart-timeframe-1m").unwrap();
+    app.wait_for("label:Timeframe 1m").unwrap();
+    app.wait_until("nothing saved", WAIT, |_| saved().is_none())
+        .unwrap();
 }

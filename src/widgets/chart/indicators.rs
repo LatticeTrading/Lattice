@@ -47,7 +47,7 @@ pub(crate) use self::layer::{Ink, paint};
 pub(crate) use self::{
     layer::layer,
     legend::{legend, legend_height},
-    menu::badge,
+    menu::{BADGE_WIDTH, badge},
     series::{Computed, Line},
 };
 use super::ChartSettings;

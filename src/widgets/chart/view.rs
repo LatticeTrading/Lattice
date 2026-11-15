@@ -5,10 +5,12 @@
 //! handling), with what is the chart's own over it: its indicators' lines
 //! ([`indicators::layer`]), its drawings ([`drawings::layer`]), whose
 //! editor hears the plot's pointer first ([`Editor`]), the header (the
-//! market charted and its interval) and the note that a page of older
+//! market charted and its exchange) and the note that a page of older
 //! candles is on its way. Over the plot's view, where a press is their
-//! own, float the badge beside the header that opens the indicators' menu
-//! ([`indicators::badge`]), the indicators' legend under the header
+//! own, float the badges beside the header ([`badges`]: the one that says
+//! the interval charted and opens the menu of them, [`timeframe::badge`],
+//! and the one that opens the indicators' menu, [`indicators::badge`]),
+//! the indicators' legend under the header
 //! ([`indicators::legend`]) and, while the toolbar is closed and the plot
 //! is all of the chart, the badge that opens it
 //! ([`drawings::toolbar_badge`]).
@@ -18,10 +20,11 @@ use std::rc::Rc;
 use nsh_core::prelude::*;
 
 use super::{
-    ChartSettings,
+    ChartSettings, badges,
     drawings::{self, Editor},
     indicators,
     session::ChartSession,
+    timeframe,
 };
 use crate::{
     exchanges, theme,
@@ -55,9 +58,18 @@ pub(super) fn chart_view(session: &Rc<ChartSession>, tab: &TabContext<ChartSetti
         .child(drawings::layer(&editor))
         .child(plot::header(move || title.get()).test_id("chart-header"))
         .child(loading_older(session.loading_older, legend));
+    // Where the badges beside the header start: the timeframe's, as wide
+    // as the interval it says, then the indicators'.
+    let interval = computed(move || saved.with(ChartSettings::interval));
+    let lefts = badges::lefts(
+        &session.plot,
+        title,
+        move || timeframe::badge_width(interval.get()),
+        indicators::BADGE_WIDTH,
+    );
     // The plot, and laid over its view (after it, so over its surfaces)
-    // the indicators' legend and the badges that open their menu and the
-    // toolbar.
+    // the indicators' legend, the badges beside the header and the one
+    // that opens the toolbar.
     let plot = view()
         .flex_1()
         .min_h(px(0.0))
@@ -66,7 +78,8 @@ pub(super) fn chart_view(session: &Rc<ChartSession>, tab: &TabContext<ChartSetti
         .flex_col()
         .child(plot_view(&session.plot, look, over))
         .child(indicators::legend(session, tab))
-        .child(indicators::badge(tab, &session.plot, title))
+        .child(timeframe::badge(tab, move || lefts.get()[0]))
+        .child(indicators::badge(tab, move || lefts.get()[1]))
         .child(drawings::toolbar_badge(tab, &session.plot));
     view()
         .flex_1()
@@ -79,13 +92,12 @@ pub(super) fn chart_view(session: &Rc<ChartSession>, tab: &TabContext<ChartSetti
 }
 
 /// What the plot's header says, in its top left corner: the market
-/// charted, its interval and its exchange.
+/// charted and its exchange. The interval is the badge's beside it.
 fn heading(settings: &ChartSettings) -> String {
     let market = settings.market();
     format!(
-        "{}  ·  {}  ·  {}",
+        "{}  ·  {}",
         market.symbol,
-        settings.interval().label(),
         exchanges::display_name(&market.exchange)
     )
 }
