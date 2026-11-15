@@ -1,4 +1,4 @@
-//! What the chart draws for a series, a viewport and a plot size: the bars
+//! What a plot draws for a series, a viewport and a plot size: the bars
 //! that show, merged into buckets where they are narrower than the screen
 //! can tell apart, and cut into the tiles the shader draws
 //! ([`super::shader`]). The old `ChartDataEngine`'s snapshot.
@@ -21,7 +21,7 @@ use super::{
 use crate::data::ferris::Candle;
 
 /// A tile's widest, in points.
-pub(super) const TILE_WIDTH: f64 = 480.0;
+const TILE_WIDTH: f64 = 480.0;
 /// A candle's narrowest slot, in points; narrower slots are merged.
 const CANDLE_PITCH: f64 = 2.0;
 /// The narrowest step between a line's points, in points.
@@ -32,15 +32,15 @@ const FAR: f64 = 64.0;
 
 /// How a series is drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Mode {
+pub(crate) enum Mode {
     Candles,
-    /// A line through the closes (a tick chart).
+    /// A line through the closes (a tick chart, a spread).
     Line,
 }
 
 /// One shader view's stretch of the plot.
 #[derive(Debug, PartialEq)]
-pub(super) struct Tile {
+pub(crate) struct Tile {
     /// Where it starts and how wide it is, in whole points from the plot's
     /// left edge.
     pub left: f32,
@@ -59,15 +59,15 @@ pub(super) struct Tile {
 
 /// The newest bar's close, which the plot marks.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct Last {
+pub(crate) struct Last {
     pub close: f64,
     /// It closed at or above its open.
     pub rising: bool,
 }
 
-/// Everything the chart's view shows of its series.
+/// Everything the plot's view shows of its series.
 #[derive(Debug)]
-pub(super) struct Scene {
+pub(crate) struct Scene {
     pub mode: Mode,
     /// The plot's size in points.
     pub width: f32,

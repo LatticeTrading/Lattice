@@ -80,6 +80,34 @@ pub(crate) fn market_chooser(market: &MarketSelection) -> View {
     }
 }
 
+/// The chooser box of a setting with no market: `Select...` where the pair
+/// would be, as the old box read.
+pub(crate) fn empty_market_chooser() -> View {
+    view()
+        .min_h(px(HEIGHT))
+        .flex_row()
+        .bg(theme::SURFACE)
+        .border_1()
+        .border_color(theme::BORDER)
+        .relative()
+        .hover(|s| s.bg(theme::PANEL).border_color(theme::ACCENT).z_index(1))
+        .child(
+            view()
+                .w(px(LOGO_SEGMENT))
+                .flex_none()
+                .border_r_1()
+                .border_color(theme::BORDER),
+        )
+        .child(
+            view().flex().items_center().px(px(8.0)).child(
+                text("Select...")
+                    .number_of_lines(1)
+                    .text_size(px(11.0))
+                    .text_color(theme::TEXT),
+            ),
+        )
+}
+
 /// What names `market` for assistive tech: `Bybit BTC/USDT PERP USDT-M`.
 pub(crate) fn market_name(market: &MarketSelection) -> String {
     format!(

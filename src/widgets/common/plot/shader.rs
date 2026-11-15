@@ -1,4 +1,4 @@
-//! The chart's GPU program: one WGSL fragment shader that draws a tile of
+//! The plot's GPU program: one WGSL fragment shader that draws a tile of
 //! the plot ([`super::scene::Tile`]): the grid, then candles or a line.
 //! The old `WebGLGeometryRenderer`, and the grid of its
 //! `ChartOverlayRenderer`.
@@ -36,7 +36,7 @@ pub(super) const LINE_CAPACITY: usize = (SLOTS - HEAD) * 4;
 
 /// How many columns and rows the grid divides the plot into (the old
 /// overlay's).
-pub(super) const GRID_COLUMNS: f32 = 7.0;
+const GRID_COLUMNS: f32 = 7.0;
 pub(super) const GRID_ROWS: f32 = 6.0;
 
 /// The program. `d[0]` is the view (the slot at the tile's left edge
@@ -150,7 +150,7 @@ fn shade(uv: vec2f) -> vec4f {
 ";
 
 thread_local! {
-    /// The compiled program, made the first time a chart shows.
+    /// The compiled program, made the first time a plot shows.
     static PROGRAM: OnceCell<Option<Shader>> = const { OnceCell::new() };
 }
 
@@ -161,7 +161,7 @@ pub(super) fn program() -> Option<Shader> {
         program
             .get_or_init(|| {
                 Shader::compile(SOURCE)
-                    .inspect_err(|error| log::error!("Chart: its shader does not compile: {error}"))
+                    .inspect_err(|error| log::error!("Plot: its shader does not compile: {error}"))
                     .ok()
             })
             .clone()
@@ -174,7 +174,7 @@ pub(super) struct Palette {
     /// below.
     pub rising: UniformValue,
     pub falling: UniformValue,
-    /// A tick chart's line.
+    /// A line's stroke (a tick chart's, a spread's).
     pub line: UniformValue,
     pub grid: UniformValue,
 }

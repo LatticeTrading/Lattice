@@ -1,7 +1,9 @@
 //! The Chart: one market's candles at a timeframe, or its trades as a tick
 //! line, drawn on the GPU (the old app's `AdvancedChart` and its WebGL
-//! `chart-gl` engine, moved to WebGPU's shading language; [`shader`] says
-//! how NSH runs it).
+//! `chart-gl` engine, moved to WebGPU's shading language). The plot itself
+//! (its scene, shader, viewport and view) is the shared one
+//! ([`crate::widgets::common::plot`]), which the Premium/Arb Chart draws
+//! with too; this folder is what charts one market with it.
 //!
 //! Data (the widget's session, [`ChartSession`] in [`session`]):
 //!
@@ -14,9 +16,9 @@
 //!   share one topic and one history. A hidden chart keeps streaming, so
 //!   showing it again is instant.
 //! - Feeds tell it of each change from the socket's callback; it only
-//!   marks itself dirty there. While it shows, it makes the [`scene`] its
-//!   view draws at most once a frame, and at once when the [`viewport`]
-//!   moves or the plot is resized. A hidden chart does none of it.
+//!   marks its plot there. While it shows, it makes the scene its view
+//!   draws at most once a frame, and at once when the viewport moves or the
+//!   plot is resized. A hidden chart does none of it.
 //! - The viewport lives in the session, so a chart is where it was left
 //!   when its page shows again; it starts over when the market or the
 //!   timeframe changes. Panning near the oldest candle asks the feed for
@@ -36,14 +38,11 @@
 //! while older candles loaded.
 
 mod panel;
-mod scene;
 mod session;
 mod settings;
-mod shader;
 #[cfg(test)]
 mod tests;
 mod view;
-mod viewport;
 
 use std::rc::Rc;
 

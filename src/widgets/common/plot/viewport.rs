@@ -1,4 +1,4 @@
-//! Where the chart looks (the old `WebGLPriceChart`'s viewport): how many
+//! Where a plot looks (the old `WebGLPriceChart`'s viewport): how many
 //! slots show, how far the newest bar is from the right edge, and the price
 //! range when the user set one.
 //!
@@ -12,15 +12,15 @@
 //! (free roam); a double click on an axis fits them again.
 
 /// The fewest and most slots the plot shows (the old chart's).
-pub(super) const MIN_VISIBLE: f64 = 24.0;
-pub(super) const MAX_VISIBLE: f64 = 25_000.0;
-/// The slots a new candle chart and a new tick chart show.
-pub(super) const DEFAULT_CANDLES: f64 = 220.0;
-pub(super) const DEFAULT_TICKS: f64 = 700.0;
+const MIN_VISIBLE: f64 = 24.0;
+const MAX_VISIBLE: f64 = 25_000.0;
+/// The slots a new plot of candles and a new one of ticks show.
+pub(crate) const DEFAULT_CANDLES: f64 = 220.0;
+pub(crate) const DEFAULT_TICKS: f64 = 700.0;
 
 /// A price range, low to high.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct Prices {
+pub(crate) struct Prices {
     pub low: f64,
     pub high: f64,
 }
@@ -104,7 +104,7 @@ impl Prices {
 
 /// What the plot shows of a series.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct Viewport {
+pub(crate) struct Viewport {
     /// The slots across the plot.
     pub visible: f64,
     /// How many bars the newest one is past the right edge: above zero the

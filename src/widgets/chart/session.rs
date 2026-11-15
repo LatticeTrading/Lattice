@@ -1,6 +1,6 @@
-//! The chart's session ([`ChartSession`]): the feed its settings chart, its
-//! viewport, and the scene its view shows (the widget's data, described in
-//! the parent module).
+//! The chart's session ([`ChartSession`]): the feed its settings chart and
+//! its plot, whose viewport and scene its view shows (the widget's data,
+//! described in the parent module).
 
 use std::{
     cell::{Cell, RefCell},
@@ -9,18 +9,13 @@ use std::{
 
 use nsh_core::prelude::*;
 
-use super::{
-    ChartSettings,
-    scene::{Mode, Scene},
-    settings::Interval,
-    viewport::{DEFAULT_CANDLES, DEFAULT_TICKS, Viewport},
-};
+use super::{ChartSettings, settings::Interval};
 use crate::{
     data::{
         SessionScope,
         ferris::{Candle, CandleFeed, Ferris, MarketSelection, TradeFeed},
     },
-    widgets::common::Shared,
+    widgets::common::plot::{DEFAULT_CANDLES, DEFAULT_TICKS, Mode, Plot, Viewport},
 };
 
 /// The ticks a tick chart keeps (the old chart's bound).
@@ -211,23 +206,15 @@ impl Source {
     }
 }
 
-/// A chart's session state: its viewport, and what its view shows (its
-/// feed and settings live in the effects `new` starts).
+/// A chart's session state: its plot, and what its view says about its
+/// data (its feed and settings live in the effects `new` starts).
 pub(crate) struct ChartSession {
-    /// What the view shows, updated while the widget is visible.
-    pub(super) scene: Signal<Shared<Scene>>,
+    /// Its plot. Where it looks starts over when the market or the interval
+    /// changes.
+    pub(super) plot: Rc<Plot>,
     pub(super) status: Signal<Status>,
     /// A page of older candles is on its way.
     pub(super) loading_older: Signal<bool>,
-    /// Where the plot looks; it starts over when the market or the
-    /// interval changes.
-    pub(super) viewport: Signal<Viewport>,
-    /// The plot's size in points, which the view measures.
-    pub(super) plot: Signal<(f32, f32)>,
-    /// How many times the user moved the viewport: older candles are asked
-    /// for once per move, as the old chart did, so a plot resting at the
-    /// oldest bar does not page through a venue's whole history.
-    moves: Rc<Cell<u64>>,
 }
 
 impl ChartSession {
@@ -237,142 +224,85 @@ impl ChartSession {
         ferris: Ferris,
         settings: Signal<ChartSettings>,
     ) -> Self {
-        let scene = signal(Shared::new(Scene::empty(Mode::Candles)));
+        let plot = Plot::new(Mode::Candles, DEFAULT_CANDLES);
         let status = signal(Status::LoadingHistory);
         let loading_older = signal(false);
-        let viewport = signal(Viewport::showing(DEFAULT_CANDLES));
-        let plot = signal((1.0_f32, 1.0_f32));
-        let moves = Rc::new(Cell::new(0_u64));
 
         let source: Rc<RefCell<Option<Source>>> = Rc::default();
         // The source's `appended` when the scene was last made.
         let appended = Rc::new(Cell::new(0_u64));
-        // Bars arrived (or the source changed) since the scene was made.
-        let dirty = Rc::new(Cell::new(true));
-        // Bumped when `dirty` is set, so the visible view schedules a frame.
-        let wake = signal(0_u64);
-        let mark: Rc<dyn Fn()> = {
-            let (dirty, wakes) = (dirty.clone(), Cell::new(0_u64));
-            Rc::new(move || {
-                if !dirty.replace(true) {
-                    wakes.set(wakes.get().wrapping_add(1));
-                    wake.try_set(wakes.get());
-                }
-            })
-        };
 
         // The feed follows the market and interval the settings chart.
         let market = computed(move || settings.with(ChartSettings::market));
         let interval = computed(move || settings.with(ChartSettings::interval));
         {
-            let (source, appended, mark) = (source.clone(), appended.clone(), mark.clone());
+            let (source, appended, plot) = (source.clone(), appended.clone(), plot.clone());
             effect(move || {
                 let (market, interval) = (market.get(), interval.get());
                 untracked(|| {
                     // Leased before the old one goes, so what they share
                     // (a market's trades) keeps streaming.
-                    let next = Source::open(&ferris, &market, interval, mark.clone());
+                    let next = Source::open(&ferris, &market, interval, plot.marker());
                     appended.set(next.appended());
                     let previous = source.borrow_mut().replace(next);
                     drop(previous);
-                    viewport.set(Viewport::showing(match interval {
+                    plot.viewport.set(Viewport::showing(match interval {
                         Interval::Tick => DEFAULT_TICKS,
                         Interval::Candles(_) => DEFAULT_CANDLES,
                     }));
                 });
-                mark();
+                plot.mark();
             });
         }
 
         {
-            let moves = moves.clone();
-            // The `moves` a page of older candles was last asked for at.
+            let plot = plot.clone();
+            // The plot's `moves` a page of older candles was last asked for
+            // at: they are asked for once per move of the viewport, as the
+            // old chart did, so a plot resting at the oldest bar does not
+            // page through a venue's whole history.
             let asked = Rc::new(Cell::new(0_u64));
             scope.while_visible(move || {
-                let refresh: Rc<dyn Fn()> = {
-                    let (source, appended, dirty) =
-                        (source.clone(), appended.clone(), dirty.clone());
-                    let (moves, asked) = (moves.clone(), asked.clone());
-                    Rc::new(move || {
-                        dirty.set(false);
-                        let source = source.borrow();
-                        let Some(source) = source.as_ref() else {
-                            return;
-                        };
-                        let now = source.appended();
-                        let added = now.saturating_sub(appended.replace(now));
-                        let view = viewport.get_untracked();
-                        let (width, height) = plot.get_untracked();
-                        let (held, next, said) = source.with_bars(|bars| {
-                            let held = view.held(added, bars.len());
-                            (
-                                held,
-                                Scene::build(bars, &held, source.mode(), width, height),
-                                source.status(bars.is_empty()),
-                            )
-                        });
-                        if let Source::Candles(feed) = source {
-                            let near_oldest = next.left <= (next.right - next.left) * OLDER_WITHIN;
-                            if next.bars > 0 && near_oldest && asked.get() != moves.get() {
-                                asked.set(moves.get());
-                                feed.load_older();
-                            }
-                        }
-                        let older = match source {
-                            Source::Candles(feed) => feed.loading_older(),
-                            Source::Ticks(_) => false,
-                        };
-                        batch(|| {
-                            if held != view {
-                                viewport.try_set(held);
-                            }
-                            scene.try_set(Shared::new(next));
-                            status.try_set(said);
-                            loading_older.try_set(older);
-                        });
-                    })
-                };
-                // New bars: at most once a frame.
-                {
-                    let (refresh, dirty) = (refresh.clone(), dirty.clone());
-                    effect(move || {
-                        wake.get();
-                        if dirty.get() {
-                            let (refresh, dirty) = (refresh.clone(), dirty.clone());
-                            spawn(async move {
-                                next_frame().await;
-                                if dirty.get() {
-                                    refresh();
-                                }
-                            });
-                        }
+                let (source, appended, asked) = (source.clone(), appended.clone(), asked.clone());
+                let drawn = plot.clone();
+                plot.drive(move || {
+                    let plot = &drawn;
+                    let source = source.borrow();
+                    let Some(source) = source.as_ref() else {
+                        return;
+                    };
+                    let now = source.appended();
+                    let added = now.saturating_sub(appended.replace(now));
+                    let ((held, next), said) = source.with_bars(|bars| {
+                        (
+                            plot.frame(bars, added, source.mode()),
+                            source.status(bars.is_empty()),
+                        )
                     });
-                }
-                // A drag, a zoom or a resize: at once.
-                effect(move || {
-                    viewport.get();
-                    plot.get();
-                    untracked(|| refresh());
+                    if let Source::Candles(feed) = source {
+                        let near_oldest = next.left <= (next.right - next.left) * OLDER_WITHIN;
+                        if next.bars > 0 && near_oldest && asked.get() != plot.moves() {
+                            asked.set(plot.moves());
+                            feed.load_older();
+                        }
+                    }
+                    let older = match source {
+                        Source::Candles(feed) => feed.loading_older(),
+                        Source::Ticks(_) => false,
+                    };
+                    batch(|| {
+                        plot.show(held, next);
+                        status.try_set(said);
+                        loading_older.try_set(older);
+                    });
                 });
             });
         }
 
         Self {
-            scene,
+            plot,
             status,
             loading_older,
-            viewport,
-            plot,
-            moves,
         }
-    }
-
-    /// Moves the viewport as the user asked: `change` gets it and the
-    /// series' length, and gives the next one.
-    pub(super) fn move_view(&self, change: impl FnOnce(Viewport, usize) -> Viewport) {
-        let bars = self.scene.with_untracked(|scene| scene.0.bars);
-        self.moves.set(self.moves.get() + 1);
-        self.viewport
-            .set(change(self.viewport.get_untracked(), bars));
     }
 }

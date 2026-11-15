@@ -23,6 +23,7 @@ mod depth_chart;
 mod funding_rates;
 mod market_screener;
 mod order_book;
+mod premium_arb_chart;
 mod trade_stream;
 
 pub(crate) use host::{Category, Linking, SettingsPanel, TabContext, TabHandle};
@@ -33,6 +34,7 @@ registry::registry! {
     funding_rates::FundingRates,
     market_screener::MarketScreener,
     order_book::OrderBook,
+    premium_arb_chart::PremiumArbChart,
     trade_stream::TradeStream,
 }
 

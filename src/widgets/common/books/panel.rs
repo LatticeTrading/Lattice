@@ -20,7 +20,7 @@ use crate::{
     theme, ui,
     widgets::{
         TabContext,
-        common::{MarketPicker, market_chooser, market_name, number_field},
+        common::{MarketPicker, empty_market_chooser, market_chooser, market_name, number_field},
     },
 };
 
@@ -75,7 +75,7 @@ pub(crate) fn market_row<S: BookSettings>(
         let market = market.get();
         let (chooser, name) = match &market {
             Some(market) => (market_chooser(market), market_name(market)),
-            None => (empty_chooser(), "Select...".to_owned()),
+            None => (empty_market_chooser(), "Select...".to_owned()),
         };
         let chooser = chooser
             .flex_shrink(1.0)
@@ -101,34 +101,6 @@ pub(crate) fn market_row<S: BookSettings>(
         }
     });
     ui::label_edge_row(pair.label()).child(control)
-}
-
-/// The chooser box of a pair with no market: `Select...` where the pair
-/// would be, as the old box read.
-fn empty_chooser() -> View {
-    view()
-        .min_h(px(28.0))
-        .flex_row()
-        .bg(theme::SURFACE)
-        .border_1()
-        .border_color(theme::BORDER)
-        .relative()
-        .hover(|s| s.bg(theme::PANEL).border_color(theme::ACCENT).z_index(1))
-        .child(
-            view()
-                .w(px(24.0))
-                .flex_none()
-                .border_r_1()
-                .border_color(theme::BORDER),
-        )
-        .child(
-            view().flex().items_center().px(px(8.0)).child(
-                text("Select...")
-                    .number_of_lines(1)
-                    .text_size(px(11.0))
-                    .text_color(theme::TEXT),
-            ),
-        )
 }
 
 /// The × beside a market's box, which clears the pair's market: laid 1pt

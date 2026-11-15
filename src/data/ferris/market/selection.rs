@@ -126,6 +126,16 @@ impl MarketSelection {
         }
     }
 
+    /// The old app's default second market
+    /// (`DEFAULT_BINANCE_BTC_USDT_MARKET`): Binance's BTC/USDT linear
+    /// perpetual.
+    pub fn binance_btc_usdt() -> Self {
+        Self {
+            exchange: "binance".into(),
+            ..Self::bybit_btc_usdt()
+        }
+    }
+
     /// A saved selection, read leniently: the exchange, display pair,
     /// request symbol and a known type are required (the old app's
     /// `sanitizeSavedMarketSelection` cleared a selection without them);
