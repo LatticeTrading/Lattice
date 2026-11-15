@@ -24,6 +24,7 @@ mod funding_rates;
 mod market_screener;
 mod order_book;
 mod premium_arb_chart;
+mod price_delta_monitor;
 mod trade_stream;
 
 pub(crate) use host::{Category, Linking, SettingsPanel, TabContext, TabHandle};
@@ -35,6 +36,7 @@ registry::registry! {
     market_screener::MarketScreener,
     order_book::OrderBook,
     premium_arb_chart::PremiumArbChart,
+    price_delta_monitor::PriceDeltaMonitor,
     trade_stream::TradeStream,
 }
 

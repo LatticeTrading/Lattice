@@ -24,7 +24,7 @@ pub(crate) use self::{
     exchange_logo::{LogoStyle, bound_exchange_logo, exchange_logo},
     market_chooser::{empty_market_chooser, market_chooser, market_name},
     market_picker::MarketPicker,
-    market_tags::{market_tags, tag_text},
+    market_tags::{market_tags, tag_segment, tag_text},
     number_field::number_field,
     pen::{FONT, Pen, SMALL_FONT, width_of},
     wheel::{wheel_factor, wheel_steps},

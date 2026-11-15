@@ -2,7 +2,7 @@
 
 use nsh_core::prelude::*;
 
-use super::{LogoStyle, exchange_logo, tag_text};
+use super::{LogoStyle, exchange_logo, tag_segment};
 use crate::{data::ferris::MarketSelection, exchanges, theme};
 
 /// The box's height, and its logo segment's width.
@@ -23,18 +23,6 @@ const LOGO: LogoStyle = LogoStyle {
 /// hovered. The caller makes it a button (its role, label and press) and
 /// sizes it; left alone it is as wide as its segments.
 pub(crate) fn market_chooser(market: &MarketSelection) -> View {
-    // The old `.market-tag` segments: no box of their own, a divider
-    // before each.
-    let segment = |label: String, color: theme::Role| {
-        view()
-            .flex_none()
-            .flex()
-            .items_center()
-            .px(px(8.0))
-            .border_l_1()
-            .border_color(theme::BORDER)
-            .child(tag_text(text(label)).text_color(color))
-    };
     let chooser = view()
         .min_h(px(HEIGHT))
         .flex_row()
@@ -73,9 +61,12 @@ pub(crate) fn market_chooser(market: &MarketSelection) -> View {
                         .text_color(theme::TEXT),
                 ),
         )
-        .child(segment(market.kind.label().to_owned(), theme::TEXT_FAINT));
+        .child(tag_segment(
+            market.kind.label().to_owned(),
+            theme::TEXT_FAINT,
+        ));
     match market.detail() {
-        Some(detail) => chooser.child(segment(detail, theme::WARNING)),
+        Some(detail) => chooser.child(tag_segment(detail, theme::WARNING)),
         None => chooser,
     }
 }

@@ -15,7 +15,7 @@
 //! only.
 //!
 //! - A book's mid price is halfway between its best bid and its best ask,
-//!   or the one it has while a side is empty.
+//!   or the one it has while a side is empty ([`OrderBook::mid_price`]).
 //! - A change that brings what was sampled before (the same two prices from
 //!   books of the same two times: a snapshot replayed, a status change)
 //!   makes no sample.
@@ -35,7 +35,7 @@ use std::{
 
 use nsh_core::time::unix_ms;
 
-use super::{BookLevel, Ferris, MarketKey, MarketSelection, OrderBook, OrderBookFeed};
+use super::{Ferris, MarketKey, MarketSelection, OrderBook, OrderBookFeed};
 use crate::data::net::{FeedLease, FeedNode};
 
 /// The samples a pair keeps (the old `MAX_PREMIUM_ARB_POINTS`).
@@ -63,16 +63,6 @@ struct Quote {
     timestamp: f64,
 }
 
-/// A book's mid price: halfway between its best bid and its best ask, or
-/// the one it has; none for an empty book (the old `getMidPrice`).
-fn mid(book: &OrderBook) -> Option<f64> {
-    let best = |levels: &[BookLevel]| levels.first().map(|level| level.price);
-    match (best(&book.bids), best(&book.asks)) {
-        (Some(bid), Some(ask)) => Some((bid + ask) / 2.0),
-        (bid, ask) => bid.or(ask),
-    }
-}
-
 /// A pair's quotes, and the samples made of them.
 #[derive(Default)]
 struct Samples {
@@ -96,7 +86,7 @@ impl Samples {
     fn quote(&mut self, leg: usize, book: Option<&OrderBook>) {
         self.quotes[leg] = book.and_then(|book| {
             Some(Quote {
-                price: mid(book)?,
+                price: book.mid_price()?,
                 timestamp: book.timestamp,
             })
         });
@@ -337,11 +327,11 @@ mod tests {
 
     #[test]
     fn a_mid_price_is_between_the_best_prices_or_the_one_there_is() {
-        assert_eq!(mid(&book(100.0, T0)), Some(100.0));
+        assert_eq!(book(100.0, T0).mid_price(), Some(100.0));
         let bids_only = OrderBook::of(&[(99.0, 1.0), (98.0, 2.0)], &[], T0);
-        assert_eq!(mid(&bids_only), Some(99.0));
+        assert_eq!(bids_only.mid_price(), Some(99.0));
         let asks_only = OrderBook::of(&[], &[(102.0, 1.0), (101.0, 2.0)], T0);
-        assert_eq!(mid(&asks_only), Some(101.0));
-        assert_eq!(mid(&OrderBook::default()), None);
+        assert_eq!(asks_only.mid_price(), Some(101.0));
+        assert_eq!(OrderBook::default().mid_price(), None);
     }
 }

@@ -110,6 +110,18 @@ impl OrderBook {
         let midpoint = (bid + ask) / 2.0;
         (bid.is_finite() && ask.is_finite() && midpoint.is_finite()).then_some(midpoint)
     }
+
+    /// Its mid price: halfway between its best bid and its best ask, or
+    /// the one it has while a side is empty; none for an empty book (the
+    /// old `getMidPrice`, which the Premium/Arb Chart and the Price Delta
+    /// Monitor read a market's price with).
+    pub fn mid_price(&self) -> Option<f64> {
+        let best = |levels: &[BookLevel]| levels.first().map(|level| level.price);
+        match (best(&self.bids), best(&self.asks)) {
+            (Some(bid), Some(ask)) => Some((bid + ask) / 2.0),
+            (bid, ask) => bid.or(ask),
+        }
+    }
 }
 
 /// A finite number from a JSON number or decimal text.

@@ -12,7 +12,7 @@ use nsh_core::prelude::*;
 use super::Layer;
 use crate::data::{
     Keyed,
-    ferris::{Ferris, OrderBook, OrderBookFeed},
+    ferris::{Ferris, MarketSelection, OrderBook, OrderBookFeed},
 };
 
 /// One feed lease per book a widget draws, and whether they brought
@@ -56,13 +56,28 @@ impl BookFeeds {
     /// lease that marks the widget dirty on each change, and the rest are
     /// let go.
     pub fn follow(&self, layers: &[Layer], depth: usize) {
+        let books = layers
+            .iter()
+            .map(|layer| (layer.key.clone(), &*layer.market));
+        self.follow_markets(books, depth);
+    }
+
+    /// [`Self::follow`] for any number of markets (the Price Delta
+    /// Monitor's): one lease per market of `markets`, in their order, each
+    /// given with what tells its stream apart at `depth`
+    /// ([`stream_key`](crate::data::ferris::order_book::stream_key)).
+    pub fn follow_markets<'a>(
+        &self,
+        markets: impl IntoIterator<Item = (String, &'a MarketSelection)>,
+        depth: usize,
+    ) {
         let depth = u32::try_from(depth).unwrap_or(u32::MAX);
         self.feeds.follow(
-            layers.iter().map(|layer| (layer.key.clone(), layer)),
+            markets,
             |_, _| true,
-            |layer| {
+            |market| {
                 let mark = self.mark.clone();
-                self.ferris.order_book(&layer.market, depth, move || mark())
+                self.ferris.order_book(market, depth, move || mark())
             },
         );
     }
@@ -72,8 +87,9 @@ impl BookFeeds {
         (self.mark)();
     }
 
-    /// Each layer's newest book and whether its topic was refused, taken
-    /// to be drawn: nothing is new until the next change.
+    /// Each book's newest state and whether its topic was refused, in the
+    /// order they are followed, taken to be drawn: nothing is new until the
+    /// next change.
     pub fn take(&self) -> (Vec<Option<Rc<OrderBook>>>, Vec<bool>) {
         self.dirty.set(false);
         self.feeds.with(|feeds| {

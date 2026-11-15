@@ -1,9 +1,10 @@
-//! A market's type and detail tags, as the market picker's results show
-//! them.
+//! A market's type and detail tags: in boxes, as the market picker's
+//! results show them ([`market_tags`]), or as the segments of a row or a
+//! box ([`tag_segment`]).
 
 use nsh_core::prelude::*;
 
-use crate::theme;
+use crate::theme::{self, Role};
 
 /// A market's tags as the old `MarketTags` drew them: its type (`PERP`),
 /// then its detail (`USDT-M`, an expiry) in the warning color, each in a
@@ -34,6 +35,21 @@ pub(crate) fn market_tags(
                 .text_color(theme::WARNING)
                 .style_when(move || shown().is_none(), |s| s.hidden()),
         )
+}
+
+/// A market tag as a segment of what it is in (a settings panel's market
+/// box, the Price Delta Monitor's rows; the Everything Bar's results draw
+/// theirs the same way): no box of its own, a divider before it, and as
+/// high as the row it is added to, whose children stretch.
+pub(crate) fn tag_segment(label: String, color: Role) -> View {
+    view()
+        .flex_none()
+        .flex()
+        .items_center()
+        .px(px(8.0))
+        .border_l_1()
+        .border_color(theme::BORDER)
+        .child(tag_text(text(label)).text_color(color))
 }
 
 /// A market tag's text as the old `.market-tag` set it: small, semibold,
