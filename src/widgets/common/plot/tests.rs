@@ -12,6 +12,7 @@ use nsh_engine::shader::{Frame, PixelFormat, Renderer, ShaderView};
 use super::{
     scene::{Mode, Scene},
     shader::{self, Palette},
+    timeline::Timeline,
     viewport::{Prices, Viewport},
 };
 use crate::data::ferris::Candle;
@@ -114,6 +115,64 @@ fn prices_fit_scale_and_move_as_the_old_chart_did() {
     // Scaling stops at the least span.
     assert_eq!(range.scaled(-10_000.0, 2.0).span(), 2.0);
     assert_eq!(range.scaled(0.0, 2.0), range);
+}
+
+#[test]
+fn a_timeline_gives_each_slot_its_time_and_each_time_its_slot() {
+    // A hundred one-minute bars from time 0.
+    let bars = series(100);
+    let times = Timeline::new(&bars, Some(60.0));
+    // A slot starts when its bar opens and lasts until the next one does.
+    assert_eq!(times.time_at(10.0), Some(600.0));
+    assert_eq!(times.time_at(10.5), Some(630.0));
+    assert_eq!(times.slot_of(630.0), Some(10.5));
+    // Past either end, where there is no bar, time goes on at the step.
+    assert_eq!(times.time_at(-2.0), Some(-120.0));
+    assert_eq!(times.slot_of(-120.0), Some(-2.0));
+    assert_eq!(times.time_at(103.0), Some(6_180.0));
+    assert_eq!(times.slot_of(6_180.0), Some(103.0));
+
+    // A gap in the series is one slot, as it is drawn.
+    let mut gapped = series(3);
+    gapped[2].time = 600.0;
+    let times = Timeline::new(&gapped, Some(60.0));
+    assert_eq!(times.slot_of(330.0), Some(1.5));
+    assert_eq!(times.time_at(1.5), Some(330.0));
+    // A series without a step of its own goes on at its bars' mean one.
+    let times = Timeline::new(&gapped, None);
+    assert_eq!(times.time_at(4.0), Some(1_200.0));
+    assert_eq!(times.slot_of(-300.0), Some(-1.0));
+    // Bars of one time: the last of them is the slot of that time.
+    gapped[1].time = 0.0;
+    assert_eq!(Timeline::new(&gapped, None).slot_of(0.0), Some(1.0));
+
+    // Nothing without a bar, or for what is no number.
+    assert_eq!(Timeline::new(&[], Some(60.0)).slot_of(0.0), None);
+    assert_eq!(Timeline::new(&[], Some(60.0)).time_at(0.0), None);
+    let times = Timeline::new(&bars, Some(60.0));
+    assert_eq!(times.slot_of(f64::NAN), None);
+    assert_eq!(times.time_at(f64::INFINITY), None);
+}
+
+#[test]
+fn a_scene_places_slots_and_prices_on_the_plot_and_back() {
+    let bars = series(2_000);
+    let view = Viewport {
+        prices: Some(Prices {
+            low: 0.0,
+            high: 2_000.0,
+        }),
+        ..Viewport::showing(1_000.0)
+    };
+    // Slots 1000 to 2000 across 500 points, prices 2000 to 0 down 300.
+    let scene = Scene::build(&bars, &view, Mode::Candles, 500.0, 300.0);
+    assert_eq!(scene.x_of(1_500.0), 250.0);
+    assert_eq!(scene.slot_at(250.0), 1_500.0);
+    assert_eq!(scene.y_of(1_500.0), 75.0);
+    assert_eq!(scene.price_at(75.0), 1_500.0);
+    // Off the plot too: what is drawn may reach past its edges.
+    assert_eq!(scene.x_of(900.0), -50.0);
+    assert_eq!(scene.price_at(-150.0), 3_000.0);
 }
 
 #[test]

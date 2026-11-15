@@ -187,6 +187,26 @@ impl Scene {
         }
     }
 
+    /// Where `slot` is across the plot, in points from its left edge.
+    pub fn x_of(&self, slot: f64) -> f64 {
+        (slot - self.left) / (self.right - self.left) * f64::from(self.width)
+    }
+
+    /// The slot `x` points from the plot's left edge.
+    pub fn slot_at(&self, x: f64) -> f64 {
+        self.left + x / f64::from(self.width) * (self.right - self.left)
+    }
+
+    /// Where `price` is down the plot, in points from its top.
+    pub fn y_of(&self, price: f64) -> f64 {
+        self.prices.fraction(price) * f64::from(self.height)
+    }
+
+    /// The price `y` points down the plot.
+    pub fn price_at(&self, y: f64) -> f64 {
+        self.prices.price_at(y / f64::from(self.height))
+    }
+
     /// The plot's edges in bucket coordinates.
     fn span(&self) -> (f64, f64) {
         (

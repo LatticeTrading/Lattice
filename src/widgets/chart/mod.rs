@@ -25,18 +25,28 @@
 //!   the page before it.
 //!
 //! Settings ([`ChartSettings`]: the market, the timeframe, the grid, the
-//! hovered bar's prices and the link color) are saved in its tab record;
-//! the pane's gear opens its settings panel ([`panel`]).
+//! hovered bar's prices, the link color, its drawings and whether their
+//! toolbar is open) are saved in its tab record; the pane's gear opens its
+//! settings panel ([`panel`]).
+//!
+//! Drawings ([`drawings`]): a toolbar down the plot's left side has the
+//! tools (a trend line, a Fibonacci retracement, a measurement), and what
+//! is drawn with them is fixed to its times and prices on the market it
+//! was drawn on, over the plot. Closed, the toolbar takes no room: a thin
+//! badge floating on the plot, just inside its left edge and halfway down
+//! it, brings it out again. The plot is still the shared one: it asks the
+//! chart's editor about the pointer before it pans.
 //!
 //! The chart can be linked ([`crate::link`]): its pane header's link button
 //! picks a color (blue at first), and a market picked in the Everything
 //! Bar's search while the bar has that color becomes the chart's market
 //! setting, which the session follows as any other change of it.
 //!
-//! Not ported yet from the old chart: indicators and drawings (neither
-//! existed there beyond a roadmap), and the placeholder space it reserved
-//! while older candles loaded.
+//! Not ported yet from the old chart: indicators (which did not exist
+//! there beyond a roadmap, as drawings did not), and the placeholder space
+//! it reserved while older candles loaded.
 
+mod drawings;
 mod panel;
 mod session;
 mod settings;
@@ -75,9 +85,10 @@ impl Widget for Chart {
         ChartSession::new(scope, services.ferris.clone(), settings)
     }
 
-    /// Its plot, for the market and timeframe its tab's settings chart.
+    /// Its plot, for the market and timeframe its tab's settings chart,
+    /// with its drawing tools.
     fn view(session: &Rc<ChartSession>, tab: &TabContext<ChartSettings>) -> View {
-        view::chart_view(session, tab.settings)
+        view::chart_view(session, tab)
     }
 
     fn panel(_session: &Rc<ChartSession>, tab: &TabContext<ChartSettings>) -> Option<Overlay> {

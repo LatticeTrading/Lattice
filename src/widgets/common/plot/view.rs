@@ -12,7 +12,9 @@
 //! Pointer, on three surfaces laid over everything else:
 //! - the plot: moving shows the crosshair; dragging pans (and moves the
 //!   prices once they are free); the wheel zooms about the pointer, and
-//!   with Shift or Alt pans;
+//!   with Shift or Alt pans. A widget with tools of its own for the plot
+//!   (the Chart's drawing tools) hears the pointer first ([`Pointer`]) and
+//!   may take a press, which then pans nothing;
 //! - the price axis: dragging or the wheel scales the prices, which frees
 //!   them from fitting the bars; a double click fits them again;
 //! - the time axis: dragging or the wheel zooms; a double click fits the
@@ -40,6 +42,10 @@ const LEFT: f32 = 12.0;
 const RIGHT: f32 = 74.0;
 const TOP: f32 = 12.0;
 const BOTTOM: f32 = 24.0;
+/// Where the plot's area ([`area`]) starts in the plot's view, in points
+/// from its top left: with the plot's size ([`Plot::size`]), what a widget
+/// places a view of its own on the plot by.
+pub(crate) const AREA_ORIGIN: (f32, f32) = (LEFT, TOP);
 /// The labels the time axis shows at most (the old axis' slots).
 const TIME_MARKS: usize = 7;
 /// A label's box height, and half of it.
@@ -62,6 +68,40 @@ pub(crate) struct PlotLook {
     /// its middle while it has no bar ("Waiting for market data..." when
     /// there is nothing to say), above its bars otherwise.
     pub status: Memo<&'static str>,
+    /// What hears the pointer over the plot before the plot does, for a
+    /// widget with tools of its own there.
+    pub pointer: Option<Rc<dyn Pointer>>,
+}
+
+/// What a widget does with the pointer over its plot before the plot does
+/// (its drawing tools): it hears where the pointer is, and may take a
+/// press and the drag that follows, which the plot pans with otherwise.
+/// Places are in points from the plot's top left.
+pub(crate) trait Pointer {
+    /// The pointer is at `at` with no button down; nowhere once it left.
+    fn hover(&self, at: Option<(f32, f32)>);
+    /// A press began at `at`: whether the widget takes it and the drag
+    /// that follows (the plot pans with them otherwise).
+    fn press(&self, at: (f32, f32)) -> bool;
+    /// The press it took moved to `at`.
+    fn drag(&self, at: (f32, f32));
+    /// The press it took ended at `at`; at nowhere when it was taken away.
+    fn release(&self, at: Option<(f32, f32)>);
+    /// Whether it would take a press where the pointer is (tracked): the
+    /// plot shows a hand there.
+    fn grabs(&self) -> bool;
+}
+
+/// A view over the plot's area, inside its insets: what a widget lays its
+/// own layers of the plot in (its drawings), in the `over` it gives
+/// [`plot_view`].
+pub(crate) fn area() -> View {
+    view()
+        .absolute()
+        .left(px(LEFT))
+        .top(px(TOP))
+        .right(px(RIGHT))
+        .bottom(px(BOTTOM))
 }
 
 /// The view of `plot`, as `look` says, with `over` (what the widget shows
@@ -72,6 +112,7 @@ pub(crate) fn plot_view(plot: &Rc<Plot>, look: PlotLook, over: View) -> View {
         grid,
         bar_prices,
         status,
+        pointer,
     } = look;
     let (scene, size) = (plot.scene, plot.size);
     let has_bars = computed(move || scene.with(|scene| scene.0.bars > 0));
@@ -117,7 +158,7 @@ pub(crate) fn plot_view(plot: &Rc<Plot>, look: PlotLook, over: View) -> View {
         .child(over)
         .child(messages(id, status, has_bars))
         .children(crosshair(id, cross, bar_prices, size))
-        .child(plot_surface(id, plot.clone(), hover))
+        .child(plot_surface(id, plot.clone(), hover, pointer))
         .child(price_axis_surface(id, plot.clone()))
         .child(time_axis_surface(id, plot.clone()))
 }
@@ -141,12 +182,7 @@ fn tiles(
     grid: Memo<bool>,
     has_bars: Memo<bool>,
 ) -> View {
-    let frame = view()
-        .absolute()
-        .left(px(LEFT))
-        .top(px(TOP))
-        .right(px(RIGHT))
-        .bottom(px(BOTTOM));
+    let frame = area();
     let Some(program) = shader::program() else {
         return unavailable(frame);
     };
@@ -530,12 +566,24 @@ fn zoom_slots(plot: &Plot, event: &WheelEvent, x: f32) {
     plot.move_view(|view, bars| view.zoomed(wheel_factor(steps, 1.1), anchor, bars));
 }
 
-/// The surface over the plot: the crosshair, panning and zooming.
-fn plot_surface(id: &str, plot: Rc<Plot>, hover: Signal<Option<(f32, f32)>>) -> View {
+/// The surface over the plot: the crosshair, panning and zooming, after
+/// `pointer` (a widget's own tools for the plot) had the press.
+fn plot_surface(
+    id: &str,
+    plot: Rc<Plot>,
+    hover: Signal<Option<(f32, f32)>>,
+    pointer: Option<Rc<dyn Pointer>>,
+) -> View {
     // The viewport a drag began at.
     let origin = Rc::new(Cell::new(None::<Viewport>));
+    // The press that is down is the widget's, not a pan.
+    let taken = Rc::new(Cell::new(false));
     let (grant, drag, wheel) = (plot.clone(), plot.clone(), plot);
     let (began, ended, cancelled) = (origin.clone(), origin.clone(), origin.clone());
+    let (took, takes, gave, lost) = (taken.clone(), taken.clone(), taken.clone(), taken);
+    let (grabs, moved, left) = (pointer.clone(), pointer.clone(), pointer.clone());
+    let (pressed, dragged) = (pointer.clone(), pointer.clone());
+    let (released, terminated) = (pointer.clone(), pointer);
     view()
         .absolute()
         .left(px(LEFT))
@@ -543,12 +591,27 @@ fn plot_surface(id: &str, plot: Rc<Plot>, hover: Signal<Option<(f32, f32)>>) -> 
         .right(px(RIGHT))
         .bottom(px(BOTTOM))
         .cursor(Cursor::Crosshair)
+        .style_when(
+            move || grabs.as_ref().is_some_and(|pointer| pointer.grabs()),
+            |s| s.cursor(Cursor::Pointer),
+        )
         .label("Chart plot")
         .test_id(&format!("{id}-plot"))
         .on_mouse_move(move |event: &MouseEvent| {
-            hover.set(Some((event.position.x.0, event.position.y.0)));
+            let at = (event.position.x.0, event.position.y.0);
+            hover.set(Some(at));
+            if let Some(pointer) = &moved
+                && event.pressed_button.is_none()
+            {
+                pointer.hover(Some(at));
+            }
         })
-        .on_mouse_leave(move |_: &MouseEvent| hover.set(None))
+        .on_mouse_leave(move |_: &MouseEvent| {
+            hover.set(None);
+            if let Some(pointer) = &left {
+                pointer.hover(None);
+            }
+        })
         .on_wheel(move |event: &WheelEvent| {
             if event.modifiers.shift || event.modifiers.alt {
                 let steps = wheel_steps(event);
@@ -564,14 +627,26 @@ fn plot_surface(id: &str, plot: Rc<Plot>, hover: Signal<Option<(f32, f32)>>) -> 
         })
         .claim_touches(TouchClaim::on_start())
         .keep_touches(true)
-        .on_responder_grant(move |_: &ResponderEvent| {
-            began.set(Some(grant.viewport.get_untracked()));
+        .on_responder_grant(move |event: &ResponderEvent| {
+            let at = (event.location.x.0, event.location.y.0);
+            if pressed.as_ref().is_some_and(|pointer| pointer.press(at)) {
+                took.set(true);
+            } else {
+                began.set(Some(grant.viewport.get_untracked()));
+            }
         })
         .on_responder_move(move |event: &ResponderEvent| {
+            let at = (event.location.x.0, event.location.y.0);
+            hover.set(Some(at));
+            if takes.get() {
+                if let Some(pointer) = &dragged {
+                    pointer.drag(at);
+                }
+                return;
+            }
             let Some(start) = origin.get() else {
                 return;
             };
-            hover.set(Some((event.location.x.0, event.location.y.0)));
             let (width, height) = drag.size.get_untracked();
             let (dx, dy) = (
                 f64::from(event.gesture.delta.x.0),
@@ -585,8 +660,22 @@ fn plot_surface(id: &str, plot: Rc<Plot>, hover: Signal<Option<(f32, f32)>>) -> 
                 ..start.panned(start.pan + dx * start.visible / f64::from(width), bars)
             });
         })
-        .on_responder_release(move |_: &ResponderEvent| ended.set(None))
-        .on_responder_terminate(move |_: &ResponderEvent| cancelled.set(None))
+        .on_responder_release(move |event: &ResponderEvent| {
+            ended.set(None);
+            if gave.replace(false)
+                && let Some(pointer) = &released
+            {
+                pointer.release(Some((event.location.x.0, event.location.y.0)));
+            }
+        })
+        .on_responder_terminate(move |_: &ResponderEvent| {
+            cancelled.set(None);
+            if lost.replace(false)
+                && let Some(pointer) = &terminated
+            {
+                pointer.release(None);
+            }
+        })
 }
 
 /// The surface over the price axis: scaling the prices, and a double click

@@ -82,6 +82,7 @@ fn plot(session: &Rc<PremiumArbSession>, saved: Memo<PremiumArbSettings>) -> Vie
         // names: the old chart showed no box of a bar's prices either.
         bar_prices: computed(|| false),
         status: computed(move || status.get().text()),
+        pointer: None,
     };
     let header = plot::header(move || {
         saved.with(|settings| {

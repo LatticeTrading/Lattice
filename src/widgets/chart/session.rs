@@ -1,6 +1,7 @@
 //! The chart's session ([`ChartSession`]): the feed its settings chart and
 //! its plot, whose viewport and scene its view shows (the widget's data,
-//! described in the parent module).
+//! described in the parent module), and when its series' slots are, which
+//! its drawings are placed by ([`ChartSession::with_times`]).
 
 use std::{
     cell::{Cell, RefCell},
@@ -13,9 +14,9 @@ use super::{ChartSettings, settings::Interval};
 use crate::{
     data::{
         SessionScope,
-        ferris::{Candle, CandleFeed, Ferris, MarketSelection, TradeFeed},
+        ferris::{Candle, CandleFeed, Ferris, MarketSelection, Timeframe, TradeFeed},
     },
-    widgets::common::plot::{DEFAULT_CANDLES, DEFAULT_TICKS, Mode, Plot, Viewport},
+    widgets::common::plot::{DEFAULT_CANDLES, DEFAULT_TICKS, Mode, Plot, Timeline, Viewport},
 };
 
 /// The ticks a tick chart keeps (the old chart's bound).
@@ -140,7 +141,7 @@ impl Ticks {
 
 /// What a chart charts: a market's candles at a timeframe, or its ticks.
 enum Source {
-    Candles(CandleFeed),
+    Candles(CandleFeed, Timeframe),
     Ticks(Rc<Ticks>),
 }
 
@@ -155,15 +156,16 @@ impl Source {
     ) -> Self {
         match interval {
             Interval::Tick => Self::Ticks(Ticks::open(ferris, market, on_change)),
-            Interval::Candles(timeframe) => {
-                Self::Candles(ferris.candles(market, timeframe, move || on_change()))
-            }
+            Interval::Candles(timeframe) => Self::Candles(
+                ferris.candles(market, timeframe, move || on_change()),
+                timeframe,
+            ),
         }
     }
 
     fn mode(&self) -> Mode {
         match self {
-            Self::Candles(_) => Mode::Candles,
+            Self::Candles(..) => Mode::Candles,
             Self::Ticks(_) => Mode::Line,
         }
     }
@@ -171,15 +173,24 @@ impl Source {
     /// Its bars, oldest first.
     fn with_bars<R>(&self, f: impl FnOnce(&[Candle]) -> R) -> R {
         match self {
-            Self::Candles(feed) => feed.with_candles(f),
+            Self::Candles(feed, _) => feed.with_candles(f),
             Self::Ticks(ticks) => f(&ticks.bars.borrow()),
+        }
+    }
+
+    /// How long one of its bars lasts, in seconds; none for ticks, which
+    /// come when they come.
+    fn step(&self) -> Option<f64> {
+        match self {
+            Self::Candles(_, timeframe) => Some(timeframe.seconds()),
+            Self::Ticks(_) => None,
         }
     }
 
     /// How many bars were ever added after its newest.
     fn appended(&self) -> u64 {
         match self {
-            Self::Candles(feed) => feed.appended(),
+            Self::Candles(feed, _) => feed.appended(),
             Self::Ticks(ticks) => ticks.appended.get(),
         }
     }
@@ -187,7 +198,7 @@ impl Source {
     /// What the plot says, with (`empty`) or without bars.
     fn status(&self, empty: bool) -> Status {
         match self {
-            Self::Candles(feed) if empty => {
+            Self::Candles(feed, _) if empty => {
                 if feed.loading() {
                     Status::LoadingHistory
                 } else if feed.failed() {
@@ -198,7 +209,7 @@ impl Source {
                     Status::NoHistory
                 }
             }
-            Self::Candles(feed) if feed.history_failed() => Status::LiveOnly,
+            Self::Candles(feed, _) if feed.history_failed() => Status::LiveOnly,
             Self::Ticks(ticks) if empty && ticks.failed() => Status::Unavailable,
             Self::Ticks(_) if empty => Status::WaitingForTicks,
             _ => Status::Ready,
@@ -206,8 +217,9 @@ impl Source {
     }
 }
 
-/// A chart's session state: its plot, and what its view says about its
-/// data (its feed and settings live in the effects `new` starts).
+/// A chart's session state: its plot, what its view says about its data,
+/// and the feed it charts (which the effects `new` starts keep on its
+/// settings).
 pub(crate) struct ChartSession {
     /// Its plot. Where it looks starts over when the market or the interval
     /// changes.
@@ -215,6 +227,8 @@ pub(crate) struct ChartSession {
     pub(super) status: Signal<Status>,
     /// A page of older candles is on its way.
     pub(super) loading_older: Signal<bool>,
+    /// What it charts; nothing before its first lease.
+    source: Rc<RefCell<Option<Source>>>,
 }
 
 impl ChartSession {
@@ -256,7 +270,7 @@ impl ChartSession {
         }
 
         {
-            let plot = plot.clone();
+            let (plot, source) = (plot.clone(), source.clone());
             // The plot's `moves` a page of older candles was last asked for
             // at: they are asked for once per move of the viewport, as the
             // old chart did, so a plot resting at the oldest bar does not
@@ -279,7 +293,7 @@ impl ChartSession {
                             source.status(bars.is_empty()),
                         )
                     });
-                    if let Source::Candles(feed) = source {
+                    if let Source::Candles(feed, _) = source {
                         let near_oldest = next.left <= (next.right - next.left) * OLDER_WITHIN;
                         if next.bars > 0 && near_oldest && asked.get() != plot.moves() {
                             asked.set(plot.moves());
@@ -287,7 +301,7 @@ impl ChartSession {
                         }
                     }
                     let older = match source {
-                        Source::Candles(feed) => feed.loading_older(),
+                        Source::Candles(feed, _) => feed.loading_older(),
                         Source::Ticks(_) => false,
                     };
                     batch(|| {
@@ -303,6 +317,16 @@ impl ChartSession {
             plot,
             status,
             loading_older,
+            source,
         }
+    }
+
+    /// Calls `f` with when the slots of the series it charts are (what
+    /// places its drawings); nothing before its first lease. `f` only
+    /// reads: the series is borrowed while it runs.
+    pub(super) fn with_times<R>(&self, f: impl FnOnce(Timeline<'_>) -> R) -> Option<R> {
+        let source = self.source.borrow();
+        let source = source.as_ref()?;
+        Some(source.with_bars(|bars| f(Timeline::new(bars, source.step()))))
     }
 }

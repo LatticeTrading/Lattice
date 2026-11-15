@@ -13,13 +13,20 @@ pub fn price_text(price: f64) -> String {
     if !price.is_finite() {
         return "--".to_owned();
     }
-    let places = match price.abs() {
+    let places = price_places(price);
+    format!("{price:.places$}")
+}
+
+/// The decimals [`price_text`] writes a price of `price`'s size with, for
+/// what is written beside prices in their own decimals (a difference
+/// between two).
+pub fn price_places(price: f64) -> usize {
+    match price.abs() {
         size if size >= 10_000.0 => 1,
         size if size >= 1_000.0 => 2,
         size if size >= 1.0 => 3,
         _ => 5,
-    };
-    format!("{price:.places$}")
+    }
 }
 
 /// An amount as the old order book wrote it (`formatCompactCount`):

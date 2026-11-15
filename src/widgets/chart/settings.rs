@@ -1,18 +1,23 @@
 //! The chart's settings, saved in its tab's record under the old app's
 //! names: `market` (the market charted), `timeframe` (`tick`, `1m`, ...,
 //! `1w`), `showGrid`, `showOhlcOnHover` and `linkColor` (the link color
-//! whose picks the chart takes, `""` for none).
+//! whose picks the chart takes, `""` for none); and under Lattice's own:
+//! `drawings` (what was drawn on the chart, on whatever market:
+//! [`Drawing`]) and `showDrawingTools` (whether the drawing toolbar is
+//! open).
 //!
 //! Each is left out of the saved form while it holds its default (Bybit's
-//! BTC/USDT perpetual, `1m`, both shown, linked to blue) and read
-//! leniently: an unreadable market or a member of the wrong type reads as
-//! its default, a timeframe under one of the old app's other spellings
-//! (`1`, `60`, `1T`) as the one it meant and an unknown one as `1m`, a
-//! link color Lattice does not know as the default one.
+//! BTC/USDT perpetual, `1m`, all three shown, linked to blue, no drawing)
+//! and read leniently: an unreadable market or a member of the wrong type
+//! reads as its default, a timeframe under one of the old app's other
+//! spellings (`1`, `60`, `1T`) as the one it meant and an unknown one as
+//! `1m`, a link color Lattice does not know as the default one, and a
+//! drawing that cannot be read is left out.
 
 use serde::{Serialize, Serializer};
 use serde_json::Value;
 
+use super::drawings::Drawing;
 use crate::{
     data::ferris::{MarketSelection, Timeframe},
     link::LinkColor,
@@ -108,6 +113,13 @@ pub(crate) struct ChartSettings {
         serialize_with = "save_link"
     )]
     link: Option<Option<LinkColor>>,
+    /// What was drawn on the chart, each on the market it names: the ones
+    /// of the market charted show.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    drawings: Vec<Drawing>,
+    /// `Some(false)` closes the drawing toolbar; `None` opens it.
+    #[serde(rename = "showDrawingTools", skip_serializing_if = "Option::is_none")]
+    show_tools: Option<bool>,
 }
 
 /// A link that is not the default one, as it is saved: its color's id, or
@@ -142,6 +154,8 @@ impl From<Value> for ChartSettings {
                 Some(Value::String(id)) => LinkColor::from_id(id).or(Some(LinkColor::DEFAULT)),
                 _ => Some(LinkColor::DEFAULT),
             })
+            .with_drawings(Drawing::read_all(members.get("drawings")))
+            .with_tools(shown("showDrawingTools"))
     }
 }
 
@@ -209,5 +223,26 @@ impl ChartSettings {
     /// sent.
     pub fn with_linked_market(self, market: MarketSelection) -> Self {
         self.with_market(Some(market))
+    }
+
+    /// Every drawing saved, in the order drawn (later ones over earlier
+    /// ones), whatever market each is on.
+    pub fn drawings(&self) -> &[Drawing] {
+        &self.drawings
+    }
+
+    pub fn with_drawings(mut self, drawings: Vec<Drawing>) -> Self {
+        self.drawings = drawings;
+        self
+    }
+
+    /// Whether the drawing toolbar is open.
+    pub fn tools(&self) -> bool {
+        self.show_tools.unwrap_or(true)
+    }
+
+    pub fn with_tools(mut self, shown: bool) -> Self {
+        self.show_tools = (!shown).then_some(false);
+        self
     }
 }

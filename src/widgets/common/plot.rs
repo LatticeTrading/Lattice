@@ -9,7 +9,10 @@
 //! - [`shader`]: the WGSL program that draws a tile of a scene (which says
 //!   how NSH runs it);
 //! - [`view`]: the plot's view ([`plot_view`]): its tiles, axes, newest
-//!   price, status and crosshair, and the pointer's handling;
+//!   price, status and crosshair, and the pointer's handling, which a
+//!   widget may take presses from ([`Pointer`]: its drawing tools);
+//! - [`timeline`]: when a series' slots are ([`Timeline`]), for what a
+//!   widget fixes to a time;
 //! - [`Plot`]: a plot's state, which its widget's session keeps, and when
 //!   it is drawn.
 //!
@@ -26,6 +29,7 @@ mod scene;
 mod shader;
 #[cfg(test)]
 mod tests;
+mod timeline;
 mod view;
 mod viewport;
 
@@ -35,7 +39,8 @@ use nsh_core::prelude::*;
 
 pub(crate) use self::{
     scene::{Mode, Scene},
-    view::{PlotLook, header, plot_view},
+    timeline::Timeline,
+    view::{AREA_ORIGIN, PlotLook, Pointer, area, header, plot_view},
     viewport::{DEFAULT_CANDLES, DEFAULT_TICKS, Viewport},
 };
 use super::Shared;
