@@ -12,14 +12,16 @@ use nsh_core::prelude::*;
 use super::{
     OrderBookSettings,
     frame::{Config, Frame},
-    settings::{BookLayout, Layer, Pair},
 };
 use crate::{
     data::{
         SessionScope,
-        ferris::{Ferris, OrderBook, OrderBookFeed},
+        ferris::{Ferris, OrderBook},
     },
-    widgets::common::{Keyed, Shared},
+    widgets::common::{
+        Shared,
+        books::{BookFeeds, BookLayout, Pair},
+    },
 };
 
 /// Where the ladder looks, from one frame to the next (the old renderer's
@@ -116,32 +118,21 @@ impl OrderBookSession {
         let ladder: Rc<RefCell<Ladder>> = Rc::default();
         let follow: Rc<Cell<Option<Pair>>> = Rc::default();
 
-        let feeds: Rc<Keyed<String, OrderBookFeed>> = Rc::default();
-        // Books arrived (or the settings changed) since the frame was made.
-        let dirty = Rc::new(Cell::new(true));
-        // Bumped when `dirty` is set, so the visible view schedules a frame.
-        let wake = signal(0_u64);
-        let mark: Rc<dyn Fn()> = {
-            let (dirty, wakes) = (dirty.clone(), Cell::new(0_u64));
-            Rc::new(move || {
-                if !dirty.replace(true) {
-                    wakes.set(wakes.get().wrapping_add(1));
-                    wake.try_set(wakes.get());
-                }
-            })
-        };
+        // A lease per book drawn; dirty when one brought something (or the
+        // settings changed) since the frame was made.
+        let feeds = BookFeeds::new(ferris);
 
         let config = computed(move || settings.with(|settings| Rc::new(Config::of(settings))));
         let target = computed(move || settings.with(OrderBookSettings::center));
         // The feeds follow the books and the depth the settings draw, and
         // the ladder is let go when they lay it out anew.
         {
-            let (feeds, ladder, mark) = (feeds.clone(), ladder.clone(), mark.clone());
+            let (feeds, ladder) = (feeds.clone(), ladder.clone());
             let laid_out = RefCell::new(None::<Rc<Config>>);
             effect(move || {
                 let next = config.get();
                 untracked(|| {
-                    follow_layers(&ferris, &feeds, &next.layers, next.depth, &mark);
+                    feeds.follow(&next.layers, next.depth);
                     let relaid = laid_out
                         .borrow()
                         .as_ref()
@@ -151,14 +142,14 @@ impl OrderBookSession {
                     }
                     *laid_out.borrow_mut() = Some(next);
                 });
-                mark();
+                feeds.mark();
             });
         }
         {
-            let (follow, mark) = (follow.clone(), mark.clone());
+            let (follow, feeds) = (follow.clone(), feeds.clone());
             effect(move || {
                 follow.set(target.get());
-                mark();
+                feeds.mark();
             });
         }
 
@@ -167,16 +158,10 @@ impl OrderBookSession {
             scope.while_visible(move || {
                 let refresh: Rc<dyn Fn()> = {
                     let (feeds, ladder) = (feeds.clone(), ladder.clone());
-                    let (follow, dirty) = (follow.clone(), dirty.clone());
+                    let follow = follow.clone();
                     Rc::new(move || {
-                        dirty.set(false);
                         let config = config.get_untracked();
-                        let (books, failed): (Vec<_>, Vec<_>) = feeds.with(|feeds| {
-                            feeds
-                                .iter()
-                                .map(|(_, feed)| (feed.book(), feed.failed()))
-                                .unzip()
-                        });
+                        let (books, failed) = feeds.take();
                         let (width, height) = size.get_untracked();
                         let mut next = ladder.borrow_mut().frame(
                             &config,
@@ -190,21 +175,7 @@ impl OrderBookSession {
                     })
                 };
                 // New books and settings: at most once a frame.
-                {
-                    let (refresh, dirty) = (refresh.clone(), dirty.clone());
-                    effect(move || {
-                        wake.get();
-                        if dirty.get() {
-                            let (refresh, dirty) = (refresh.clone(), dirty.clone());
-                            spawn(async move {
-                                next_frame().await;
-                                if dirty.get() {
-                                    refresh();
-                                }
-                            });
-                        }
-                    });
-                }
+                feeds.each_frame(refresh.clone());
                 // A resize or a move of the ladder: at once.
                 effect(move || {
                     size.get();
@@ -244,26 +215,4 @@ impl OrderBookSession {
         self.ladder.borrow_mut().reset();
         self.moved.update(|moves| *moves = moves.wrapping_add(1));
     }
-}
-
-/// Keeps one feed lease per layer, in their order: a book already
-/// streamed at the levels `depth` asks for keeps its lease, a new one gets
-/// a lease that marks the session dirty on each change, and the rest are
-/// let go.
-fn follow_layers(
-    ferris: &Ferris,
-    feeds: &Keyed<String, OrderBookFeed>,
-    layers: &[Layer],
-    depth: usize,
-    mark: &Rc<dyn Fn()>,
-) {
-    let depth = u32::try_from(depth).unwrap_or(u32::MAX);
-    feeds.follow(
-        layers.iter().map(|layer| (layer.key.clone(), layer)),
-        |_, _| true,
-        |layer| {
-            let mark = mark.clone();
-            ferris.order_book(&layer.market, depth, move || mark())
-        },
-    );
 }

@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use crate::{
     data::{
-        ferris::{Availability, CatalogMarket, Product, Requirement, SymbolQuery},
+        ferris::{Availability, CatalogMarket, Product, Requirement, StatsFieldName, SymbolQuery},
         markets::Directory,
         net::ApiError,
     },
@@ -32,11 +32,17 @@ pub(super) struct Listing {
 
 impl Listing {
     /// What `directory` has for a picker of `only` (one exchange, or
-    /// every one) that needs `requirement`: markets whose exchange and
-    /// product are denied it are left out, and so is an exchange with none
-    /// of its products on offer (what it is loading or failed to load is
-    /// not this picker's business).
-    pub fn new(directory: &Directory, requirement: Requirement, only: Option<&str>) -> Self {
+    /// every one) that needs `requirement` and, when given, the
+    /// `statistics` field: markets whose exchange and product are denied
+    /// the requirement, or are not served the field, are left out, and so
+    /// is an exchange with none of its products on offer (what it is
+    /// loading or failed to load is not this picker's business).
+    pub fn new(
+        directory: &Directory,
+        requirement: Requirement,
+        statistics: Option<StatsFieldName>,
+        only: Option<&str>,
+    ) -> Self {
         let mut listing = Self::default();
         let Some(document) = directory.capabilities.as_deref() else {
             listing.loading = directory.error.is_none();
@@ -52,8 +58,20 @@ impl Listing {
             if only.is_some_and(|only| only != id) {
                 continue;
             }
+            // The exchange's statistics contract, read once for its markets.
+            let served = statistics.map(|field| {
+                let contract = document
+                    .exchange(id)
+                    .and_then(|exchange| exchange.market_stats());
+                (field, contract)
+            });
             let offered = |product: Product| {
                 requirement.availability(document, id, product) != Availability::Unsupported
+                    && served.as_ref().is_none_or(|(field, contract)| {
+                        contract.as_ref().is_some_and(|contract| {
+                            !contract.bulk_fields(id, product, &[*field]).is_empty()
+                        })
+                    })
             };
             if !PRODUCTS.into_iter().any(offered) {
                 continue;

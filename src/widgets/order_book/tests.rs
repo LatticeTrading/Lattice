@@ -1,40 +1,45 @@
 use std::{
     rc::Rc,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
 };
 
 use nsh_core::{
-    Color, MountItem,
-    canvas::{CanvasOp, Drawing, Num, Paint, PathOp},
+    MountItem,
     element::Root,
     platform::{Idiom, Os},
     prelude::*,
     shader::ShaderLayer,
 };
-use nsh_engine::{
-    EngineConfig, HttpBody, HttpRequest,
-    shader::{Frame as Picture, PixelFormat, Renderer, ShaderView},
-};
-use nsh_testing::{Headless, MemoryStorage, StubNetwork, StubReply, StubResponse, StubRoute, WAIT};
+use nsh_engine::{EngineConfig, HttpBody};
+use nsh_testing::{Headless, MemoryStorage, StubNetwork, StubRoute, WAIT};
 use serde_json::{Value, json};
 
 use super::{
-    frame::{Config, Frame, Join, ROW, Side, reach},
-    overlay::{self, Colors},
+    frame::{Config, Frame, Join, ROW, reach},
+    overlay,
     session::Ladder,
-    settings::{BookLayout, Grouping, Layer, OrderBookSettings, Pair, Toggle},
-    shader::{self, Palette, ROW_CAPACITY},
+    settings::{OrderBookSettings, Toggle},
+    shader::{self, ROW_CAPACITY},
 };
 use crate::{
     data::{
         DataServices,
-        ferris::{BookLevel, FerrisConfig, MarketSelection, OrderBook},
+        ferris::{FerrisConfig, MarketSelection, OrderBook},
     },
     layout,
     shell::clock::Clock,
     storage::StoredWorkspace,
-    widgets::{WidgetKind, picker::Picker},
+    widgets::{
+        WidgetKind,
+        common::books::{
+            BookLayout, BookSettings, Grouping, Layer, Logo, Pair, Side, UNAVAILABLE, WAITING,
+            testing::{
+                CLEAR, FERRIS, GREEN, RED, Record, Ruled, book, colors, drawn, palette, pixel,
+                same, side, stub_book,
+            },
+        },
+        picker::Picker,
+    },
 };
 
 fn bybit() -> MarketSelection {
@@ -46,32 +51,6 @@ fn binance() -> MarketSelection {
         exchange: "binance".into(),
         ..bybit()
     }
-}
-
-/// One side as the old tests gave it: prices and amounts from the best
-/// price outward, with their running amounts.
-fn side(rows: &[(f64, f64)]) -> Vec<BookLevel> {
-    let mut cumulative = 0.0;
-    rows.iter()
-        .map(|&(price, amount)| {
-            cumulative += amount;
-            BookLevel {
-                price,
-                amount,
-                total: price * amount,
-                cumulative,
-            }
-        })
-        .collect()
-}
-
-/// A book that has arrived.
-fn book(bids: &[(f64, f64)], asks: &[(f64, f64)]) -> Option<Rc<OrderBook>> {
-    Some(Rc::new(OrderBook {
-        bids: side(bids),
-        asks: side(asks),
-        timestamp: 1.0,
-    }))
 }
 
 /// One order a side: a bid at `price`, an ask `spread` above it.
@@ -918,16 +897,6 @@ fn rows_carry_each_series_reach_and_how_it_joins() {
     assert_eq!(drawn, [&[0.0, 1.0, 0.0, 1.0], &[1.0, 0.0, 1.0, 0.0]]);
 }
 
-/// Opaque colors that tell the series apart.
-fn palette() -> Palette {
-    Palette {
-        bid: [0.0, 1.0, 0.0, 1.0].into(),
-        ask: [1.0, 0.0, 0.0, 1.0].into(),
-        pair_bid: [0.0, 0.0, 1.0, 1.0].into(),
-        pair_ask: [1.0, 1.0, 0.0, 1.0].into(),
-    }
-}
-
 /// The shader's layer for the one tile of `frame`.
 fn shader_layer(frame: &Frame) -> ShaderLayer {
     let program = shader::program().expect("the order book's shader compiles");
@@ -984,37 +953,6 @@ fn the_shader_compiles_and_takes_a_tile_in_one_array() {
 fn layer_of_second() -> Layer {
     layer(Pair::Secondary, binance())
 }
-
-/// `layer` drawn by NSH's renderer (wgpu) on `width` by `height` points
-/// at `scale` pixels a point; none on a machine without a GPU.
-fn drawn(layer: ShaderLayer, width: f32, height: f32, scale: f32) -> Option<Picture> {
-    let renderer = Renderer::new(PixelFormat::Rgba)?;
-    let mut view = ShaderView::default();
-    view.set_layer(Some(Arc::new(layer)));
-    view.set_size(Size::new(px(width), px(height)), scale);
-    let started = Instant::now();
-    while !view.render(&renderer, Instant::now()) {
-        assert!(
-            started.elapsed() < Duration::from_secs(20),
-            "the GPU returned no frame"
-        );
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    Some(view.frame().clone())
-}
-
-/// The pixel at (`x`, `y`) of `picture`: premultiplied red, green, blue
-/// and alpha.
-fn pixel(picture: &Picture, x: u32, y: u32) -> [u8; 4] {
-    let at = (y * picture.width + x) as usize * 4;
-    picture.tight()[at..at + 4]
-        .try_into()
-        .expect("a pixel is four bytes")
-}
-
-const CLEAR: [u8; 4] = [0, 0, 0, 0];
-const GREEN: [u8; 4] = [0, 255, 0, 255];
-const RED: [u8; 4] = [255, 0, 0, 255];
 
 #[test]
 fn the_gpu_draws_bars_where_the_frame_puts_them() {
@@ -1088,150 +1026,8 @@ fn the_gpu_draws_bars_where_the_frame_puts_them() {
     assert_eq!(pixel(&across, 87, 0), RED);
 }
 
-/// The overlay's colors, each its own.
-fn colors() -> Colors {
-    let shade = |hue: f32| hsla(hue, 1.0, 0.5, 1.0);
-    Colors {
-        text: shade(0.0),
-        dim: shade(0.1),
-        grid: shade(0.2),
-        panel: shade(0.3),
-        bid: shade(0.4),
-        ask: shade(0.5),
-        accent: shade(0.6),
-        amber: shade(0.7),
-    }
-}
-
-/// A text of a drawing: where it was written (and from which origin, when
-/// it is turned on its side), and in what color.
-#[derive(Clone, Debug)]
-struct Written {
-    text: String,
-    x: f32,
-    y: f32,
-    origin: (f32, f32),
-    color: Hsla,
-}
-
-/// A stroked line of a drawing: where it starts, and how it is drawn.
-#[derive(Clone, Debug)]
-struct Ruled {
-    from: (f32, f32),
-    color: Hsla,
-    dashed: bool,
-}
-
-/// What a drawing wrote, ruled and filled, in order.
-#[derive(Default)]
-struct Record {
-    texts: Vec<Written>,
-    lines: Vec<Ruled>,
-    /// Filled rectangles: left, top, width, height.
-    boxes: Vec<([f32; 4], Hsla)>,
-}
-
-impl Record {
-    fn of(drawing: &Drawing) -> Self {
-        #[derive(Clone)]
-        struct State {
-            origin: (f32, f32),
-            fill: Hsla,
-            stroke: Hsla,
-            dashed: bool,
-        }
-        let number = |num: &Num| match num {
-            Num::Const(value) => *value,
-            _ => panic!("the overlay draws no animated value"),
-        };
-        let paint = |paint: &Paint| match paint {
-            Paint::Color(color) => Hsla::from(*color),
-            _ => panic!("the overlay paints plain colors"),
-        };
-        let mut record = Self::default();
-        let mut state = State {
-            origin: (0.0, 0.0),
-            fill: Hsla::default(),
-            stroke: Hsla::default(),
-            dashed: false,
-        };
-        let mut saved = Vec::new();
-        let mut at = (0.0, 0.0);
-        let mut path = Vec::new();
-        for op in &drawing.ops {
-            match op {
-                CanvasOp::Save => saved.push(state.clone()),
-                CanvasOp::Restore => state = saved.pop().expect("a save for every restore"),
-                CanvasOp::Translate(x, y) => {
-                    state.origin = (state.origin.0 + number(x), state.origin.1 + number(y));
-                }
-                CanvasOp::FillStyle(fill) => state.fill = paint(fill),
-                CanvasOp::StrokeStyle(stroke) => state.stroke = paint(stroke),
-                CanvasOp::LineDash(dashes) => state.dashed = !dashes.is_empty(),
-                CanvasOp::BeginPath => path.clear(),
-                CanvasOp::Path(PathOp::MoveTo(x, y)) => at = (number(x), number(y)),
-                CanvasOp::Path(PathOp::LineTo(x, y)) => {
-                    path.push(at);
-                    at = (number(x), number(y));
-                }
-                CanvasOp::Stroke(None) => {
-                    record.lines.extend(path.iter().map(|from| Ruled {
-                        from: *from,
-                        color: state.stroke,
-                        dashed: state.dashed,
-                    }));
-                }
-                CanvasOp::FillRect(rect) => {
-                    record.boxes.push((rect.each_ref().map(number), state.fill));
-                }
-                CanvasOp::FillText { text, x, y, .. } => record.texts.push(Written {
-                    text: text.to_string(),
-                    x: number(x),
-                    y: number(y),
-                    origin: state.origin,
-                    color: state.fill,
-                }),
-                _ => {}
-            }
-        }
-        assert!(saved.is_empty(), "a restore for every save");
-        record
-    }
-
-    /// Every text, in the order written.
-    fn words(&self) -> Vec<&str> {
-        self.texts.iter().map(|text| text.text.as_str()).collect()
-    }
-
-    fn count(&self, text: &str) -> usize {
-        self.texts
-            .iter()
-            .filter(|written| written.text == text)
-            .count()
-    }
-
-    fn find(&self, text: &str) -> &Written {
-        self.texts
-            .iter()
-            .find(|written| written.text == text)
-            .unwrap_or_else(|| panic!("no {text:?} among {:?}", self.words()))
-    }
-
-    /// The lines ruled in `color`.
-    fn ruled(&self, color: Hsla) -> Vec<&Ruled> {
-        self.lines
-            .iter()
-            .filter(|line| same(line.color, color))
-            .collect()
-    }
-}
-
-fn same(left: Hsla, right: Hsla) -> bool {
-    Color::from(left) == Color::from(right)
-}
-
 /// The overlay of `frame`, with the pointer where `pointer` says.
-fn overlaid(frame: &Frame, pointer: Option<(f64, f64)>) -> (Record, Vec<overlay::Logo>) {
+fn overlaid(frame: &Frame, pointer: Option<(f64, f64)>) -> (Record, Vec<Logo>) {
     let drawn = overlay::draw(frame, pointer, &colors(), false);
     (Record::of(&drawn.painter.finish()), drawn.logos)
 }
@@ -1286,9 +1082,9 @@ fn the_overlay_writes_prices_totals_and_running_amounts() {
     }
     // Nothing has arrived: the plot says it waits, or cannot.
     let mut waiting = build(&compact(), &[None], SMALL, None);
-    assert_eq!(overlaid(&waiting, None).0.words(), [overlay::WAITING]);
+    assert_eq!(overlaid(&waiting, None).0.words(), [WAITING]);
     waiting.failed = vec![true];
-    assert_eq!(overlaid(&waiting, None).0.words(), [overlay::UNAVAILABLE]);
+    assert_eq!(overlaid(&waiting, None).0.words(), [UNAVAILABLE]);
 }
 
 #[test]
@@ -1628,10 +1424,6 @@ fn the_pointers_box_shows_only_on_a_level() {
     }
 }
 
-/// A Ferris no test reaches: its HTTP is the test's stub network, and
-/// nothing listens where its socket would connect.
-const FERRIS: &str = "https://ferris.test";
-
 /// A workspace of one order book, with its data services as the shell
 /// provides them.
 #[component]
@@ -1655,21 +1447,6 @@ fn Harness() -> impl IntoElement {
         .flex_col()
         .child(layout::workspace(workspace, picker))
         .child(picker.view(workspace))
-}
-
-/// Answers `fetchOrderBook` with two levels a side about 100.25.
-fn stub_book(_: HttpRequest, reply: StubReply) {
-    let book = json!({
-        "bids": [[100.0, 2.0], [99.5, 4.0]],
-        "asks": [[100.5, 1.0], [101.0, 3.0]],
-        "timestamp": 1_700_000_000_000_i64,
-        "nonce": null,
-        "symbol": "BTC/USDT:USDT",
-    });
-    let mut response = StubResponse::default();
-    response.status = 200;
-    response.body = serde_json::to_vec(&book).expect("a book is JSON");
-    reply.send(response);
 }
 
 #[test]
@@ -1756,7 +1533,7 @@ fn an_order_book_shows_its_book_and_follows_its_settings() {
     ] {
         assert!(writes(text), "{text}");
     }
-    assert!(!writes("2 BTC") && !writes(overlay::WAITING));
+    assert!(!writes("2 BTC") && !writes(WAITING));
     // One tile of bars, prices running down it.
     assert_eq!(newest(2), Some(0.0));
 

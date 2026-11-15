@@ -29,9 +29,15 @@ SHA-256:
 (`lattice-pro/src/components/layout/EverythingBar.tsx`, its `.search-icon`
 path), drawn in `currentColor`.
 
+`icons/plus.svg` and `icons/remove.svg` are the "Add pair" plus and the row
+× of the old Funding Rates table
+(`lattice-pro/src/components/trading/FundingRates.tsx`, its inline SVG
+paths), drawn in `currentColor`.
+
 They are the only icon files; other controls draw text glyphs (`⚙`, `+`).
-The shell inlines them at compile time (`include_str!` in
-`src/shell/everything_bar.rs` and `src/shell/everything_bar/search.rs`); `src/assets.rs` registers the fonts. No loose
+What uses them inlines them at compile time (`include_str!` in
+`src/shell/everything_bar.rs`, `src/shell/everything_bar/search.rs` and
+`src/widgets/funding_rates/view.rs`); `src/assets.rs` registers the fonts. No loose
 files are read at runtime. `LICENSE-LUCIDE` is left from the GPUI build,
 whose Lucide icons (`gpui-kit-assets`) Lattice no longer bundles.
 

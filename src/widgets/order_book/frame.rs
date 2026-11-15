@@ -23,10 +23,13 @@
 use std::rc::Rc;
 
 use super::{
-    settings::{BookLayout, Layer, OrderBookSettings, Toggle},
+    settings::{OrderBookSettings, Toggle},
     shader::ROW_CAPACITY,
 };
-use crate::data::ferris::{BookLevel, OrderBook};
+use crate::{
+    data::ferris::{BookLevel, OrderBook},
+    widgets::common::books::{self, BookLayout, Layer, Side, round},
+};
 
 /// A row of the ladder, in points (the old `ORDER_BOOK_PRICE_ROW_SIZE`).
 pub(super) const ROW: f64 = 22.0;
@@ -113,13 +116,6 @@ impl Config {
             || self.all_levels != next.all_levels
             || keys(self) != keys(next)
     }
-}
-
-/// A side of a book.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Side {
-    Bid,
-    Ask,
 }
 
 /// One level the frame shows: a price of one side of one book.
@@ -581,8 +577,8 @@ impl Frame {
 }
 
 /// Adds one side of a book to `levels`: its best `depth` levels, each a
-/// level of its own, or merged while they share a price group (the old
-/// `packMetadataSide`). A level with no amount is left out unless every
+/// level of its own, or merged while they share a price group
+/// ([`books::pack`]). A level with no amount is left out unless every
 /// price step has a row.
 fn pack(
     levels: &mut Vec<Level>,
@@ -591,77 +587,24 @@ fn pack(
     side: Side,
     layer: usize,
 ) {
-    let finite = |value: f64| if value.is_finite() { value } else { 0.0 };
-    let mut running = 0.0;
-    let mut group: Option<Level> = None;
-    for level in side_levels.iter().take(config.depth) {
-        if !level.price.is_finite() {
-            continue;
-        }
-        let amount = finite(level.amount);
-        if !config.all_levels && amount <= 0.0 {
-            continue;
-        }
-        if amount >= 0.0 {
-            running += amount;
-        }
-        let cumulative = if level.cumulative.is_finite() {
-            level.cumulative.max(0.0)
-        } else {
-            running
-        };
-        let price = grouped(level.price, config.grouping, side);
-        if group
-            .as_ref()
-            .is_some_and(|group| config.grouping == 0.0 || group.price != price)
-        {
-            levels.extend(group.take());
-        }
-        let group = group.get_or_insert(Level {
-            layer,
-            side,
-            price,
-            amount: 0.0,
-            total: 0.0,
-            cumulative: 0.0,
-            reach: 0.0,
-            open: false,
-            rect: [0.0; 4],
-        });
-        group.amount += amount;
-        group.total += finite(level.total);
-        group.cumulative = cumulative;
-    }
-    levels.extend(group);
-}
-
-/// `price` in its group of `grouping`: a bid's at or below it, an ask's at
-/// or above it, so a group never shows a better price than it holds. A
-/// price a rounding error away from a group's edge is on it.
-fn grouped(price: f64, grouping: f64, side: Side) -> f64 {
-    if grouping == 0.0 {
-        return price;
-    }
-    let quotient = price / grouping;
-    let nearest = round(quotient);
-    let tolerance = f64::EPSILON * quotient.abs().max(1.0);
-    let stable = if (quotient - nearest).abs() <= tolerance {
-        nearest
-    } else {
-        quotient
-    };
-    let edge = match side {
-        Side::Bid => stable.floor(),
-        Side::Ask => stable.ceil(),
-    } * grouping;
-    // Never negative zero.
-    if edge == 0.0 { 0.0 } else { edge }
-}
-
-/// `value` to the nearest whole number, halves up, as JavaScript's
-/// `Math.round` (Rust's rounds halves away from zero).
-pub(super) fn round(value: f64) -> f64 {
-    (value + 0.5).floor()
+    let packed = books::pack(
+        side_levels,
+        config.depth,
+        config.grouping,
+        side,
+        config.all_levels,
+    );
+    levels.extend(packed.into_iter().map(|packed| Level {
+        layer,
+        side,
+        price: packed.price,
+        amount: packed.amount,
+        total: packed.total,
+        cumulative: packed.cumulative,
+        reach: 0.0,
+        open: false,
+        rect: [0.0; 4],
+    }));
 }
 
 /// How many decimals `value` is written with, at most eight.

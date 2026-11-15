@@ -23,11 +23,8 @@ use std::cell::OnceCell;
 
 use nsh_core::shader::{Shader, UniformValue};
 
-use super::{
-    frame::{Frame, Tile},
-    settings::Pair,
-};
-use crate::theme;
+use super::frame::{Frame, Tile};
+use crate::widgets::common::books::{Palette, Side};
 
 /// The vectors of the uniform array.
 const SLOTS: usize = 256;
@@ -148,44 +145,6 @@ pub(super) fn program() -> Option<Shader> {
     })
 }
 
-/// The colors the program draws depth bars with, at their opacity.
-pub(super) struct Palette {
-    /// The primary book's bids and asks.
-    pub bid: UniformValue,
-    pub ask: UniformValue,
-    /// The second pair's bids and asks.
-    pub pair_bid: UniformValue,
-    pub pair_ask: UniformValue,
-}
-
-impl Palette {
-    /// The old order book's colors in the theme now (tracked: what reads
-    /// them runs again when the theme changes): buy and sell for the
-    /// primary book, the accent and amber for the second pair.
-    pub fn themed() -> Self {
-        let bar = |role: theme::Role| {
-            UniformValue::from(nsh_core::element::color(role.opacity(BAR_ALPHA).get()))
-        };
-        Self {
-            bid: bar(theme::BID),
-            ask: bar(theme::ASK),
-            pair_bid: bar(theme::ACCENT),
-            pair_ask: bar(theme::WARNING),
-        }
-    }
-
-    /// The color of `pair`'s bids (`bid`) or asks.
-    fn of(&self, pair: Pair, bid: bool) -> UniformValue {
-        match (pair, bid) {
-            (Pair::Primary, true) => &self.bid,
-            (Pair::Primary, false) => &self.ask,
-            (Pair::Secondary, true) => &self.pair_bid,
-            (Pair::Secondary, false) => &self.pair_ask,
-        }
-        .clone()
-    }
-}
-
 /// The program's uniform `d` for tile `tile` of `frame` in `palette`'s
 /// colors.
 pub(super) fn uniforms(frame: &Frame, tile: &Tile, palette: &Palette) -> UniformValue {
@@ -196,7 +155,14 @@ pub(super) fn uniforms(frame: &Frame, tile: &Tile, palette: &Palette) -> Uniform
     // Each series in its book's colors; a book that is not drawn has none.
     slots.extend(
         (0..4).map(|series| match frame.config.layers.get(series / 2) {
-            Some(layer) => palette.of(layer.pair, series % 2 == 0),
+            Some(layer) => {
+                let side = if series.is_multiple_of(2) {
+                    Side::Bid
+                } else {
+                    Side::Ask
+                };
+                palette.of(layer.pair, side)
+            }
             None => [0.0_f32; 4].into(),
         }),
     );

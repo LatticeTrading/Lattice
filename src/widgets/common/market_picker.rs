@@ -11,8 +11,9 @@
 //! - Options ([`MarketPicker`]): one exchange only (the old
 //!   `filterExchange`), a capability requirement (only markets whose
 //!   exchange and product are not denied it: unknown metadata keeps the old
-//!   behavior and offers them), the current selection (marked), and a
-//!   "Clear" action.
+//!   behavior and offers them), a statistics field (only markets whose
+//!   exchange serves it for their product), the current selection (marked),
+//!   and a "Clear" action.
 //! - Search ignores case and punctuation ("btcusd" finds "BTC/USD") and
 //!   ranks as the old app did ([`SymbolQuery`]): the whole pair, then the
 //!   pair as typed, then its start, then anywhere, ties in list order.
@@ -47,7 +48,7 @@ use super::Shared;
 use crate::{
     data::{
         DataServices,
-        ferris::{MarketSelection, Requirement, SymbolQuery},
+        ferris::{MarketSelection, Requirement, StatsFieldName, SymbolQuery},
     },
     theme,
     ui::{self, RowScroll},
@@ -62,6 +63,7 @@ const ROW_HEIGHT: f32 = 36.0;
 pub struct MarketPicker {
     exchange: Option<String>,
     requirement: Requirement,
+    statistics: Option<StatsFieldName>,
     current: Option<MarketSelection>,
     on_pick: Rc<dyn Fn(MarketSelection)>,
     clear: Option<(String, Rc<dyn Fn()>)>,
@@ -73,6 +75,7 @@ impl MarketPicker {
         Self {
             exchange: None,
             requirement: Requirement::default(),
+            statistics: None,
             current: None,
             on_pick: Rc::new(on_pick),
             clear: None,
@@ -90,6 +93,14 @@ impl MarketPicker {
     /// `requirement`.
     pub fn requires(mut self, requirement: Requirement) -> Self {
         self.requirement = requirement;
+        self
+    }
+
+    /// Only markets whose exchange serves the statistics `field` for every
+    /// market of their product (the Funding Rates: `funding`, which leaves
+    /// the perpetuals of the exchanges that report it).
+    pub fn with_statistics(mut self, field: StatsFieldName) -> Self {
+        self.statistics = Some(field);
         self
     }
 
@@ -124,6 +135,7 @@ impl MarketPicker {
         let Self {
             exchange,
             requirement,
+            statistics,
             current,
             on_pick,
             clear,
@@ -139,6 +151,7 @@ impl MarketPicker {
                 Shared(Rc::new(Listing::new(
                     &directory.0,
                     requirement,
+                    statistics,
                     exchange.as_deref(),
                 )))
             })

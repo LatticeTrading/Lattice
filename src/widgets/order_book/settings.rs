@@ -2,186 +2,28 @@
 //! app's names (`webGLOrderBookSettingsSchema` and the top bar's
 //! `centerTarget`):
 //!
-//! - `primaryMarket`, `secondaryMarket`: the two books ([`Pair`]). The
-//!   primary is Bybit's BTC/USDT perpetual until told otherwise and may be
-//!   cleared (saved as `null`); the second has none until one is picked.
+//! - its books ([`Books`], what every widget that draws order books
+//!   saves): `primaryMarket`, `secondaryMarket`, `depth` and
+//!   `priceGrouping`.
 //! - `centerTarget`: the book the ladder follows (`"secondary"`, or `null`
 //!   for none; the primary while left out).
-//! - `depth` (10 to 1000 levels a side, 200), `priceGrouping` (`0` raw,
-//!   `0.01`, `0.1`, `1`, `10`, `100`), `layout` (`"horizontal"`; vertical
-//!   while left out).
+//! - `layout` (`"horizontal"`; vertical while left out).
 //! - `showAllLevels`, `showOnlyLoadedLevels`, `showMidPriceLine`,
 //!   `showBidAskDivider`, `showCumulativeAmount`, `separatePairQuantities`
 //!   ([`Toggle`]).
 //!
 //! Each is left out of the saved form while it holds its default, and read
-//! leniently, as the old `normalizeWebGLOrderBookSettings` read them: an
-//! unreadable primary market is the default one, a depth out of range is
-//! clamped (numbers as text count), a grouping the widget does not offer
-//! is raw, a switch that is not a boolean is its default, a center target
-//! it does not know is none.
+//! leniently, as the old `normalizeWebGLOrderBookSettings` read them: a
+//! switch that is not a boolean is its default, a center target it does
+//! not know is none (and the books as [`Books::read`] reads them).
 
-use std::rc::Rc;
-
-use serde::{Serialize, Serializer};
+use serde::Serialize;
 use serde_json::Value;
 
-use crate::data::ferris::{MarketSelection, order_book};
-
-/// The fewest and most levels a side shows, and how many until told.
-pub(super) const MIN_DEPTH: u16 = 10;
-pub(super) const MAX_DEPTH: u16 = 1_000;
-const DEFAULT_DEPTH: u16 = 200;
-/// The depths the top bar offers (the old `DEPTH_PRESETS`).
-pub(super) const DEPTH_PRESETS: [u16; 7] = [10, 20, 50, 100, 200, 500, 1_000];
-
-/// Which of the widget's two books (the old `paletteRole`): the primary,
-/// or the second pair tracked beside it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Pair {
-    Primary,
-    Secondary,
-}
-
-impl Pair {
-    pub const ALL: [Self; 2] = [Self::Primary, Self::Secondary];
-
-    /// What settings save for it.
-    pub const fn id(self) -> &'static str {
-        match self {
-            Self::Primary => "primary",
-            Self::Secondary => "secondary",
-        }
-    }
-
-    /// Its name (the old app's).
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Primary => "Primary",
-            Self::Secondary => "Pair 2",
-        }
-    }
-
-    pub fn from_id(id: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|pair| pair.id() == id)
-    }
-}
-
-impl Serialize for Pair {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.id())
-    }
-}
-
-/// How the ladder runs: prices down the pane beside a price column, depth
-/// growing to the right; or prices along the bottom, depth growing up.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum BookLayout {
-    #[default]
-    Vertical,
-    Horizontal,
-}
-
-impl BookLayout {
-    pub const ALL: [Self; 2] = [Self::Vertical, Self::Horizontal];
-
-    pub const fn id(self) -> &'static str {
-        match self {
-            Self::Vertical => "vertical",
-            Self::Horizontal => "horizontal",
-        }
-    }
-
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Vertical => "Vertical",
-            Self::Horizontal => "Horizontal",
-        }
-    }
-}
-
-impl Serialize for BookLayout {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.id())
-    }
-}
-
-/// The price step levels are merged into: bids down to it, asks up to it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum Grouping {
-    /// Every price as the venue quotes it.
-    #[default]
-    Raw,
-    Hundredth,
-    Tenth,
-    One,
-    Ten,
-    Hundred,
-}
-
-impl Grouping {
-    /// Every grouping, in the order the selects list them (the old
-    /// `PRICE_GROUPING_OPTIONS`).
-    pub const ALL: [Self; 6] = [
-        Self::Raw,
-        Self::Hundredth,
-        Self::Tenth,
-        Self::One,
-        Self::Ten,
-        Self::Hundred,
-    ];
-
-    /// The step, zero for raw prices.
-    pub const fn step(self) -> f64 {
-        match self {
-            Self::Raw => 0.0,
-            Self::Hundredth => 0.01,
-            Self::Tenth => 0.1,
-            Self::One => 1.0,
-            Self::Ten => 10.0,
-            Self::Hundred => 100.0,
-        }
-    }
-
-    /// Its name, which is also what the selects call it.
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Raw => "Raw",
-            Self::Hundredth => "0.01",
-            Self::Tenth => "0.1",
-            Self::One => "1",
-            Self::Ten => "10",
-            Self::Hundred => "100",
-        }
-    }
-
-    pub fn from_label(label: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|grouping| grouping.label() == label)
-    }
-
-    /// The grouping whose step `saved` is, raw for any other value.
-    fn read(saved: &Value) -> Self {
-        let step = numeric(saved);
-        Self::ALL
-            .into_iter()
-            .find(|grouping| Some(grouping.step()) == step)
-            .unwrap_or_default()
-    }
-}
-
-impl Serialize for Grouping {
-    /// Its step as the old app saved it: a whole number where it is one.
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let step = self.step();
-        if step.fract() == 0.0 {
-            serializer.serialize_u64(step as u64)
-        } else {
-            serializer.serialize_f64(step)
-        }
-    }
-}
+use crate::{
+    data::ferris::MarketSelection,
+    widgets::common::books::{BookLayout, BookSettings, Books, Grouping, Layer, Pair},
+};
 
 /// One of the widget's switches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -244,34 +86,16 @@ impl Toggle {
     }
 }
 
-/// One book the widget shows: which pair it is, its market, and what tells
-/// its stream apart ([`order_book::stream_key`]).
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Layer {
-    pub pair: Pair,
-    pub market: Rc<MarketSelection>,
-    pub key: String,
-}
-
 /// One order book's settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub(crate) struct OrderBookSettings {
-    /// `None` is the default market, `Some(None)` no market (saved as
-    /// `null`). Boxed: a selection is several times the size of the rest.
-    #[serde(rename = "primaryMarket", skip_serializing_if = "Option::is_none")]
-    primary: Option<Option<Box<MarketSelection>>>,
-    #[serde(rename = "secondaryMarket", skip_serializing_if = "Option::is_none")]
-    secondary: Option<Box<MarketSelection>>,
+    /// Its two markets, its depth and its grouping.
+    #[serde(flatten)]
+    books: Books,
     /// The book the ladder follows: `None` is the primary, `Some(None)`
     /// none (saved as `null`).
     #[serde(rename = "centerTarget", skip_serializing_if = "Option::is_none")]
     center: Option<Option<Pair>>,
-    /// `None` is the default depth.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    depth: Option<u16>,
-    /// `None` is raw prices.
-    #[serde(rename = "priceGrouping", skip_serializing_if = "Option::is_none")]
-    grouping: Option<Grouping>,
     /// Each switch: `None` is its default.
     #[serde(rename = "showAllLevels", skip_serializing_if = "Option::is_none")]
     all_levels: Option<bool>,
@@ -299,46 +123,15 @@ pub(crate) struct OrderBookSettings {
     layout: Option<BookLayout>,
 }
 
-/// The old app's default market (`DEFAULT_BYBIT_BTC_USDT_MARKET`).
-fn default_market() -> MarketSelection {
-    MarketSelection::bybit_btc_usdt()
-}
-
-/// A saved number: a JSON number, or one written as text (the old app
-/// read both with `Number`).
-fn numeric(saved: &Value) -> Option<f64> {
-    match saved {
-        Value::Number(number) => number.as_f64(),
-        Value::String(text) => text.trim().parse().ok(),
-        _ => None,
-    }
-    .filter(|number: &f64| number.is_finite())
-}
-
 impl From<Value> for OrderBookSettings {
     fn from(value: Value) -> Self {
         let Value::Object(members) = value else {
             return Self::default();
         };
-        let mut settings = Self::default()
-            .with_market(
-                Pair::Primary,
-                match members.get("primaryMarket") {
-                    // Cleared on purpose.
-                    Some(Value::Null) => None,
-                    saved => Some(
-                        saved
-                            .and_then(MarketSelection::from_value)
-                            .unwrap_or_else(default_market),
-                    ),
-                },
-            )
-            .with_market(
-                Pair::Secondary,
-                members
-                    .get("secondaryMarket")
-                    .and_then(MarketSelection::from_value),
-            );
+        let mut settings = Self {
+            books: Books::read(&members),
+            ..Self::default()
+        };
         settings.center = match members.get("centerTarget") {
             None => None,
             Some(Value::String(id)) if id == Pair::Primary.id() => None,
@@ -346,12 +139,6 @@ impl From<Value> for OrderBookSettings {
             // `null`, and anything the old app did not know.
             Some(_) => Some(None),
         };
-        if let Some(depth) = members.get("depth").and_then(numeric) {
-            settings = settings.with_depth(depth.floor().clamp(0.0, f64::from(u16::MAX)) as u16);
-        }
-        if let Some(saved) = members.get("priceGrouping") {
-            settings = settings.with_grouping(Grouping::read(saved));
-        }
         for toggle in Toggle::ALL {
             let on = members
                 .get(toggle.name())
@@ -366,51 +153,32 @@ impl From<Value> for OrderBookSettings {
     }
 }
 
+impl BookSettings for OrderBookSettings {
+    const TEST_ID: &'static str = "order-book";
+
+    fn books(&self) -> &Books {
+        &self.books
+    }
+
+    fn with_books(mut self, books: Books) -> Self {
+        self.books = books;
+        self
+    }
+}
+
 impl OrderBookSettings {
     /// `pair`'s market, if it has one.
     pub fn market(&self, pair: Pair) -> Option<MarketSelection> {
-        match pair {
-            Pair::Primary => match &self.primary {
-                None => Some(default_market()),
-                Some(market) => market.as_deref().cloned(),
-            },
-            Pair::Secondary => self.secondary.as_deref().cloned(),
-        }
-    }
-
-    /// These settings with `market` as `pair`'s (`None`: with none).
-    pub fn with_market(mut self, pair: Pair, market: Option<MarketSelection>) -> Self {
-        match pair {
-            Pair::Primary => {
-                self.primary = match market {
-                    Some(market) if market == default_market() => None,
-                    market => Some(market.map(Box::new)),
-                };
-            }
-            Pair::Secondary => self.secondary = market.map(Box::new),
-        }
-        self
+        self.books.market(pair)
     }
 
     /// How many levels a side shows.
     pub fn depth(&self) -> u16 {
-        self.depth.unwrap_or(DEFAULT_DEPTH)
-    }
-
-    /// These settings showing `depth` levels a side, within 10 to 1000.
-    pub fn with_depth(mut self, depth: u16) -> Self {
-        let depth = depth.clamp(MIN_DEPTH, MAX_DEPTH);
-        self.depth = (depth != DEFAULT_DEPTH).then_some(depth);
-        self
+        self.books.depth()
     }
 
     pub fn grouping(&self) -> Grouping {
-        self.grouping.unwrap_or_default()
-    }
-
-    pub fn with_grouping(mut self, grouping: Grouping) -> Self {
-        self.grouping = (grouping != Grouping::default()).then_some(grouping);
-        self
+        self.books.grouping()
     }
 
     pub fn layout(&self) -> BookLayout {
@@ -452,39 +220,16 @@ impl OrderBookSettings {
         self
     }
 
-    /// `pair`'s market and the key of the book it streams at this depth.
-    fn stream(&self, pair: Pair) -> Option<(MarketSelection, String)> {
-        let market = self.market(pair)?;
-        let key = order_book::stream_key(&market, u32::from(self.depth())).unwrap_or_default();
-        Some((market, key))
-    }
-
     /// Whether the second pair streams the primary's book: it is then not
     /// drawn (the old `duplicateSecondary`).
     pub fn duplicate(&self) -> bool {
-        match (self.stream(Pair::Primary), self.stream(Pair::Secondary)) {
-            (Some((_, primary)), Some((_, secondary))) => primary == secondary,
-            _ => false,
-        }
+        self.books.duplicate()
     }
 
     /// The books drawn: the primary, then the second pair unless it is the
     /// primary's book again.
     pub fn layers(&self) -> Vec<Layer> {
-        let layer = |pair: Pair, (market, key): (MarketSelection, String)| Layer {
-            pair,
-            market: Rc::new(market),
-            key,
-        };
-        let primary = self.stream(Pair::Primary);
-        let secondary = self
-            .stream(Pair::Secondary)
-            .filter(|(_, key)| primary.as_ref().is_none_or(|(_, primary)| primary != key));
-        primary
-            .map(|stream| layer(Pair::Primary, stream))
-            .into_iter()
-            .chain(secondary.map(|stream| layer(Pair::Secondary, stream)))
-            .collect()
+        self.books.layers()
     }
 
     /// The book the ladder follows: the saved one while it is drawn, else
