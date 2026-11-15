@@ -256,6 +256,45 @@ fn the_crosshair_and_the_time_axis_find_their_bars() {
     assert!(Scene::empty(Mode::Line).time_marks(7).is_empty());
 }
 
+#[test]
+fn a_widgets_own_series_is_read_at_its_bars_and_fitted_with_them() {
+    let bars = series(100);
+    let view = Viewport::showing(50.0).panned(-10.0, 100);
+    let scene = Scene::build(&bars, &view, Mode::Candles, 500.0, 300.0);
+    // The bar under the pointer, as the crosshair finds it, and each
+    // bucket's middle with its bar; none for a bucket without a bar.
+    assert_eq!(scene.bar_near(4.0), Some(60));
+    assert_eq!(scene.bar_near(480.0), Some(99));
+    assert_eq!(scene.bucket_end(60), Some((5.0, 60)));
+    assert_eq!(scene.bucket_end(59), Some((-5.0, 59)));
+    assert_eq!(scene.bucket_end(100), None);
+    assert_eq!(Scene::empty(Mode::Candles).bar_near(0.0), None);
+
+    // Where bars share a bucket (four each), it is the newest of them,
+    // over the bucket's middle.
+    let bars = series(2_000);
+    let view = Viewport::showing(1_000.0);
+    let scene = Scene::build(&bars, &view, Mode::Candles, 500.0, 300.0);
+    assert_eq!(scene.bar_near(0.0), Some(1_003));
+    assert_eq!(scene.bucket_end(250), Some((1.0, 1_003)));
+    assert_eq!(scene.bucket_end(499), Some((499.0, 1_999)));
+
+    // The fitted prices make room for what else the widget draws on the
+    // bars under the plot, which it is asked about by their numbers.
+    let wider = Scene::build_with(&bars, &view, Mode::Candles, 500.0, 300.0, |from, to| {
+        assert_eq!((from, to), (1_000, 2_000));
+        Some((500.0, 2_500.0))
+    });
+    assert_eq!(wider.fit, Prices::fitting(500.0, 2_500.0));
+    assert_eq!(wider.prices, wider.fit);
+    let within = |_, _| Some((1_200.0, 1_300.0));
+    let within = Scene::build_with(&bars, &view, Mode::Candles, 500.0, 300.0, within);
+    assert_eq!(within.fit, scene.fit);
+    // Nothing is asked about a plot without a bar.
+    let none = |_, _| -> Option<(f64, f64)> { panic!("no bar is under the plot") };
+    Scene::build_with(&[], &view, Mode::Candles, 500.0, 300.0, none);
+}
+
 /// Opaque colors that tell the layers apart.
 fn palette() -> Palette {
     Palette {

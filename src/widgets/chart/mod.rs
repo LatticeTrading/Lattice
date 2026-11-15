@@ -25,9 +25,9 @@
 //!   the page before it.
 //!
 //! Settings ([`ChartSettings`]: the market, the timeframe, the grid, the
-//! hovered bar's prices, the link color, its drawings and whether their
-//! toolbar is open) are saved in its tab record; the pane's gear opens its
-//! settings panel ([`panel`]).
+//! hovered bar's prices, the link color, its drawings, whether their
+//! toolbar is open, and its indicators) are saved in its tab record; the
+//! pane's gear opens its settings panel ([`panel`]).
 //!
 //! Drawings ([`drawings`]): a toolbar down the plot's left side has the
 //! tools (a trend line, a Fibonacci retracement, a measurement), and what
@@ -37,16 +37,30 @@
 //! it, brings it out again. The plot is still the shared one: it asks the
 //! chart's editor about the pointer before it pans.
 //!
+//! Indicators ([`indicators`]): a badge floating beside the plot's header,
+//! right of the exchange, opens the menu of them (an exponential moving
+//! average, a triple exponential one, Bollinger Bands). Each one added is
+//! computed from the bars charted, whatever the market, and drawn over
+//! them in its color; the prices fitted to the bars make room for its
+//! lines. A legend under the header lists them, each with its values at
+//! the bar under the pointer and, with the pointer over its row, its
+//! controls: hiding it, its settings (its inputs and its color), removing
+//! it. The session computes them with the scene, again only when a bar or
+//! an indicator changed.
+//!
 //! The chart can be linked ([`crate::link`]): its pane header's link button
 //! picks a color (blue at first), and a market picked in the Everything
 //! Bar's search while the bar has that color becomes the chart's market
 //! setting, which the session follows as any other change of it.
 //!
-//! Not ported yet from the old chart: indicators (which did not exist
-//! there beyond a roadmap, as drawings did not), and the placeholder space
-//! it reserved while older candles loaded.
+//! Not ported yet from the old chart: the placeholder space it reserved
+//! while older candles loaded. Its indicators are Lattice's own, as its
+//! drawings are: the old chart had neither beyond a roadmap. Ones that
+//! need a plot of their own under the bars (an oscillator, volume) have
+//! none yet.
 
 mod drawings;
+mod indicators;
 mod panel;
 mod session;
 mod settings;
@@ -86,7 +100,7 @@ impl Widget for Chart {
     }
 
     /// Its plot, for the market and timeframe its tab's settings chart,
-    /// with its drawing tools.
+    /// with its indicators and its drawing tools.
     fn view(session: &Rc<ChartSession>, tab: &TabContext<ChartSettings>) -> View {
         view::chart_view(session, tab)
     }

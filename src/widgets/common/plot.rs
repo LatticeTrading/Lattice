@@ -10,7 +10,9 @@
 //!   how NSH runs it);
 //! - [`view`]: the plot's view ([`plot_view`]): its tiles, axes, newest
 //!   price, status and crosshair, and the pointer's handling, which a
-//!   widget may take presses from ([`Pointer`]: its drawing tools);
+//!   widget may take presses from ([`Pointer`]: its drawing tools), with
+//!   where a widget places what it lays beside and under the plot's
+//!   header ([`header_end`], [`UNDER_HEADER`]);
 //! - [`timeline`]: when a series' slots are ([`Timeline`]), for what a
 //!   widget fixes to a time;
 //! - [`Plot`]: a plot's state, which its widget's session keeps, and when
@@ -40,7 +42,10 @@ use nsh_core::prelude::*;
 pub(crate) use self::{
     scene::{Mode, Scene},
     timeline::Timeline,
-    view::{AREA_ORIGIN, PlotLook, Pointer, area, header, plot_view},
+    view::{
+        AREA_ORIGIN, HEADER_ORIGIN, PlotLook, Pointer, UNDER_HEADER, area, header, header_end,
+        plot_view,
+    },
     viewport::{DEFAULT_CANDLES, DEFAULT_TICKS, Viewport},
 };
 use super::Shared;
@@ -54,6 +59,10 @@ pub(crate) struct Plot {
     pub viewport: Signal<Viewport>,
     /// The plot's size in points, which the view measures.
     pub size: Signal<(f32, f32)>,
+    /// Where the pointer is over the plot, in points from its top left,
+    /// which the view says: what the crosshair follows, and what a widget
+    /// shows of its own for the bar under it.
+    pub pointer: Signal<Option<(f32, f32)>>,
     /// How many times the user moved the viewport.
     moves: Cell<u64>,
     /// The series changed (or the widget asked) since the scene was made.
@@ -83,6 +92,7 @@ impl Plot {
             scene: signal(Shared::new(Scene::empty(mode))),
             viewport: signal(Viewport::showing(visible)),
             size: signal((1.0_f32, 1.0_f32)),
+            pointer: signal(None),
             moves: Cell::new(0),
             dirty,
             wake,
@@ -119,9 +129,25 @@ impl Plot {
     /// newest since it last drew: the viewport kept on the bars it looked
     /// at, and their scene in `mode`. [`Self::show`] shows them.
     pub fn frame(&self, bars: &[Candle], added: u64, mode: Mode) -> (Viewport, Scene) {
+        self.frame_with(bars, added, mode, |_, _| None)
+    }
+
+    /// [`Self::frame`] for a widget that draws more than the bars over
+    /// them: `also` says how low and high that goes on the bars under the
+    /// plot, as [`Scene::build_with`] asks it.
+    pub fn frame_with(
+        &self,
+        bars: &[Candle],
+        added: u64,
+        mode: Mode,
+        also: impl FnOnce(usize, usize) -> Option<(f64, f64)>,
+    ) -> (Viewport, Scene) {
         let held = self.viewport.get_untracked().held(added, bars.len());
         let (width, height) = self.size.get_untracked();
-        (held, Scene::build(bars, &held, mode, width, height))
+        (
+            held,
+            Scene::build_with(bars, &held, mode, width, height, also),
+        )
     }
 
     /// Shows what [`Self::frame`] made. Call it in the `batch` that sets

@@ -100,6 +100,22 @@ impl Scene {
     /// What a plot of `width` by `height` points shows of `bars` through
     /// `view`.
     pub fn build(bars: &[Candle], view: &Viewport, mode: Mode, width: f32, height: f32) -> Self {
+        Self::build_with(bars, view, mode, width, height, |_, _| None)
+    }
+
+    /// [`Self::build`] for a widget that draws more than the bars over
+    /// them (the Chart's indicators): `also` gets the bars under the plot
+    /// (the first's number and the one past the last's) and gives the
+    /// lowest and highest price of what else is drawn on them, if anything,
+    /// which the fitted range makes room for too.
+    pub fn build_with(
+        bars: &[Candle],
+        view: &Viewport,
+        mode: Mode,
+        width: f32,
+        height: f32,
+        also: impl FnOnce(usize, usize) -> Option<(f64, f64)>,
+    ) -> Self {
         let (left, right) = view.window(bars.len());
         let (width, height) = (width.max(1.0), height.max(1.0));
         let (pitch, capacity) = match mode {
@@ -124,7 +140,16 @@ impl Scene {
             (low.min(bar.low), high.max(bar.high))
         });
         let fit = if low <= high {
-            Prices::fitting(low, high)
+            let under = (
+                index(from.floor()) * bucket,
+                (index(to.ceil()) * bucket).min(bars.len()),
+            );
+            match also(under.0, under.1) {
+                Some((lowest, highest)) if lowest <= highest => {
+                    Prices::fitting(low.min(lowest), high.max(highest))
+                }
+                _ => Prices::fitting(low, high),
+            }
         } else {
             Prices::fitting(0.0, 0.0)
         };
@@ -231,15 +256,45 @@ impl Scene {
         ((at as f64 + 0.5 - from) / (to - from) * f64::from(self.width)) as f32
     }
 
-    /// The bucket under `x` points from the plot's left edge, else the
-    /// nearest one that shows (as the old crosshair snapped): its middle's
-    /// x and its bar.
-    pub fn bucket_near(&self, x: f32) -> Option<(f32, Candle)> {
+    /// The number of the bucket under `x` points from the plot's left
+    /// edge, else of the nearest one that shows (as the old crosshair
+    /// snapped); none without a bar under the plot.
+    fn nearest(&self, x: f32) -> Option<usize> {
         let (first, last) = self.showing()?;
         let (from, to) = self.span();
         let under = from + f64::from(x) / f64::from(self.width) * (to - from);
-        let at = index(under.floor()).clamp(first, last);
+        Some(index(under.floor()).clamp(first, last))
+    }
+
+    /// The bucket under `x` points from the plot's left edge, else the
+    /// nearest one that shows: its middle's x and its bar.
+    pub fn bucket_near(&self, x: f32) -> Option<(f32, Candle)> {
+        let at = self.nearest(x)?;
         Some((self.middle(at), self.buckets[at - self.first_bucket]))
+    }
+
+    /// The newest bar of the bucket [`Self::bucket_near`] finds for `x`
+    /// (the one whose close is the bucket's), by its number in the series:
+    /// where a widget reads a series of its own beside the bars (an
+    /// indicator's value).
+    pub fn bar_near(&self, x: f32) -> Option<usize> {
+        let at = self.nearest(x)?;
+        Some(((at + 1) * self.bucket).min(self.bars) - 1)
+    }
+
+    /// The middle of bucket `at`'s slots, in points from the plot's left
+    /// edge, and the newest of its bars by its number in the series; none
+    /// for a bucket the scene has no bar of. The buckets it has are
+    /// [`Self::first_bucket`] and the ones after it, as many as
+    /// [`Self::buckets`].
+    pub fn bucket_end(&self, at: usize) -> Option<(f64, usize)> {
+        let held = self.first_bucket..self.first_bucket + self.buckets.len();
+        held.contains(&at).then(|| {
+            (
+                self.x_of((at as f64 + 0.5) * self.bucket as f64),
+                ((at + 1) * self.bucket).min(self.bars) - 1,
+            )
+        })
     }
 
     /// Up to `marks` bars spread evenly over the ones that show, for the

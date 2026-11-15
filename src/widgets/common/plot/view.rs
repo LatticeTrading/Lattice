@@ -46,6 +46,13 @@ const BOTTOM: f32 = 24.0;
 /// from its top left: with the plot's size ([`Plot::size`]), what a widget
 /// places a view of its own on the plot by.
 pub(crate) const AREA_ORIGIN: (f32, f32) = (LEFT, TOP);
+/// Where a plot's header ([`header`]) starts in the plot's view, in points
+/// from its top left, and its text's size.
+pub(crate) const HEADER_ORIGIN: (f32, f32) = (14.0, 14.0);
+const HEADER_SIZE: f32 = 12.0;
+/// Where what a widget lays under its plot's header starts (rows of its
+/// own, a note), in points from the view's top left.
+pub(crate) const UNDER_HEADER: (f32, f32) = (HEADER_ORIGIN.0, 32.0);
 /// The labels the time axis shows at most (the old axis' slots).
 const TIME_MARKS: usize = 7;
 /// A label's box height, and half of it.
@@ -71,6 +78,10 @@ pub(crate) struct PlotLook {
     /// What hears the pointer over the plot before the plot does, for a
     /// widget with tools of its own there.
     pub pointer: Option<Rc<dyn Pointer>>,
+    /// How many points down from [`UNDER_HEADER`] the widget's own rows
+    /// under the header reach (the Chart's indicators), 0 for none: the
+    /// hovered bar's prices show under them.
+    pub legend: Memo<f32>,
 }
 
 /// What a widget does with the pointer over its plot before the plot does
@@ -113,11 +124,13 @@ pub(crate) fn plot_view(plot: &Rc<Plot>, look: PlotLook, over: View) -> View {
         bar_prices,
         status,
         pointer,
+        legend,
     } = look;
     let (scene, size) = (plot.scene, plot.size);
     let has_bars = computed(move || scene.with(|scene| scene.0.bars > 0));
-    // Where the pointer is over the plot, in points from its top left.
-    let hover = signal(None::<(f32, f32)>);
+    // Where the pointer is over the plot: over no view of it yet.
+    let hover = plot.pointer;
+    hover.set(None);
     let clock = use_context::<Clock>();
     let prefs = move || clock.map(Clock::get).unwrap_or_default();
     let cross = computed(move || {
@@ -157,7 +170,7 @@ pub(crate) fn plot_view(plot: &Rc<Plot>, look: PlotLook, over: View) -> View {
         .children(last_price(id, scene, size))
         .child(over)
         .child(messages(id, status, has_bars))
-        .children(crosshair(id, cross, bar_prices, size))
+        .children(crosshair(id, cross, bar_prices, legend, size))
         .child(plot_surface(id, plot.clone(), hover, pointer))
         .child(price_axis_surface(id, plot.clone()))
         .child(time_axis_surface(id, plot.clone()))
@@ -168,11 +181,18 @@ pub(crate) fn plot_view(plot: &Rc<Plot>, look: PlotLook, over: View) -> View {
 pub(crate) fn header(content: impl Fn() -> String + 'static) -> Text {
     text(content)
         .absolute()
-        .left(px(14.0))
-        .top(px(14.0))
+        .left(px(HEADER_ORIGIN.0))
+        .top(px(HEADER_ORIGIN.1))
         .number_of_lines(1)
-        .text_size(px(12.0))
+        .text_size(px(HEADER_SIZE))
         .text_color(theme::TEXT)
+}
+
+/// Where a [`header`] saying `text` ends, in points from the plot's
+/// view's left edge: what a widget places a control of its own beside its
+/// header by.
+pub(crate) fn header_end(text: &str) -> f32 {
+    HEADER_ORIGIN.0 + text.chars().count() as f32 * HEADER_SIZE * ADVANCE
 }
 
 /// The plot: one shader view per tile of the scene, side by side.
@@ -469,11 +489,13 @@ impl Cross {
 
 /// The crosshair: a line down the hovered bar and one across at the
 /// pointer, the pointer's price on the axis, and the bar's prices in a box
-/// beside the pointer when `bar_prices` says so.
+/// beside the pointer when `bar_prices` says so, under the widget's own
+/// rows (`legend` points of them) when it has some.
 fn crosshair(
     id: &str,
     cross: Memo<Option<Cross>>,
     bar_prices: Memo<bool>,
+    legend: Memo<f32>,
     size: Signal<(f32, f32)>,
 ) -> [View; 4] {
     const SIZE: f32 = 11.0;
@@ -540,7 +562,16 @@ fn crosshair(
             let rightmost = (LEFT + plot_width + RIGHT - width() - 4.0).max(LEFT + 4.0);
             px((LEFT + of(|cross| cross.pointer) + 12.0).clamp(LEFT + 4.0, rightmost))
         })
-        .top(px(TOP + 8.0))
+        .top(move || {
+            // Under the widget's rows while the plot has the room, never
+            // off its bottom.
+            let lowest = TOP + size.get().1 - (5.0 * LABEL + 8.0);
+            let top = match legend.get() {
+                rows if rows > 0.0 => (UNDER_HEADER.1 + rows + 4.0).min(lowest),
+                _ => TOP + 8.0,
+            };
+            px(top.max(TOP + 8.0))
+        })
         .w(move || px(width()))
         .flex_col()
         .px(px(8.0))

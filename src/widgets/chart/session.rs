@@ -1,7 +1,8 @@
 //! The chart's session ([`ChartSession`]): the feed its settings chart and
 //! its plot, whose viewport and scene its view shows (the widget's data,
-//! described in the parent module), and when its series' slots are, which
-//! its drawings are placed by ([`ChartSession::with_times`]).
+//! described in the parent module), its indicators over that feed's bars
+//! ([`Computed`]), and when its series' slots are, which its drawings are
+//! placed by ([`ChartSession::with_times`]).
 
 use std::{
     cell::{Cell, RefCell},
@@ -10,13 +11,16 @@ use std::{
 
 use nsh_core::prelude::*;
 
-use super::{ChartSettings, settings::Interval};
+use super::{ChartSettings, indicators::Computed, settings::Interval};
 use crate::{
     data::{
         SessionScope,
         ferris::{Candle, CandleFeed, Ferris, MarketSelection, Timeframe, TradeFeed},
     },
-    widgets::common::plot::{DEFAULT_CANDLES, DEFAULT_TICKS, Mode, Plot, Timeline, Viewport},
+    widgets::common::{
+        Shared,
+        plot::{DEFAULT_CANDLES, DEFAULT_TICKS, Mode, Plot, Timeline, Viewport},
+    },
 };
 
 /// The ticks a tick chart keeps (the old chart's bound).
@@ -217,13 +221,16 @@ impl Source {
     }
 }
 
-/// A chart's session state: its plot, what its view says about its data,
-/// and the feed it charts (which the effects `new` starts keep on its
-/// settings).
+/// A chart's session state: its plot, its indicators over its bars, what
+/// its view says about its data, and the feed it charts (which the
+/// effects `new` starts keep on its settings).
 pub(crate) struct ChartSession {
     /// Its plot. Where it looks starts over when the market or the interval
     /// changes.
     pub(super) plot: Rc<Plot>,
+    /// Its settings' indicators over the bars its plot's scene shows: made
+    /// with the scene, when a bar or an indicator changed since.
+    pub(super) indicators: Signal<Shared<Computed>>,
     pub(super) status: Signal<Status>,
     /// A page of older candles is on its way.
     pub(super) loading_older: Signal<bool>,
@@ -239,24 +246,37 @@ impl ChartSession {
         settings: Signal<ChartSettings>,
     ) -> Self {
         let plot = Plot::new(Mode::Candles, DEFAULT_CANDLES);
+        let indicators = signal(Shared::new(Computed::default()));
         let status = signal(Status::LoadingHistory);
         let loading_older = signal(false);
 
         let source: Rc<RefCell<Option<Source>>> = Rc::default();
         // The source's `appended` when the scene was last made.
         let appended = Rc::new(Cell::new(0_u64));
+        // A bar or an indicator changed since the indicators were computed.
+        let stale = Rc::new(Cell::new(true));
+        // What a change of either does: the indicators are stale, and the
+        // plot is marked.
+        let changed: Rc<dyn Fn()> = {
+            let (stale, mark) = (stale.clone(), plot.marker());
+            Rc::new(move || {
+                stale.set(true);
+                mark();
+            })
+        };
 
         // The feed follows the market and interval the settings chart.
         let market = computed(move || settings.with(ChartSettings::market));
         let interval = computed(move || settings.with(ChartSettings::interval));
         {
             let (source, appended, plot) = (source.clone(), appended.clone(), plot.clone());
+            let changed = changed.clone();
             effect(move || {
                 let (market, interval) = (market.get(), interval.get());
                 untracked(|| {
                     // Leased before the old one goes, so what they share
                     // (a market's trades) keeps streaming.
-                    let next = Source::open(&ferris, &market, interval, plot.marker());
+                    let next = Source::open(&ferris, &market, interval, changed.clone());
                     appended.set(next.appended());
                     let previous = source.borrow_mut().replace(next);
                     drop(previous);
@@ -265,7 +285,16 @@ impl ChartSession {
                         Interval::Candles(_) => DEFAULT_CANDLES,
                     }));
                 });
-                plot.mark();
+                changed();
+            });
+        }
+
+        // The indicators follow the settings' too.
+        {
+            let listed = computed(move || settings.with(|settings| settings.indicators().to_vec()));
+            effect(move || {
+                listed.with(|_| ());
+                changed();
             });
         }
 
@@ -278,6 +307,7 @@ impl ChartSession {
             let asked = Rc::new(Cell::new(0_u64));
             scope.while_visible(move || {
                 let (source, appended, asked) = (source.clone(), appended.clone(), asked.clone());
+                let stale = stale.clone();
                 let drawn = plot.clone();
                 plot.drive(move || {
                     let plot = &drawn;
@@ -287,11 +317,25 @@ impl ChartSession {
                     };
                     let now = source.appended();
                     let added = now.saturating_sub(appended.replace(now));
-                    let ((held, next), said) = source.with_bars(|bars| {
-                        (
-                            plot.frame(bars, added, source.mode()),
-                            source.status(bars.is_empty()),
-                        )
+                    let ((held, next), computed, said) = source.with_bars(|bars| {
+                        // Computed again only over other bars or for other
+                        // indicators: a pan or a zoom draws the same ones.
+                        let fresh = stale.replace(false).then(|| {
+                            Shared::new(settings.with_untracked(|settings| {
+                                Computed::of(settings.indicators(), bars)
+                            }))
+                        });
+                        let computed = fresh.clone().unwrap_or_else(|| indicators.get_untracked());
+                        // The fitted prices make room for their lines.
+                        let frame = plot.frame_with(bars, added, source.mode(), |from, to| {
+                            computed.0.reach(from, to)
+                        });
+                        (frame, fresh, source.status(bars.is_empty()))
+                    });
+                    // A chart without indicators stays without, untold.
+                    let computed = computed.filter(|computed| {
+                        let had = indicators.with_untracked(|shown| !shown.0.is_empty());
+                        had || !computed.0.is_empty()
                     });
                     if let Source::Candles(feed, _) = source {
                         let near_oldest = next.left <= (next.right - next.left) * OLDER_WITHIN;
@@ -306,6 +350,9 @@ impl ChartSession {
                     };
                     batch(|| {
                         plot.show(held, next);
+                        if let Some(computed) = computed {
+                            indicators.try_set(computed);
+                        }
                         status.try_set(said);
                         loading_older.try_set(older);
                     });
@@ -315,6 +362,7 @@ impl ChartSession {
 
         Self {
             plot,
+            indicators,
             status,
             loading_older,
             source,

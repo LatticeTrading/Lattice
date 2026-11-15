@@ -119,7 +119,8 @@ roles! {
     ASK = "ask",
 
     // Link colors: the five groups a widget's market can be linked to. A
-    // theme draws them from its own palette; they must stay told apart.
+    // theme draws them from its own palette; they must stay told apart,
+    // which is why a chart's indicators are drawn in them too.
     /// The green link group: the dot of what is linked to it.
     LINK_GREEN = "link-green",
     /// The red link group.

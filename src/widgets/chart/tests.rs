@@ -1,16 +1,19 @@
 use std::{
+    collections::HashMap,
     sync::{Arc, Mutex},
     time::Duration,
 };
 
 use nsh_core::{
-    MountItem,
+    MountItem, NodeId,
     element::Root,
     platform::{Idiom, Os},
     prelude::*,
 };
 use nsh_engine::{EngineConfig, HttpBody, HttpRequest};
-use nsh_testing::{Headless, MemoryStorage, StubNetwork, StubReply, StubResponse, StubRoute, WAIT};
+use nsh_testing::{
+    Headless, MemoryStorage, Screen, StubNetwork, StubReply, StubResponse, StubRoute, WAIT,
+};
 use serde_json::{Value, json};
 
 use super::{
@@ -18,6 +21,7 @@ use super::{
         Anchor, Draft, Drawing, Emphasis, Grip, Ink, Item, Kind, Scale, hit, market_key, moved,
         paint,
     },
+    indicators::{self, COLORS, Computed, Indicator},
     settings::{ChartSettings, Interval},
 };
 use crate::{
@@ -32,7 +36,7 @@ use crate::{
     widgets::{
         WidgetKind,
         common::{
-            books::testing::Record,
+            books::testing::{Record, same},
             plot::{Mode, Scene, Timeline, Viewport},
         },
         picker::Picker,
@@ -855,4 +859,458 @@ fn drawings_are_made_picked_moved_and_removed_on_the_plot() {
     .unwrap();
     assert!(app.screen().matches("Trend line").unwrap());
     assert!(!app.screen().matches("Show drawing tools").unwrap());
+}
+
+/// One-minute bars from time 0, each all at its close of `closes`.
+fn closing(closes: &[f64]) -> Vec<Candle> {
+    let bars = closes.iter().enumerate();
+    bars.map(|(bar, close)| Candle {
+        time: bar as f64 * 60.0,
+        open: *close,
+        high: *close,
+        low: *close,
+        close: *close,
+        volume: None,
+    })
+    .collect()
+}
+
+/// A `kind` of indicator computed with `inputs`, one a input of its kind.
+fn indicator(kind: indicators::Kind, inputs: &[f64]) -> Indicator {
+    let inputs = inputs.iter().enumerate();
+    inputs.fold(Indicator::new(kind, &[]), |indicator, (at, value)| {
+        indicator.with_input(at, *value)
+    })
+}
+
+/// Whether `line` has `values` at the bars from the first on, but for
+/// rounding.
+fn runs(line: &indicators::Line, values: &[Option<f64>]) -> bool {
+    values
+        .iter()
+        .enumerate()
+        .all(|(bar, value)| match (line.at(bar), value) {
+            (Some(left), Some(right)) => close(left, *right),
+            (None, None) => true,
+            _ => false,
+        })
+}
+
+#[test]
+fn indicators_are_saved_with_their_inputs_and_read_leniently() {
+    use indicators::Kind;
+    let saved = |settings: &ChartSettings| serde_json::to_value(settings).unwrap();
+    assert!(ChartSettings::default().indicators().is_empty());
+
+    // One starts with its kind's inputs as they start, showing, in the
+    // first color no other has.
+    let ema = Indicator::new(Kind::Ema, &[]);
+    assert_eq!(ema.title(), "EMA 20");
+    assert_eq!((ema.color(), ema.hidden()), (LinkColor::Yellow, false));
+    let bands = Indicator::new(Kind::Bands, std::slice::from_ref(&ema))
+        .with_input(1, 2.5)
+        .with_hidden(true);
+    assert_eq!(bands.title(), "BB 20 2.5");
+    assert_eq!(bands.color(), LinkColor::Blue);
+    let settings = ChartSettings::default().with_indicators(vec![ema.clone(), bands]);
+    let value = saved(&settings);
+    assert_eq!(
+        value,
+        json!({
+            "indicators": [
+                { "type": "ema", "length": 20, "color": "yellow" },
+                { "type": "bb", "length": 20, "mult": 2.5, "color": "blue", "hidden": true },
+            ],
+        })
+    );
+    assert_eq!(ChartSettings::from(value), settings);
+
+    // Once every color is taken they go round again.
+    let mut five: Vec<Indicator> = Vec::new();
+    for _ in COLORS {
+        let next = Indicator::new(Kind::Ema, &five);
+        five.push(next);
+    }
+    let colors: Vec<LinkColor> = five.iter().map(Indicator::color).collect();
+    assert_eq!(colors, COLORS);
+    assert_eq!(Indicator::new(Kind::Tema, &five).color(), COLORS[0]);
+
+    // An input takes the nearest of its values, and what it starts as
+    // for no number.
+    let length = |value: f64| ema.clone().with_input(0, value).inputs()[0];
+    assert_eq!((length(0.0), length(20.4), length(1e9)), (1.0, 20.0, 500.0));
+    assert_eq!(length(f64::NAN), 20.0);
+
+    // What is no indicator is left out (a kind Lattice does not know),
+    // and one that is reads with what it can: an input of the wrong type
+    // as it starts, one out of its range as the nearest in it.
+    let damaged = ChartSettings::from(json!({
+        "indicators": [
+            { "type": "ema", "length": "9", "color": "purple" },
+            { "type": "tema", "length": 9000.4, "color": "red", "hidden": "yes" },
+            { "type": "rsi", "length": 14 },
+            { "type": "bb", "length": 0, "mult": 2.2, "hidden": true },
+            "ema",
+        ],
+    }));
+    let read = damaged.indicators();
+    let titles: Vec<String> = read.iter().map(Indicator::title).collect();
+    assert_eq!(titles, ["EMA 20", "TEMA 500", "BB 1 2"]);
+    let colors: Vec<LinkColor> = read.iter().map(Indicator::color).collect();
+    assert_eq!(
+        colors,
+        [LinkColor::Yellow, LinkColor::Red, LinkColor::Yellow]
+    );
+    let hidden: Vec<bool> = read.iter().map(Indicator::hidden).collect();
+    assert_eq!(hidden, [false, false, true]);
+    let none = ChartSettings::from(json!({ "indicators": "ema" }));
+    assert_eq!(none, ChartSettings::default());
+}
+
+#[test]
+fn indicators_are_computed_from_the_closes() {
+    use indicators::Kind;
+    let rising = closing(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
+
+    // An average over three bars starts at the third, as their mean, and
+    // then goes half the way to each close: a bar behind a steady rise.
+    let ema = indicator(Kind::Ema, &[3.0]).lines(&rising);
+    let [average] = ema.as_slice() else {
+        panic!("an average is one line: {ema:?}");
+    };
+    let behind = [None, None, Some(2.0), Some(3.0), Some(4.0), Some(5.0)];
+    assert!(runs(average, &behind) && average.at(6) == Some(6.0));
+    assert!(!average.is_quiet() && average.at(7).is_none());
+
+    // The triple one starts three averages in (each a bar, over two),
+    // and is on a steady rise.
+    let tema = indicator(Kind::Tema, &[2.0]).lines(&rising);
+    let on = [None, None, None, Some(4.0), Some(5.0), Some(6.0), Some(7.0)];
+    assert!(tema.len() == 1 && runs(&tema[0], &on), "{tema:?}");
+
+    // Bands: the mean of the last bars, and two of their standard
+    // deviations above and below it, drawn fainter.
+    let spread = closing(&[2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]);
+    let bands = indicator(Kind::Bands, &[8.0, 2.0]).lines(&spread);
+    let [basis, upper, lower] = bands.as_slice() else {
+        panic!("bands are three lines: {bands:?}");
+    };
+    assert!(basis.at(6).is_none() && runs(basis, &[None; 7]));
+    assert!(close(basis.at(7).unwrap(), 5.0));
+    assert!(close(upper.at(7).unwrap(), 9.0) && close(lower.at(7).unwrap(), 1.0));
+    assert_eq!(
+        (basis.is_quiet(), upper.is_quiet(), lower.is_quiet()),
+        (false, true, true)
+    );
+    // They move with the bars: flat closes have no spread.
+    let narrow = indicator(Kind::Bands, &[2.0, 2.0]).lines(&closing(&[1.0, 3.0, 3.0]));
+    assert!(runs(&narrow[0], &[None, Some(2.0), Some(3.0)]));
+    assert!(runs(&narrow[1], &[None, Some(4.0), Some(3.0)]));
+    assert!(runs(&narrow[2], &[None, Some(0.0), Some(3.0)]));
+
+    // Too few bars compute nothing, and a hidden one has no line.
+    let long = indicator(Kind::Ema, &[20.0]).lines(&rising);
+    assert!(runs(&long[0], &[None; 7]));
+    let three = indicator(Kind::Ema, &[3.0]);
+    let hidden = three.clone().with_hidden(true);
+    assert!(hidden.lines(&rising).is_empty());
+
+    // All of a chart's: how far they reach over some bars (what the
+    // fitted prices make room for), and each one's lines while it is as
+    // it was computed.
+    let computed = Computed::of(&[three.clone(), hidden.clone()], &rising);
+    assert_eq!(computed.bars(), 7);
+    assert_eq!(computed.reach(0, 7), Some((2.0, 6.0)));
+    assert_eq!(computed.reach(3, 5), Some((3.0, 4.0)));
+    assert_eq!(computed.reach(0, 2), None);
+    assert!(
+        computed
+            .lines_of(0, &three)
+            .is_some_and(|lines| lines.len() == 1)
+    );
+    assert!(computed.lines_of(0, &hidden).is_none());
+    assert!(computed.lines_of(2, &three).is_none());
+    assert!(!computed.is_empty() && !computed.is_blank());
+    let unseen = Computed::of(&[hidden], &rising);
+    assert!(!unseen.is_empty() && unseen.is_blank());
+    assert!(Computed::default().is_empty());
+}
+
+#[test]
+fn indicator_lines_are_painted_through_their_buckets() {
+    use indicators::Kind;
+    // `plotted`'s bars, each closing a price above the one before, from
+    // 100: an average over three is at 99 and its bar's number.
+    let (mut bars, _) = plotted();
+    for (bar, candle) in bars.iter_mut().enumerate() {
+        candle.close = 100.0 + bar as f64;
+    }
+    let scene = Scene::build(&bars, &Viewport::showing(50.0), Mode::Candles, 500.0, 116.0);
+    let shade = |hue: f32| hsla(hue, 1.0, 0.5, 1.0);
+    let ink = indicators::Ink {
+        plain: [0.0, 0.1, 0.2, 0.3, 0.4].map(shade),
+        quiet: [0.5, 0.6, 0.7, 0.8, 0.9].map(shade),
+    };
+    let painted = |listed: &[Indicator], scene: &Scene| {
+        let computed = Computed::of(listed, &bars);
+        Record::of(&indicators::paint(scene, &computed, &ink).finish())
+    };
+    let starts_at =
+        |from: (f32, f32), x: f32, y: f32| (from.0 - x).abs() < 1e-3 && (from.1 - y).abs() < 1e-3;
+
+    // One line through the middle of every bucket the scene has (the
+    // fifty under the plot and the one before them), in its color: from
+    // bar 49's 148, five points left of the plot, to bar 99's.
+    let ema = indicator(Kind::Ema, &[3.0]);
+    let line = painted(std::slice::from_ref(&ema), &scene);
+    assert_eq!(line.lines.len(), 50);
+    assert!(
+        starts_at(line.lines[0].from, -5.0, 60.0),
+        "{:?}",
+        line.lines[0]
+    );
+    assert!(starts_at(line.lines[1].from, 5.0, 59.0));
+    assert!(starts_at(line.lines[49].from, 485.0, 11.0));
+    let yellow = ink.plain[LinkColor::Yellow.index()];
+    assert!(line.lines.iter().all(|ruled| same(ruled.color, yellow)));
+    assert!(line.lines.iter().all(|ruled| !ruled.dashed) && line.texts.is_empty());
+
+    // It starts where its first value is: bar 59's, of sixty bars.
+    let late = painted(&[indicator(Kind::Ema, &[60.0])], &scene);
+    assert_eq!(late.lines.len(), 40);
+    assert!((late.lines[0].from.0 - 95.0).abs() < 1e-3);
+
+    // Bands are their basis and, fainter, the two about it; a hidden
+    // indicator paints nothing, and the ones after it still do.
+    let bands = Indicator::new(Kind::Bands, std::slice::from_ref(&ema));
+    let hidden = ema.clone().with_hidden(true);
+    let both = painted(&[hidden, bands], &scene);
+    let blue = LinkColor::Blue.index();
+    assert_eq!(both.lines.len(), 150);
+    assert_eq!(both.ruled(ink.plain[blue]).len(), 50);
+    assert_eq!(both.ruled(ink.quiet[blue]).len(), 100);
+
+    // Where bars share a bucket (two each, on a plot a point a bar), the
+    // line goes through the newest one's value over the bucket's middle:
+    // from the second bucket, the first to hold a bar with one.
+    let merged = Scene::build(
+        &bars,
+        &Viewport::showing(100.0),
+        Mode::Candles,
+        100.0,
+        116.0,
+    );
+    assert_eq!(merged.bucket, 2);
+    let line = painted(std::slice::from_ref(&ema), &merged);
+    assert_eq!(line.lines.len(), 48);
+    assert!(
+        starts_at(line.lines[0].from, 3.0, 106.0),
+        "{:?}",
+        line.lines[0]
+    );
+}
+
+#[test]
+fn indicators_are_added_hidden_set_and_removed_on_the_plot() {
+    let network = Arc::new(StubNetwork::new([(
+        format!("POST {FERRIS}/v1/fetchOHLCV"),
+        StubRoute::Handler(Arc::new(stub_candles)),
+    )]));
+    let storage = MemoryStorage::new([]);
+    let mut config = EngineConfig::new(Root::of::<Harness>());
+    config.viewport = Size::new(px(1280.0), px(800.0));
+    config.storage = Some(storage.clone());
+    config.network = Some(network);
+    config.environment.os = Os::Windows;
+    config.environment.idiom = Idiom::Desktop;
+    let mut app = Headless::start(config).unwrap();
+    // How many lines each canvas ruled when it was last painted (an icon
+    // is a canvas too), and how opaque each view is.
+    let ruled = Arc::new(Mutex::new(HashMap::<NodeId, usize>::new()));
+    let opacities = Arc::new(Mutex::new(HashMap::<NodeId, f32>::new()));
+    {
+        let (ruled, opacities) = (ruled.clone(), opacities.clone());
+        app.observe(move |_, batch| {
+            for item in &batch.items {
+                match item {
+                    MountItem::Canvas { id, drawing } => {
+                        let lines = Record::of(drawing).lines.len();
+                        ruled.lock().unwrap().insert(*id, lines);
+                    }
+                    MountItem::ViewStyle { id, style } => {
+                        opacities.lock().unwrap().insert(*id, style.opacity);
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+    // The view whose test id is `id`.
+    let node = |screen: &Screen, id: &str| -> Option<NodeId> {
+        let nodes = screen.layout_nodes().into_iter();
+        nodes
+            .filter(|node| node.test_id.as_deref() == Some(id))
+            .map(|node| node.id)
+            .next()
+    };
+    // Whether the row's control whose test id ends with `name` shows.
+    let control = |screen: &Screen, name: &str| -> bool {
+        let control = node(screen, &format!("chart-indicator-0-{name}")).expect("the control");
+        opacities.lock().unwrap().get(&control).copied() == Some(1.0)
+    };
+    // The lines the indicators' layer shows.
+    let lines = |screen: &Screen| -> usize {
+        let layer = node(screen, "chart-indicator-lines").expect("the indicators' layer");
+        ruled.lock().unwrap().get(&layer).copied().unwrap_or(0)
+    };
+    // What the chart's tab saved as its indicators.
+    let saved = move || -> Vec<Value> {
+        let entries = storage.entries();
+        let workspace = entries.get("lattice.workspace.v1");
+        let workspace: Option<Value> =
+            workspace.and_then(|workspace| serde_json::from_str(workspace).ok());
+        let listed = workspace.and_then(|workspace| member(&workspace, "indicators").cloned());
+        listed
+            .and_then(|listed| listed.as_array().cloned())
+            .unwrap_or_default()
+    };
+    // The text after `name` on screen: a row's values after its name.
+    let after = |screen: &Screen, name: &str| -> Option<String> {
+        let texts = screen.texts();
+        let at = texts.iter().position(|text| *text == name)?;
+        texts.get(at + 1).map(|text| (*text).to_owned())
+    };
+    let pause = Duration::from_millis(200);
+
+    app.wait_for("BTC/USDT  ·  1m  ·  Bybit").unwrap();
+    app.wait_for_gone("Loading historical candles...", WAIT)
+        .unwrap();
+    app.wait_for("1108.08").unwrap();
+    assert!(saved().is_empty() && lines(app.screen()) == 0);
+
+    // The badge floats on the plot beside its header: 8 points right of
+    // the 25 characters it says (7.2 points each, from 14), level with
+    // it.
+    let surface = placed(&app, "chart-plot").expect("the plot");
+    let (left, top) = (surface.origin.x.0 - 12.0, surface.origin.y.0 - 12.0);
+    let badge = placed(&app, "chart-indicators").expect("the badge");
+    assert_eq!((badge.size.width.0, badge.size.height.0), (22.0, 16.0));
+    assert_eq!(
+        (badge.origin.x.0 - left, badge.origin.y.0 - top),
+        (202.0, 14.0)
+    );
+
+    // Its menu lists the kinds; a press on one adds it to the chart as it
+    // starts, and closes the menu.
+    app.press("Indicators").unwrap();
+    app.wait_for("id:chart-indicator-menu").unwrap();
+    for kind in indicators::Kind::ALL {
+        assert!(app.shows(kind.name()), "{}", kind.name());
+    }
+    app.press("Add Exponential Moving Average").unwrap();
+    app.wait_for_gone("id:chart-indicator-menu", WAIT).unwrap();
+    app.wait_until("the average", WAIT, |_| saved().len() == 1)
+        .unwrap();
+    assert_eq!(
+        saved(),
+        [json!({ "type": "ema", "length": 20, "color": "yellow" })]
+    );
+    // It is drawn through the 220 slots that show and the one before
+    // them...
+    app.wait_until("its line", WAIT, |screen| lines(screen) == 220)
+        .unwrap();
+    // ...and listed under the header, with its value at the newest bar:
+    // within the stub's prices.
+    app.wait_for("EMA 20").unwrap();
+    let row = placed(&app, "chart-indicator-0").expect("its row");
+    assert_eq!((row.origin.x.0 - left, row.origin.y.0 - top), (10.0, 32.0));
+    assert_eq!(row.size.height.0, 18.0);
+    let newest = after(app.screen(), "EMA 20").expect("its value");
+    let value: f64 = newest.parse().expect("a price");
+    assert!((1_000.0..1_100.0).contains(&value), "{newest}");
+    assert!(app.shows("1108.08"));
+
+    // Its controls show while the pointer is over its row.
+    const CONTROLS: [&str; 3] = ["hide", "settings", "remove"];
+    assert!(CONTROLS.iter().all(|name| !control(app.screen(), name)));
+    app.hover("id:chart-indicator-0").unwrap();
+    app.wait_until("the row's controls", WAIT, |screen| {
+        CONTROLS.iter().all(|name| control(screen, name))
+    })
+    .unwrap();
+
+    // With the pointer on the plot, they are gone, the hovered bar's
+    // prices show under the row (22 points below where it starts), and
+    // the row has the average at that bar, which is not the newest.
+    app.hover("id:chart-plot").unwrap();
+    app.wait_until("the hovered bar's average", WAIT, |screen| {
+        after(screen, "EMA 20").is_some_and(|hovered| hovered != newest)
+    })
+    .unwrap();
+    assert!(CONTROLS.iter().all(|name| !control(app.screen(), name)));
+    let hover = placed(&app, "chart-hover").expect("the hovered bar's prices");
+    assert_eq!(hover.origin.y.0 - top, 54.0);
+
+    // Hidden, it is off the plot and stays in the legend, without a
+    // value; shown again, it is back.
+    app.press("Hide EMA 20").unwrap();
+    app.wait_until("no line", WAIT, |screen| lines(screen) == 0)
+        .unwrap();
+    assert_eq!(saved()[0]["hidden"], true);
+    assert!(app.shows("EMA 20") && !app.screen().matches("Hide EMA 20").unwrap());
+    assert!(!app.shows(&newest));
+    // What shows it again stays, with the pointer elsewhere.
+    app.wait_until("the control that shows it", WAIT, |screen| {
+        control(screen, "hide")
+    })
+    .unwrap();
+    assert!(!control(app.screen(), "remove"));
+    app.press("Show EMA 20").unwrap();
+    app.wait_until("its line again", WAIT, |screen| lines(screen) == 220)
+        .unwrap();
+    assert_eq!(saved()[0].get("hidden"), None);
+
+    // Its settings: its length, typed, and its color, picked.
+    app.press("EMA 20 settings").unwrap();
+    app.wait_for("id:chart-indicator-settings").unwrap();
+    app.clear("id:chart-indicator-length").unwrap();
+    app.type_text("id:chart-indicator-length", "50\n").unwrap();
+    app.wait_for("EMA 50").unwrap();
+    assert_eq!(saved()[0]["length"], 50);
+    app.press("Color").unwrap();
+    app.press("Orange").unwrap();
+    app.wait_until("its color", WAIT, |_| saved()[0]["color"] == "orange")
+        .unwrap();
+    app.press("Close EMA settings").unwrap();
+    app.wait_for_gone("id:chart-indicator-settings", WAIT)
+        .unwrap();
+
+    // Another takes the first color that is free, and the row under the
+    // first. Bands are three lines, and reach past the bars where the
+    // stub's prices fall back: the fitted prices make room for them.
+    app.press("Indicators").unwrap();
+    app.press("Add Bollinger Bands").unwrap();
+    app.wait_for("BB 20 2").unwrap();
+    assert_eq!(
+        saved()[1],
+        json!({ "type": "bb", "length": 20, "mult": 2.0, "color": "yellow" })
+    );
+    app.wait_until("four lines", WAIT, |screen| lines(screen) == 4 * 220)
+        .unwrap();
+    let second = placed(&app, "chart-indicator-1").expect("the bands' row");
+    assert_eq!(second.origin.y.0 - top, 50.0);
+    app.wait_for_gone("1108.08", WAIT).unwrap();
+
+    // Removed, they are gone from the plot, the legend and the settings.
+    app.press("Remove BB 20 2").unwrap();
+    app.wait_until("the average alone", WAIT, |_| saved().len() == 1)
+        .unwrap();
+    app.wait_for("1108.08").unwrap();
+    app.press("Remove EMA 50").unwrap();
+    app.wait_until("no indicator", WAIT, |_| saved().is_empty())
+        .unwrap();
+    app.wait_until("no line", WAIT, |screen| lines(screen) == 0)
+        .unwrap();
+    app.wait(pause).unwrap();
+    assert!(!app.shows("EMA 50") && placed(&app, "chart-indicator-0").is_none());
 }

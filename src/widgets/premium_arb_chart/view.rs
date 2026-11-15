@@ -83,6 +83,7 @@ fn plot(session: &Rc<PremiumArbSession>, saved: Memo<PremiumArbSettings>) -> Vie
         bar_prices: computed(|| false),
         status: computed(move || status.get().text()),
         pointer: None,
+        legend: computed(|| 0.0),
     };
     let header = plot::header(move || {
         saved.with(|settings| {

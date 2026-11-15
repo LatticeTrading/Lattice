@@ -49,6 +49,13 @@ const RULE: f32 = 0.5;
 const POINTER: f32 = 0.7;
 const MIRROR: f32 = 0.35;
 const BAND: f32 = 0.05;
+/// How opaque the shade under the first line of the pointer's box is, of
+/// the text's color, and the band under each side's line, of the side's.
+const HEAD: f32 = 0.04;
+const SIDE: f32 = 0.1;
+/// What the pointer's box stresses is written in: its distance, its prices
+/// and both books' together.
+const STRONG: &str = "500 11px IBM Plex Mono";
 
 /// The overlay of `frame` in `colors`, with the pointer at `pointer`
 /// (points from the canvas's top left) while it is over the widget.
@@ -568,11 +575,21 @@ struct Held<'a> {
     sides: Option<[(f64, f64); 2]>,
 }
 
+/// A number of the pointer's box, and the asset it is in, where its books
+/// agree on one.
+type Number<'a> = (String, Option<&'a str>);
+
 /// The pointer's box: how far from the center the pointer is, and what
 /// each book holds no further from it than that: its bids down to the
 /// band's low price and its asks up to its high one, as an amount of the
 /// base asset and as its value in the quote asset; then both books'
 /// together.
+///
+/// It reads from the top: the distance on a shaded line, the books' names
+/// over their columns, then a band a side in its color, saying how far its
+/// prices go, over its two lines. What is read first is stressed
+/// ([`STRONG`]): the distance, the two prices and both books' together;
+/// what is only a name is dim: the lines' names and the numbers' assets.
 fn pointer_box(pen: &mut Pen, frame: &Frame, colors: &Colors, pointer: (f64, f64), price: f64) {
     let layers = &frame.config.layers;
     if layers.is_empty() {
@@ -618,13 +635,9 @@ fn pointer_box(pen: &mut Pen, frame: &Frame, colors: &Colors, pointer: (f64, f64
     // Both books' together are in an asset only while the books share it.
     let base = shared(layers, |layer| layer.market.base.as_str());
     let quote = shared(layers, |layer| layer.market.quote.as_str());
-    let with = |number: f64, asset: Option<&str>| match asset {
-        Some(asset) => format!("{} {asset}", depth_text(number)),
-        None => depth_text(number),
-    };
-    // Each column's four numbers: its bids' amount and value, then its
-    // asks'.
-    let numbers: Vec<Option<[String; 4]>> = columns
+    // Each column's four numbers, each with the asset it is in: its bids'
+    // amount and value, then its asks'.
+    let numbers: Vec<Option<[Number; 4]>> = columns
         .iter()
         .map(|column| {
             let (base, quote) = match column.book {
@@ -636,36 +649,53 @@ fn pointer_box(pen: &mut Pen, frame: &Frame, colors: &Colors, pointer: (f64, f64
             };
             let [bids, asks] = column.sides?;
             Some([
-                with(bids.0, base),
-                with(bids.1, quote),
-                with(asks.0, base),
-                with(asks.1, quote),
+                (depth_text(bids.0), base),
+                (depth_text(bids.1), quote),
+                (depth_text(asks.0), base),
+                (depth_text(asks.1), quote),
             ])
         })
         .collect();
 
     let size = 11.0;
     let padding = 12.0;
+    let space = width_of(" ", size);
     let names = width_of("Amount", size) + 12.0;
     let mut column = 96.0_f64;
     for (held, numbers) in columns.iter().zip(&numbers) {
-        let mut fit = |text: &str| column = column.max(width_of(text, size) + 12.0);
+        let mut fit = |width: f64| column = column.max(width + 12.0);
         if let Some(layer) = held.book {
-            fit(exchanges::display_name(&layer.market.exchange));
-            fit(&layer.market.symbol);
+            fit(width_of(
+                exchanges::display_name(&layer.market.exchange),
+                size,
+            ));
+            fit(width_of(&layer.market.symbol, size));
         }
-        numbers.iter().flatten().for_each(|number| fit(number));
+        for (number, asset) in numbers.iter().flatten() {
+            let asset = asset.map_or(0.0, |asset| space + width_of(asset, size));
+            fit(width_of(number, size) + asset);
+        }
     }
     let column = column.min(180.0);
     let distance = format!("±{percent:.2}%");
     let (bid_price, ask_price) = (price_text(low), price_text(high));
-    let headed =
-        |name: &str, value: &str| padding * 3.0 + width_of(name, size) + width_of(value, size);
+    // A line's name, and after it the price or the distance it is about.
+    let headed = |name: &str, value: &str| {
+        padding * 2.0 + width_of(name, size) + space + width_of(value, size)
+    };
     let box_width = (padding * 2.0 + names + column * columns.len() as f64)
         .max(headed("From mid", &distance))
         .max(headed("Bids to", &bid_price))
         .max(headed("Asks to", &ask_price));
-    let box_height = 200.0;
+    let box_height = 190.0;
+    // The first line's shade, the books' names under it, and each side's
+    // band, with the side's own lines from the band's top.
+    let (head, exchange, symbol) = (28.0, 42.0, 57.0);
+    let (band, name, amount, value) = (20.0, 10.0, 31.0, 48.0);
+    let sides = [
+        ("Bids to", colors.bid, &bid_price, 68.0),
+        ("Asks to", colors.ask, &ask_price, 128.0),
+    ];
     let margin = 6.0_f64.min(frame.width / 4.0).min(frame.height / 4.0);
     let scale = 1.0_f64
         .min((frame.width - margin * 2.0) / box_width)
@@ -696,67 +726,89 @@ fn pointer_box(pen: &mut Pen, frame: &Frame, colors: &Colors, pointer: (f64, f64
             .translate(x as f32, y as f32)
             .scale(scale as f32, scale as f32)
     });
-    for rule in [29.5, 72.5, 136.5] {
-        pen.line(padding, rule, box_width - padding, rule);
-    }
-    // What each line of the box is about, and at its right end the price
-    // or the distance it is about.
-    for (name, color, value, y) in [
-        ("From mid", colors.dim, &distance, 15.0),
-        ("Bids to", colors.bid, &bid_price, 87.0),
-        ("Asks to", colors.ask, &ask_price, 151.0),
-    ] {
-        pen.align(CanvasTextAlign::Left);
+    // Inside the box's edge: the first line's shade, ruled off from the
+    // books, and a band a side with a bar of its color over the edge.
+    pen.fill(faded(colors.text, HEAD));
+    pen.rect(1.0, 1.0, box_width - 2.0, head - 1.0);
+    pen.line(1.0, head + 0.5, box_width - 1.0, head + 0.5);
+    for (_, color, _, top) in sides {
+        pen.fill(faded(color, SIDE));
+        pen.rect(1.0, top, box_width - 2.0, band);
         pen.fill(color);
-        pen.text(name, padding, y);
-        pen.align(CanvasTextAlign::Right);
-        pen.fill(colors.text);
-        pen.text(value, box_width - padding, y);
+        pen.rect(0.0, top, 3.0, band);
     }
+    // What each line is about, and after it the distance or the price it
+    // is about.
     pen.align(CanvasTextAlign::Left);
+    let lines = [("From mid", colors.dim, &distance, head / 2.0)]
+        .into_iter()
+        .chain(sides.map(|(text, color, price, top)| (text, color, price, top + name)));
+    for (text, color, about, y) in lines {
+        pen.font(FONT);
+        pen.fill(color);
+        pen.text(text, padding, y);
+        pen.font(STRONG);
+        pen.fill(colors.text);
+        pen.text(about, padding + width_of(text, size) + space, y);
+    }
+    let rows = sides.map(|(.., top)| [top + amount, top + value]);
+    pen.font(FONT);
     pen.fill(colors.dim);
-    for (name, y) in [
-        ("Amount", 105.0),
-        ("Value", 123.0),
-        ("Amount", 169.0),
-        ("Value", 187.0),
-    ] {
-        pen.text(name, padding, y);
+    for [amount, value] in rows {
+        pen.text("Amount", padding, amount);
+        pen.text("Value", padding, value);
     }
 
     pen.align(CanvasTextAlign::Right);
     for (at, (held, numbers)) in columns.iter().zip(&numbers).enumerate() {
         let right = padding + names + (at + 1) as f64 * column - 6.0;
         let fit = column - 12.0;
-        match held.book {
+        let font = match held.book {
             Some(layer) => {
+                pen.font(FONT);
                 pen.fill(colors.line(layer.pair));
                 pen.text_within(
                     exchanges::display_name(&layer.market.exchange),
                     right,
-                    43.0,
+                    exchange,
                     fit,
                 );
                 pen.fill(colors.dim);
-                pen.text_within(&layer.market.symbol, right, 59.0, fit);
+                pen.text_within(&layer.market.symbol, right, symbol, fit);
+                FONT
             }
             None => {
+                pen.font(STRONG);
                 pen.fill(colors.text);
-                pen.text("Total", right, 43.0);
+                pen.text("Total", right, exchange);
+                STRONG
             }
-        }
-        pen.fill(colors.text);
-        let rows = [105.0, 123.0, 169.0, 187.0];
+        };
+        let rows = rows.as_flattened();
         match numbers {
             Some(numbers) => {
-                for (number, y) in numbers.iter().zip(rows) {
-                    pen.text_within(number, right, y, fit);
+                for ((number, asset), y) in numbers.iter().zip(rows) {
+                    // The asset at the column's edge, the number before it.
+                    let taken = match asset {
+                        Some(asset) => {
+                            pen.font(FONT);
+                            pen.fill(colors.dim);
+                            pen.text_within(asset, right, *y, fit);
+                            width_of(asset, size) + space
+                        }
+                        None => 0.0,
+                    };
+                    pen.font(font);
+                    pen.fill(colors.text);
+                    pen.text_within(number, right - taken, *y, fit - taken);
                 }
             }
             // A book that has not arrived holds nothing to count yet.
             None => {
+                pen.font(FONT);
+                pen.fill(colors.dim);
                 for y in rows {
-                    pen.text("—", right, y);
+                    pen.text("—", right, *y);
                 }
             }
         }

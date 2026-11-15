@@ -952,6 +952,16 @@ fn overlaid(frame: &Frame, pointer: Option<(f64, f64)>) -> (Record, Vec<Logo>) {
     (Record::of(&drawn.painter.finish()), drawn.logos)
 }
 
+/// How often the pointer's box of `record` says `number` of `asset`: the
+/// asset is written first, at its column's edge, and the number before it.
+fn held(record: &Record, number: &str, asset: &str) -> usize {
+    record
+        .texts
+        .windows(2)
+        .filter(|pair| pair[0].text == asset && pair[1].text == number)
+        .count()
+}
+
 /// `color` at `alpha` of its own opacity.
 fn faded(color: Hsla, alpha: f32) -> Hsla {
     Hsla {
@@ -1156,9 +1166,22 @@ fn the_pointers_box_counts_what_rests_within_its_distance() {
     let (record, _) = overlaid(&frame, Some((30.0, 50.0)));
     for text in [
         "From mid", "±1.74%", "Bids to", "98.750", "Asks to", "102.250", "Bybit", "BTC/USDT",
-        "2 BTC", "199 USDT", "4 BTC", "406 USDT",
     ] {
         assert_eq!(record.count(text), 1, "{text}");
+    }
+    let amounts = [("2", "BTC"), ("199", "USDT"), ("4", "BTC"), ("406", "USDT")];
+    for (number, asset) in amounts {
+        assert_eq!(held(&record, number, asset), 1, "{number} {asset}");
+    }
+    // A number is the text's color and its asset dim; what the box is
+    // about is stressed.
+    assert!(same(record.find("199").color, colors().text));
+    assert!(same(record.find("USDT").color, colors().dim));
+    assert!(same(record.find("98.750").color, colors().text));
+    // Each side's line is on a band of its color.
+    for side in [colors().bid, colors().ask] {
+        let band = |(_, fill): &&([f32; 4], Hsla)| same(*fill, faded(side, 0.1));
+        assert_eq!(record.boxes.iter().filter(band).count(), 1);
     }
     assert_eq!((record.count("Amount"), record.count("Value")), (2, 2));
     assert_eq!(record.count("Total"), 0);
@@ -1167,9 +1190,11 @@ fn the_pointers_box_counts_what_rests_within_its_distance() {
     assert!(same(record.find("Bybit").color, colors().accent));
     // The same distance the other side of the center is the same box.
     let (mirrored, _) = overlaid(&frame, Some((170.0, 50.0)));
-    for text in ["±1.74%", "98.750", "102.250", "2 BTC", "4 BTC"] {
+    for text in ["±1.74%", "98.750", "102.250"] {
         assert_eq!(mirrored.count(text), 1, "{text}");
     }
+    assert_eq!(held(&mirrored, "2", "BTC"), 1);
+    assert_eq!(held(&mirrored, "4", "BTC"), 1);
     // The pointer's line, its mirror, and the band between them.
     let lines = record.ruled(faded(colors().text, 0.7));
     assert_eq!(lines.len(), 1);
@@ -1196,18 +1221,34 @@ fn the_pointers_box_counts_what_rests_within_its_distance() {
     let zoom = Some(2.5 / 100.5);
     let both = build(&config(), &books, (600.0, 322.0), zoom);
     let (record, _) = overlaid(&both, Some((90.0, 50.0)));
-    for text in [
-        "Bybit", "Binance", "Total", "2 BTC", "3 BTC", "5 BTC", "199 USDT", "301 USDT", "500 USDT",
-        "4 BTC", "9 BTC", "406 USDT", "504 USDT", "910 USDT",
+    for text in ["Bybit", "Binance", "Total"] {
+        assert_eq!(record.count(text), 1, "{text}: {:?}", record.words());
+    }
+    for (number, asset) in [
+        ("2", "BTC"),
+        ("3", "BTC"),
+        ("5", "BTC"),
+        ("199", "USDT"),
+        ("301", "USDT"),
+        ("500", "USDT"),
+        ("4", "BTC"),
+        ("9", "BTC"),
+        ("406", "USDT"),
+        ("504", "USDT"),
+        ("910", "USDT"),
     ] {
-        assert!(record.count(text) >= 1, "{text}: {:?}", record.words());
+        assert!(
+            held(&record, number, asset) >= 1,
+            "{number} {asset}: {:?}",
+            record.words()
+        );
     }
     assert_eq!(record.count("BTC/USDT"), 2);
     assert!(same(record.find("Binance").color, colors().amber));
     let late = build(&config(), &[steps(), None], (600.0, 322.0), zoom);
     let (record, _) = overlaid(&late, Some((90.0, 50.0)));
     assert_eq!(record.count("—"), 4);
-    assert!(record.count("2 BTC") >= 2 && record.count("Total") == 1);
+    assert!(held(&record, "2", "BTC") >= 2 && record.count("Total") == 1);
 }
 
 /// A workspace of one depth chart, with its data services as the shell

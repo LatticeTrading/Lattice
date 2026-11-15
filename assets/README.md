@@ -41,6 +41,13 @@ removing drawings, and closing and opening it): Lattice's own, paths only,
 drawn in `currentColor`; `src/widgets/chart/drawings.rs` and
 `src/widgets/chart/drawings/toolbar.rs` inline them.
 
+`icons/indicators.svg`, `icons/eye.svg` and `icons/eye-off.svg` are the
+Chart's indicators' (the badge that opens their menu, and showing and
+hiding one from its row of the legend, whose settings and removing use
+`icons/settings.svg` and `icons/remove.svg`): Lattice's own, paths only,
+drawn in `currentColor`; `src/widgets/chart/indicators/menu.rs` and
+`src/widgets/chart/indicators/legend.rs` inline them.
+
 `icons/window-minimize.svg`, `icons/window-maximize.svg` and
 `icons/window-close.svg` are the old Everything Bar's window buttons
 (`lattice-pro/src/components/layout/EverythingBar.tsx`, its
