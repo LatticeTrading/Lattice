@@ -15,10 +15,15 @@ pub fn run() -> impl std::process::Termination {
 
     env_logger::init();
     platform::set_ui_sets(vec![nsh_base::registry(), crate::registry()]);
+    // nsh.json's `window.restoreBounds`, which NSH's runners compile into
+    // their root: the window opens where it was left, at `size` the first time.
+    let mut window = nsh_core::desktop::MainWindowOptions::default();
+    window.restore_bounds = true;
     platform::run_app(
         platform::AppSource::Rust(
             platform::Root::of::<crate::App>()
                 .app_id("com.latticetrading.lattice")
+                .main_window(window)
                 .tokens(crate::theme::tokens())
                 .font(
                     include_bytes!("../assets/fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf")
