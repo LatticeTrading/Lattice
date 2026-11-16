@@ -63,7 +63,12 @@ pub(super) fn depth_chart_view(
         .test_id("depth-chart")
         .on_layout(move |bounds: &Bounds<Points>| width.set(bounds.size.width.0))
         .child(top_bar(tab.clone(), layers, narrow, picking))
-        .child(books::notices(DepthChartSettings::TEST_ID, layers))
+        .child(books::notices(
+            DepthChartSettings::TEST_ID,
+            layers,
+            session.traits,
+            true,
+        ))
         .child(plot(session.clone()))
         .child(books::picker(tab, picking))
 }

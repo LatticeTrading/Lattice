@@ -10,9 +10,12 @@ use super::{PremiumArbSettings, settings::Display};
 use crate::{
     data::{
         SessionScope,
-        ferris::{Candle, Ferris, PairSample, PricePairFeed},
+        ferris::{BookTraits, Candle, Ferris, PairSample, PricePairFeed},
     },
-    widgets::common::plot::{DEFAULT_TICKS, Mode, Plot, Viewport},
+    widgets::common::{
+        books::Pair,
+        plot::{DEFAULT_TICKS, Mode, Plot, Viewport},
+    },
 };
 
 /// What the plot says about its data, in its middle while it has no point.
@@ -120,6 +123,8 @@ pub(crate) struct PremiumArbSession {
     /// prices fit the line again when the display mode does.
     pub(super) plot: Rc<Plot>,
     pub(super) status: Signal<Status>,
+    /// What the two books say of their liquidity, by their layers' keys.
+    pub(super) traits: Signal<Vec<(String, BookTraits)>>,
 }
 
 impl PremiumArbSession {
@@ -131,6 +136,8 @@ impl PremiumArbSession {
     ) -> Self {
         let plot = Plot::new(Mode::Line, DEFAULT_TICKS);
         let status = signal(Status::Waiting);
+        let traits = signal(Vec::<(String, BookTraits)>::new());
+        let layers = computed(move || settings.with(PremiumArbSettings::layers));
         let source: Rc<RefCell<Option<Source>>> = Rc::default();
 
         // The feed follows the two markets the settings compare; with one
@@ -185,6 +192,19 @@ impl PremiumArbSession {
                             let display = display.get_untracked();
                             let added = feed
                                 .with_samples(|samples, made| series.take(samples, made, display));
+                            let books = feed.traits();
+                            let next: Vec<_> = layers.with_untracked(|layers| {
+                                layers
+                                    .iter()
+                                    .filter_map(|layer| {
+                                        let leg = usize::from(layer.pair != Pair::Primary);
+                                        Some((layer.key.clone(), books[leg].clone()?))
+                                    })
+                                    .collect()
+                            });
+                            if traits.with_untracked(|kept| *kept != next) {
+                                traits.try_set(next);
+                            }
                             let said = if !series.bars.is_empty() {
                                 Status::Ready
                             } else if feed.failed() {
@@ -205,6 +225,10 @@ impl PremiumArbSession {
             });
         }
 
-        Self { plot, status }
+        Self {
+            plot,
+            status,
+            traits,
+        }
     }
 }

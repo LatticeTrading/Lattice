@@ -24,7 +24,7 @@ use nsh_testing::{StubReply, StubResponse};
 use serde_json::json;
 
 use super::{Colors, Palette};
-use crate::data::ferris::{BookLevel, OrderBook};
+use crate::data::ferris::{BookLevel, BookTraits, OrderBook};
 
 /// One side as the old tests gave it: prices and amounts from the best
 /// price outward, with their running amounts.
@@ -49,6 +49,7 @@ pub(crate) fn book(bids: &[(f64, f64)], asks: &[(f64, f64)]) -> Option<Rc<OrderB
         bids: side(bids),
         asks: side(asks),
         timestamp: 1.0,
+        traits: BookTraits::default(),
     }))
 }
 

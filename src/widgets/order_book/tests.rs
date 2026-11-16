@@ -24,7 +24,7 @@ use super::{
 use crate::{
     data::{
         DataServices,
-        ferris::{FerrisConfig, MarketSelection, OrderBook},
+        ferris::{AmountUnit, BookTraits, FerrisConfig, MarketSelection, OrderBook},
     },
     layout,
     shell::clock::Clock,
@@ -84,6 +84,7 @@ fn config() -> Config {
             layer(Pair::Secondary, binance()),
         ],
         warning: None,
+        mixed_units: None,
     }
 }
 
@@ -213,27 +214,69 @@ fn the_book_followed_is_one_that_is_drawn() {
         Some("Pair 2 duplicates Primary and is not rendered.")
     );
 
-    // Two books at raw prices say so; grouped ones need not.
+    assert_eq!(repeated.mixed_units(), None);
+
+    // Two books have something to say should their units differ, grouped
+    // or not; their books decide whether it is said.
     let pairs = |settings: &OrderBookSettings| -> Vec<Pair> {
         settings.layers().iter().map(|layer| layer.pair).collect()
     };
     let two = OrderBookSettings::default().with_market(Pair::Secondary, Some(binance()));
     assert_eq!(pairs(&two), [Pair::Primary, Pair::Secondary]);
+    assert_eq!(two.warning(), None);
+    let combined = Some("Pair quantities are in different units and are combined as sent.");
+    assert_eq!(two.mixed_units(), combined);
     assert_eq!(
-        two.warning(),
-        Some("Raw prices; aligned quantities are combined without normalization.")
+        two.clone().with_grouping(Grouping::One).mixed_units(),
+        combined
     );
     assert_eq!(
-        two.clone().with_toggle(Toggle::Separate, true).warning(),
-        Some("Raw prices; pair quantities are separate and not normalized.")
+        two.clone()
+            .with_toggle(Toggle::Separate, true)
+            .mixed_units(),
+        Some("Pair quantities are in different units.")
     );
-    assert_eq!(two.clone().with_grouping(Grouping::One).warning(), None);
-    assert_eq!(OrderBookSettings::default().warning(), None);
+    assert_eq!(OrderBookSettings::default().mixed_units(), None);
     // The second pair alone is drawn alone.
     assert_eq!(
         pairs(&two.with_market(Pair::Primary, None)),
         [Pair::Secondary]
     );
+}
+
+#[test]
+fn two_books_in_one_base_asset_are_combined_without_a_warning() {
+    let said = |unit: AmountUnit, currency: &str| {
+        let mut book = (*quote(100.0, 1.0).unwrap()).clone();
+        book.traits = BookTraits {
+            unit: Some(unit),
+            currency: Some(currency.into()),
+            liquidity: None,
+        };
+        Some(Rc::new(book))
+    };
+    let mixed = Some("Pair quantities are in different units and are combined as sent.");
+    let config = Config {
+        mixed_units: mixed,
+        ..config()
+    };
+    let warned =
+        |books: &[Option<Rc<OrderBook>>]| build(&config, books, (800.0, 600.0), None).warning;
+    // Bybit's and KuCoin's BTC/USDT, both in BTC: nothing to say, and the
+    // plot starts at the top.
+    let btc = [said(AmountUnit::Base, "BTC"), said(AmountUnit::Base, "BTC")];
+    assert_eq!(warned(&btc), None);
+    assert_eq!(build(&config, &btc, (800.0, 600.0), None).plot_top, 0.0);
+    // Contracts, another base, or a server that says nothing.
+    for other in [
+        said(AmountUnit::Contracts, "BTC"),
+        said(AmountUnit::Base, "ETH"),
+        quote(100.0, 1.0),
+    ] {
+        assert_eq!(warned(&[said(AmountUnit::Base, "BTC"), other]), mixed);
+    }
+    // Nothing is said of a book that has not arrived.
+    assert_eq!(warned(&[said(AmountUnit::Contracts, "BTC"), None]), None);
 }
 
 #[test]
@@ -246,11 +289,13 @@ fn two_books_scale_apart_on_one_ladder() {
         ),
     ];
     let config = Config {
-        warning: Some("Raw prices; aligned quantities are combined without normalization."),
+        mixed_units: Some("Pair quantities are in different units."),
         ..config()
     };
     let frame = build(&config, &books, (800.0, 600.0), None);
-    // The plot is right of the price column and below the warning.
+    // Books that do not say what their quantities are in are warned of;
+    // the plot is right of the price column and below the warning.
+    assert_eq!(frame.warning, config.mixed_units);
     assert_eq!(
         (frame.plot_left, frame.plot_top, frame.baseline),
         (66.0, 20.0, 66.0)
@@ -432,6 +477,7 @@ fn rows_are_shared_by_the_books_and_levels_without_an_amount_have_none() {
         ]),
         asks: side(&[(100.1, 1.0), (100.7, 2.0)]),
         timestamp: 1.0,
+        traits: BookTraits::default(),
     }));
     let books = [
         primary,
@@ -1524,7 +1570,7 @@ fn an_order_book_shows_its_book_and_follows_its_settings() {
     assert_eq!(first[0]["symbol"], "BTC/USDT:USDT");
     assert_eq!(
         first[0]["params"],
-        json!({ "category": "linear", "levels": 200 })
+        json!({ "category": "linear", "levels": 200, "amountUnit": "base" })
     );
     // Its prices in the column, each row's total beside it, the mid price
     // on its line; no running amounts yet.
@@ -1575,4 +1621,69 @@ fn an_order_book_shows_its_book_and_follows_its_settings() {
     app.press_key("Escape").unwrap();
     app.wait_for_gone("Search for symbol", WAIT).unwrap();
     assert!(app.shows("BTC/USDT"));
+}
+
+/// Answers `fetchOrderBook` as Ferris does for a market whose contracts it
+/// cannot convert: base amounts are refused, native ones are contracts,
+/// and the book is an RFQ market's.
+fn stub_unconverted(request: nsh_engine::HttpRequest, reply: nsh_testing::StubReply) {
+    let body: Value = match &request.body {
+        HttpBody::Bytes(bytes) => serde_json::from_slice(bytes).unwrap_or_default(),
+        _ => Value::Null,
+    };
+    let mut response = nsh_testing::StubResponse::default();
+    let answer = if body["params"]["amountUnit"] == "base" {
+        response.status = 400;
+        json!({
+            "code": "UNSUPPORTED_FEATURE",
+            "message": "AMOUNT_NORMALIZATION_UNAVAILABLE: unverified_inverse_contract_face_size \
+                        (bybit:inverse_book)",
+        })
+    } else {
+        response.status = 200;
+        json!({
+            "bids": [[100.0, 2.0]],
+            "asks": [[100.5, 1.0]],
+            "timestamp": 1_700_000_000_000_i64,
+            "amountUnit": "contracts",
+            "amountCurrency": null,
+            "liquidityKind": "indicative",
+        })
+    };
+    response.body = serde_json::to_vec(&answer).expect("an answer is JSON");
+    reply.send(response);
+}
+
+#[test]
+fn a_book_ferris_cannot_convert_is_asked_for_natively_and_says_so() {
+    let network = Arc::new(StubNetwork::new([(
+        format!("POST {FERRIS}/v1/fetchOrderBook"),
+        StubRoute::Handler(Arc::new(stub_unconverted)),
+    )]));
+    let mut config = EngineConfig::new(Root::of::<Harness>());
+    config.viewport = Size::new(px(1280.0), px(800.0));
+    config.storage = Some(MemoryStorage::new([]));
+    config.network = Some(network.clone());
+    config.environment.os = Os::Windows;
+    config.environment.idiom = Idiom::Desktop;
+    let mut app = Headless::start(config).unwrap();
+
+    // The notices name the book, and each tag (written in capitals) what
+    // it cannot be read as.
+    app.wait_for("CONTRACT QUANTITIES").unwrap();
+    assert!(app.shows("INDICATIVE BOOK"));
+    assert!(app.shows("Primary: Bybit BTC/USDT"));
+    // Base amounts first, then the venue's own once Ferris refused them.
+    let asked: Vec<Value> = network
+        .requests()
+        .into_iter()
+        .filter(|request| request.url.ends_with("/v1/fetchOrderBook"))
+        .map(|request| match &request.body {
+            HttpBody::Bytes(bytes) => serde_json::from_slice(bytes).unwrap_or_default(),
+            _ => Value::Null,
+        })
+        .collect();
+    assert_eq!(asked.len(), 2);
+    assert_eq!(asked[0]["params"]["amountUnit"], "base");
+    assert_eq!(asked[1]["params"].get("amountUnit"), None);
 }

@@ -64,7 +64,7 @@ pub(super) fn premium_arb_view(
         .bg(theme::BACKGROUND)
         .text_color(theme::TEXT)
         .test_id(ID)
-        .child(books::notices(ID, layers))
+        .child(books::notices(ID, layers, session.traits, false))
         // Both stay mounted, so the plot keeps its size and its pointer
         // state while a market is picked.
         .child(plot(session, saved).style_when(move || !paired.get(), |s| s.hidden()))

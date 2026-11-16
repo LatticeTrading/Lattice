@@ -341,7 +341,7 @@ fn a_monitor_shows_its_markets_against_the_base_and_edits_them() {
     for tag in ["PERP", "USDC-M", "USDT-M"] {
         assert!(app.shows(tag), "{tag}");
     }
-    assert!(!app.shows("Indicative book"));
+    assert!(!app.shows("INDICATIVE BOOK"));
     assert!(!app.shows("Loading markets..."));
     // The base is a row over the table: its button at the left, as high
     // as a row, and its price out to the table's right edge.

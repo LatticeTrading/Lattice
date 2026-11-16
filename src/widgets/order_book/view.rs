@@ -68,7 +68,12 @@ pub(super) fn order_book_view(
         .test_id("order-book")
         .on_layout(move |bounds: &Bounds<Points>| width.set(bounds.size.width.0))
         .child(top_bar(tab.clone(), layers, narrow, picking))
-        .child(books::notices(OrderBookSettings::TEST_ID, layers))
+        .child(books::notices(
+            OrderBookSettings::TEST_ID,
+            layers,
+            session.traits,
+            true,
+        ))
         .child(plot(session.clone(), tab.clone()))
         .child(books::picker(tab, picking))
 }

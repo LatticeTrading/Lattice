@@ -12,7 +12,7 @@ use nsh_core::prelude::*;
 use super::Layer;
 use crate::data::{
     Keyed,
-    ferris::{Ferris, MarketSelection, OrderBook, OrderBookFeed},
+    ferris::{BookTraits, Ferris, MarketSelection, OrderBook, OrderBookFeed},
 };
 
 /// One feed lease per book a widget draws, and whether they brought
@@ -25,6 +25,9 @@ pub(crate) struct BookFeeds {
     /// Bumped when `dirty` is set, so a visible widget schedules a frame.
     wake: Signal<u64>,
     mark: Rc<dyn Fn()>,
+    /// What each book's newest state says of its amounts and liquidity, by
+    /// its layer's key, as last taken.
+    traits: Signal<Vec<(String, BookTraits)>>,
 }
 
 impl BookFeeds {
@@ -48,6 +51,7 @@ impl BookFeeds {
             dirty,
             wake,
             mark,
+            traits: signal(Vec::new()),
         })
     }
 
@@ -89,15 +93,42 @@ impl BookFeeds {
 
     /// Each book's newest state and whether its topic was refused, in the
     /// order they are followed, taken to be drawn: nothing is new until the
-    /// next change.
+    /// next change. [`Self::traits`] follows what they say.
     pub fn take(&self) -> (Vec<Option<Rc<OrderBook>>>, Vec<bool>) {
         self.dirty.set(false);
         self.feeds.with(|feeds| {
-            feeds
+            let (books, failed): (Vec<_>, Vec<_>) = feeds
                 .iter()
                 .map(|(_, feed)| (feed.book(), feed.failed()))
-                .unzip()
+                .unzip();
+            let said = || {
+                feeds
+                    .iter()
+                    .zip(&books)
+                    .filter_map(|((key, _), book)| Some((key, &book.as_ref()?.traits)))
+            };
+            let same = self.traits.with_untracked(|kept| {
+                kept.len() == said().count()
+                    && kept
+                        .iter()
+                        .zip(said())
+                        .all(|((key, traits), (now, says))| key == now && traits == says)
+            });
+            if !same {
+                self.traits.try_set(
+                    said()
+                        .map(|(key, traits)| (key.clone(), traits.clone()))
+                        .collect(),
+                );
+            }
+            (books, failed)
         })
+    }
+
+    /// What the books taken last say of their amounts and liquidity, by
+    /// their layers' keys (what [`notices`](super::notices) reads).
+    pub fn traits(&self) -> Signal<Vec<(String, BookTraits)>> {
+        self.traits
     }
 
     /// Runs `draw` a frame after something changed, at most once a frame,

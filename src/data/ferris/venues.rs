@@ -124,9 +124,6 @@ pub struct Venue {
     /// Its REST book takes its depth as `limit` only: `levels` among its
     /// params is refused.
     pub book_depth_by_limit: bool,
-    /// What a view of its public book must say about it (the old app's
-    /// `orderBookNotice`).
-    pub book_notice: Option<&'static str>,
 }
 
 impl Venue {
@@ -184,7 +181,6 @@ const DEFAULT: Venue = Venue {
     book_levels: &[],
     book_level_cap: None,
     book_depth_by_limit: false,
-    book_notice: None,
 };
 
 macro_rules! logo {
@@ -315,10 +311,6 @@ pub static VENUES: &[Venue] = &[
         derive_symbol: Some(market::extended_symbol),
         stats_profiles: PERP,
         settlement_volume: SettlementVolume::Always,
-        book_notice: Some(
-            "Extended's public orderbook is indicative, not executable RFQ depth. \
-             Book-derived prices are not execution quotes.",
-        ),
         ..DEFAULT
     },
     Venue {
@@ -345,10 +337,6 @@ pub static VENUES: &[Venue] = &[
         ],
         settlement_volume: SettlementVolume::CoinMargined,
         book_level_cap: Some(100),
-        book_notice: Some(
-            "KuCoin public books are limited to 100 levels per side. Contract sizes \
-             are native contract quantities, not base-asset amounts.",
-        ),
         ..DEFAULT
     },
     Venue {
@@ -360,11 +348,6 @@ pub static VENUES: &[Venue] = &[
         repair_symbol: Some(market::bitfinex_symbol),
         stats_profiles: PERP_SPOT,
         book_level_cap: Some(100),
-        book_notice: Some(
-            "Bitfinex live books retain at most 100 levels; stock checksum validation \
-             covers only the top 25. Upstream channel reuse can cause shared \
-             reconnects and continuity errors.",
-        ),
         ..DEFAULT
     },
     Venue {

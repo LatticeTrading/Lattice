@@ -16,7 +16,7 @@ use super::{
 use crate::{
     data::{
         SessionScope,
-        ferris::{Ferris, OrderBook},
+        ferris::{BookTraits, Ferris, OrderBook},
     },
     widgets::common::{
         Shared,
@@ -102,6 +102,8 @@ pub(crate) struct OrderBookSession {
     follow: Rc<Cell<Option<Pair>>>,
     /// Bumped when the user moved the ladder: the frame is made at once.
     moved: Signal<u64>,
+    /// What the books drawn say of their amounts and liquidity.
+    pub(super) traits: Signal<Vec<(String, BookTraits)>>,
 }
 
 impl OrderBookSession {
@@ -121,6 +123,7 @@ impl OrderBookSession {
         // A lease per book drawn; dirty when one brought something (or the
         // settings changed) since the frame was made.
         let feeds = BookFeeds::new(ferris);
+        let traits = feeds.traits();
 
         let config = computed(move || settings.with(|settings| Rc::new(Config::of(settings))));
         let target = computed(move || settings.with(OrderBookSettings::center));
@@ -191,6 +194,7 @@ impl OrderBookSession {
             ladder,
             follow,
             moved,
+            traits,
         }
     }
 

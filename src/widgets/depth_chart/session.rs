@@ -13,7 +13,7 @@ use super::{
 use crate::{
     data::{
         SessionScope,
-        ferris::{Ferris, OrderBook},
+        ferris::{BookTraits, Ferris, OrderBook},
     },
     widgets::common::{Shared, books::BookFeeds},
 };
@@ -112,6 +112,8 @@ pub(crate) struct DepthChartSession {
     window: Rc<RefCell<Window>>,
     /// Bumped when the user moved the window: the frame is made at once.
     moved: Signal<u64>,
+    /// What the books drawn say of their amounts and liquidity.
+    pub(super) traits: Signal<Vec<(String, BookTraits)>>,
 }
 
 impl DepthChartSession {
@@ -129,6 +131,7 @@ impl DepthChartSession {
         // A lease per book drawn; dirty when one brought something (or the
         // settings changed) since the frame was made.
         let feeds = BookFeeds::new(ferris);
+        let traits = feeds.traits();
 
         let config = computed(move || settings.with(|settings| Rc::new(Config::of(settings))));
         // The feeds follow the books and the depth the settings draw, and
@@ -188,6 +191,7 @@ impl DepthChartSession {
             size,
             window,
             moved,
+            traits,
         }
     }
 

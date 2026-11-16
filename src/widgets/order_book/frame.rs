@@ -27,7 +27,7 @@ use super::{
     shader::ROW_CAPACITY,
 };
 use crate::{
-    data::ferris::{BookLevel, OrderBook},
+    data::ferris::{AmountUnit, BookLevel, OrderBook},
     widgets::common::books::{self, BookLayout, Layer, Side, round},
 };
 
@@ -59,7 +59,30 @@ pub(super) struct Config {
     pub separate: bool,
     /// The books drawn, the primary first.
     pub layers: Vec<Layer>,
+    /// Said whatever the books hold.
     pub warning: Option<&'static str>,
+    /// Said once both books have arrived and their quantities are not in
+    /// one asset ([`units_match`]).
+    pub mixed_units: Option<&'static str>,
+}
+
+/// Whether every book of `books` has arrived with its quantities in the
+/// base asset, the same one; none while one has not arrived.
+fn units_match(books: &[Option<Rc<OrderBook>>]) -> Option<bool> {
+    let books: Vec<_> = books.iter().map(Option::as_ref).collect::<Option<_>>()?;
+    let mut asset = None;
+    for book in books {
+        let traits = &book.traits;
+        let base = (traits.unit == Some(AmountUnit::Base))
+            .then_some(traits.currency.as_deref())
+            .flatten();
+        match (base, asset) {
+            (None, _) => return Some(false),
+            (Some(base), Some(seen)) if base != seen => return Some(false),
+            (Some(base), _) => asset = Some(base),
+        }
+    }
+    Some(true)
 }
 
 impl Config {
@@ -76,6 +99,7 @@ impl Config {
             separate: settings.shows(Toggle::Separate),
             layers: settings.layers(),
             warning: settings.warning(),
+            mixed_units: settings.mixed_units(),
         }
     }
 
@@ -93,6 +117,7 @@ impl Config {
             separate: false,
             layers: Vec::new(),
             warning: None,
+            mixed_units: None,
         }
     }
 
@@ -191,6 +216,9 @@ pub(super) struct Frame {
     /// The widget's size below its top bar, in points.
     pub width: f64,
     pub height: f64,
+    /// What the plot says above its rows: the settings' warning, or that
+    /// the books' quantities are in different units.
+    pub warning: Option<&'static str>,
     /// The plot: right of the price column, below the warning.
     pub plot_left: f64,
     pub plot_top: f64,
@@ -261,11 +289,12 @@ impl Frame {
             PRICE_COLUMN.min((width - 1.0).max(0.0))
         };
         let plot_left = price_column;
-        let plot_top = (height - 1.0).min(if config.warning.is_some() {
-            WARNING
-        } else {
-            0.0
+        let warning = config.warning.or_else(|| {
+            config
+                .mixed_units
+                .filter(|_| units_match(books) == Some(false))
         });
+        let plot_top = (height - 1.0).min(if warning.is_some() { WARNING } else { 0.0 });
         let plot_right = width;
         let plot_bottom = (plot_top + 1.0).max(height);
         let plot_width = (plot_right - plot_left).max(1.0);
@@ -328,6 +357,7 @@ impl Frame {
 
         let mut frame = Self {
             config,
+            warning,
             width,
             height,
             plot_left,

@@ -15,7 +15,7 @@ use nsh_core::prelude::*;
 
 use super::{BookSettings, DEPTH_PRESETS, Grouping, Layer, Pair, panel::market_picker};
 use crate::{
-    data::ferris::Venue,
+    data::ferris::{AmountUnit, BookTraits, Liquidity},
     exchanges, theme, ui,
     widgets::{
         TabContext,
@@ -266,22 +266,84 @@ pub(crate) fn depth_select<S: BookSettings>(tab: TabContext<S>) -> impl IntoElem
     )
 }
 
-/// A strip under the top bar naming each book whose exchange says its
-/// public book is not what it seems (the old `OrderBookNotice`): the
-/// exchange's words are the tag's tooltip. `prefix` starts its test id.
-pub(crate) fn notices(prefix: &str, layers: Memo<Vec<Layer>>) -> View {
+/// The tags a book's [`BookTraits`] earn it, each with its tooltip: an
+/// indicative book (maker quotes on an RFQ market) or one whose liquidity
+/// Ferris could not classify, and, where the widget reads sizes (`units`),
+/// amounts Ferris could not give in `base`.
+fn tags(traits: &BookTraits, base: &str, units: bool) -> Vec<(&'static str, String)> {
+    let mut tags = Vec::new();
+    match traits.liquidity {
+        Some(Liquidity::Indicative) => tags.push((
+            "Indicative book",
+            "This RFQ market's public book is maker quotes, not resting orders: \
+             book-derived prices are not execution quotes."
+                .to_owned(),
+        )),
+        Some(Liquidity::Unknown) => tags.push((
+            "Unverified liquidity",
+            "Whether this market's public book is resting orders or RFQ quotes \
+             could not be confirmed."
+                .to_owned(),
+        )),
+        Some(Liquidity::OrderBook) | None => {}
+    }
+    if units {
+        let unit = match traits.unit {
+            Some(AmountUnit::Contracts) => Some((
+                "Contract quantities",
+                format!(
+                    "Sizes are the exchange's contracts, not {base}: their contract size \
+                     could not be verified."
+                ),
+            )),
+            Some(AmountUnit::Quote) => Some((
+                "Quote amounts",
+                format!(
+                    "Sizes are in {}, not {base}.",
+                    traits.currency.as_deref().unwrap_or("the quote currency")
+                ),
+            )),
+            Some(AmountUnit::Unknown) => Some((
+                "Unknown units",
+                format!(
+                    "The exchange does not say what these sizes are in; they may not be {base}."
+                ),
+            )),
+            Some(AmountUnit::Base) | None => None,
+        };
+        tags.extend(unit);
+    }
+    tags
+}
+
+/// A strip under the top bar naming each book that cannot be read at face
+/// value (the old `OrderBookNotice`), as what its newest state says
+/// ([`BookTraits`], by its layer's key in `traits`): its [`tags`], each
+/// explained by its tooltip. `units`: the widget reads the books' sizes,
+/// not only their prices. `prefix` starts its test id.
+pub(crate) fn notices(
+    prefix: &str,
+    layers: Memo<Vec<Layer>>,
+    traits: Signal<Vec<(String, BookTraits)>>,
+    units: bool,
+) -> View {
     let noted = computed(move || {
         layers.with(|layers| {
-            layers
-                .iter()
-                .filter_map(|layer| {
-                    let notice = Venue::of(&layer.market.exchange).book_notice?;
-                    Some((
-                        format!("{}: {}", layer.pair.label(), book_name(layer)),
-                        notice,
-                    ))
-                })
-                .collect::<Vec<_>>()
+            traits.with(|traits| {
+                layers
+                    .iter()
+                    .filter_map(|layer| {
+                        let (_, said) = traits.iter().find(|(key, _)| *key == layer.key)?;
+                        let tags = tags(said, &layer.market.base, units);
+                        (!tags.is_empty()).then(|| {
+                            (
+                                format!("{}: {}", layer.pair.label(), book_name(layer)),
+                                tags,
+                            )
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
         })
     });
     let strip = || view().flex_row().flex_wrap().items_center().gap(px(8.0));
@@ -300,16 +362,17 @@ pub(crate) fn notices(prefix: &str, layers: Memo<Vec<Layer>>) -> View {
             noted.with(|noted| {
                 noted
                     .iter()
-                    .map(|(book, notice)| {
-                        let notice = *notice;
-                        view()
+                    .map(|(book, tags)| {
+                        let named = view()
                             .flex_none()
                             .flex_row()
                             .items_center()
                             .gap(px(8.0))
-                            .child(text(book.clone()).number_of_lines(1))
-                            .child(
-                                tag_text(text("Indicative book"))
+                            .child(text(book.clone()).number_of_lines(1));
+                        tags.iter()
+                            .map(|(tag, hint)| {
+                                let hint = hint.clone();
+                                tag_text(text(*tag))
                                     .flex_none()
                                     .px(px(5.0))
                                     .py(px(1.0))
@@ -317,9 +380,10 @@ pub(crate) fn notices(prefix: &str, layers: Memo<Vec<Layer>>) -> View {
                                     .border_color(theme::BORDER)
                                     .bg(theme::BACKGROUND)
                                     .role(AccessibilityRole::Text)
-                                    .label(format!("Indicative book: {notice}"))
-                                    .tooltip(ui::hint(move || notice.to_owned())),
-                            )
+                                    .label(format!("{tag}: {hint}"))
+                                    .tooltip(ui::hint(move || hint.clone()))
+                            })
+                            .fold(named, View::child)
                     })
                     .fold(strip(), View::child)
             })

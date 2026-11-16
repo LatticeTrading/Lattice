@@ -61,7 +61,7 @@ pub use catalog::{
 };
 pub use market::{MarketKey, MarketSelection, MarketType, RestTarget};
 pub use market_stats::{MarketStatsScope, StatsFieldName, StatsSnapshot, stats_scopes};
-pub use order_book::{BookLevel, OrderBook, OrderBookFeed};
+pub use order_book::{AmountUnit, BookLevel, BookTraits, Liquidity, OrderBook, OrderBookFeed};
 pub use price_pair::{PairSample, PricePairFeed};
 pub use protocol::{Channel, FerrisProtocol, FerrisPush, FerrisTopic};
 pub use trades::{Side, Trade, TradeFeed, TradeRow};

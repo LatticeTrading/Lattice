@@ -250,21 +250,25 @@ impl OrderBookSettings {
         self
     }
 
-    /// What the plot says above its rows about the books it draws (the old
-    /// widget's warnings): that the second pair repeats the primary, or
-    /// that two books at raw prices are not normalized.
+    /// What the plot says above its rows about the books it draws, whatever
+    /// they hold: that the second pair repeats the primary (the old
+    /// widget's warning).
     pub fn warning(&self) -> Option<&'static str> {
-        if self.duplicate() {
-            return Some("Pair 2 duplicates Primary and is not rendered.");
-        }
+        self.duplicate()
+            .then_some("Pair 2 duplicates Primary and is not rendered.")
+    }
+
+    /// What the plot says above its rows when its two books' quantities are
+    /// not in one asset (one in contracts, or two bases): they are summed
+    /// or set side by side as they come. Two books in one base asset (what
+    /// Ferris converts them to) say nothing; the old widget said this of
+    /// any two books at raw prices.
+    pub fn mixed_units(&self) -> Option<&'static str> {
         let two = self.market(Pair::Primary).is_some() && self.market(Pair::Secondary).is_some();
-        if !(two && self.grouping() == Grouping::Raw) {
-            return None;
-        }
-        Some(if self.shows(Toggle::Separate) {
-            "Raw prices; pair quantities are separate and not normalized."
+        (two && !self.duplicate()).then_some(if self.shows(Toggle::Separate) {
+            "Pair quantities are in different units."
         } else {
-            "Raw prices; aligned quantities are combined without normalization."
+            "Pair quantities are in different units and are combined as sent."
         })
     }
 }

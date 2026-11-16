@@ -109,7 +109,7 @@ pub(super) fn draw(
         }
     }
 
-    if let Some(warning) = config.warning {
+    if let Some(warning) = frame.warning {
         pen.fill(colors.dim);
         pen.text_within(warning, 8.0, 10.0, frame.width - 16.0);
     }

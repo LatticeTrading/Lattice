@@ -23,10 +23,13 @@
 //! callback, so a consumer marks itself dirty there and does its work once
 //! a frame.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use nsh_core::time::unix_ms;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use super::{
     Availability, Channel, Ferris, FerrisPush, FerrisTopic, MarketKey, MarketSelection, Operation,
@@ -38,13 +41,64 @@ use crate::data::net::{ApiError, FeedLease, FeedNode, TaskHandle, TopicPhase};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BookLevel {
     pub price: f64,
-    /// What rests at the price, in the venue's unit (the base asset; on
-    /// KuCoin's contracts, contracts).
+    /// What rests at the price: in the base asset where Ferris converted
+    /// it, else in the venue's unit ([`OrderBook::traits`] says which).
     pub amount: f64,
     /// Price times amount.
     pub total: f64,
     /// The amounts from the best price of its side through this one.
     pub cumulative: f64,
+}
+
+/// What a book's amounts are in, as Ferris says (`amountUnit`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AmountUnit {
+    Base,
+    /// The venue's contracts, whose size Ferris could not verify.
+    Contracts,
+    Quote,
+    Unknown,
+}
+
+/// What a book's levels are (`liquidityKind`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Liquidity {
+    /// Resting orders.
+    OrderBook,
+    /// Maker quotes, not executable depth (an Extended RFQ market's book).
+    Indicative,
+    /// Ferris's classification of the market is stale or missing.
+    Unknown,
+}
+
+/// What Ferris says about a book beside its levels. A member it does not
+/// send (a server older than its book metadata) is `None`: no claim.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct BookTraits {
+    pub unit: Option<AmountUnit>,
+    /// The asset its amounts are in, for base or quote amounts.
+    pub currency: Option<String>,
+    pub liquidity: Option<Liquidity>,
+}
+
+impl BookTraits {
+    fn from_record(record: &Map<String, Value>) -> Self {
+        let text = |name: &str| record.get(name).and_then(Value::as_str);
+        Self {
+            unit: text("amountUnit").map(|unit| match unit {
+                "base" => AmountUnit::Base,
+                "contracts" => AmountUnit::Contracts,
+                "quote" => AmountUnit::Quote,
+                _ => AmountUnit::Unknown,
+            }),
+            currency: text("amountCurrency").map(str::to_owned),
+            liquidity: text("liquidityKind").map(|kind| match kind {
+                "orderBook" => Liquidity::OrderBook,
+                "indicative" => Liquidity::Indicative,
+                _ => Liquidity::Unknown,
+            }),
+        }
+    }
 }
 
 /// One market's book: both sides from their best price outward.
@@ -56,6 +110,8 @@ pub struct OrderBook {
     pub asks: Vec<BookLevel>,
     /// When the venue made it, in Unix milliseconds.
     pub timestamp: f64,
+    /// Its amounts' unit and its liquidity.
+    pub traits: BookTraits,
 }
 
 impl OrderBook {
@@ -67,16 +123,17 @@ impl OrderBook {
             bids: side(bids.to_vec(), true),
             asks: side(asks.to_vec(), false),
             timestamp,
+            traits: BookTraits::default(),
         }
     }
 
     /// Reads Ferris's unified book as the old app did: the payload itself,
     /// or the one under its `data` or `orderBook`; levels as `[price,
     /// amount]` pairs or objects (`price` or `px`; `amount`, `size` or
-    /// `sz`), numbers or decimal text. A level without a positive price and
-    /// amount is left out; a missing or unreadable time is `now`. `None`
-    /// when the payload has neither side, so a frame that is no book never
-    /// empties the one kept.
+    /// `sz`), numbers or decimal text, and its [`BookTraits`]. A level
+    /// without a positive price and amount is left out; a missing or
+    /// unreadable time is `now`. `None` when the payload has neither side,
+    /// so a frame that is no book never empties the one kept.
     pub fn from_value(payload: &Value, now: f64) -> Option<Self> {
         let record = payload.as_object()?;
         let record = ["data", "orderBook"]
@@ -100,6 +157,7 @@ impl OrderBook {
             bids: side(read(bids), true),
             asks: side(read(asks), false),
             timestamp,
+            traits: BookTraits::from_record(record),
         })
     }
 
@@ -196,11 +254,23 @@ pub fn stream_levels(exchange: &str, depth: u32) -> u32 {
         .unwrap_or(wanted)
 }
 
-/// `market`'s `orderbook` topic at `levels`.
-fn topic(market: &MarketSelection, levels: u32) -> Result<FerrisTopic, ApiError> {
+/// What a book asks Ferris for its amounts in: the base asset, which it
+/// converts contracts to where it can verify their size.
+const BASE_AMOUNTS: (&str, &str) = ("amountUnit", "base");
+/// What Ferris's error says when it cannot convert a market's amounts
+/// (Bybit's inverse contracts): the book is then asked for as the venue
+/// sends it.
+const UNCONVERTED: &str = "AMOUNT_NORMALIZATION_UNAVAILABLE";
+
+/// `market`'s `orderbook` topic at `levels`, its amounts in the base asset
+/// unless `native`.
+fn topic(market: &MarketSelection, levels: u32, native: bool) -> Result<FerrisTopic, ApiError> {
     let mut topic = market.topic(Channel::OrderBook)?;
     if let FerrisTopic::Market { params, .. } = &mut topic {
         params.insert("levels".to_owned(), json!(levels));
+        if !native {
+            params.insert(BASE_AMOUNTS.0.to_owned(), json!(BASE_AMOUNTS.1));
+        }
     }
     Ok(topic)
 }
@@ -210,7 +280,7 @@ fn topic(market: &MarketSelection, levels: u32) -> Result<FerrisTopic, ApiError>
 /// selections saved differently that stream one topic are one book. `None`
 /// for a selection that has no topic.
 pub fn stream_key(market: &MarketSelection, depth: u32) -> Option<String> {
-    topic(market, stream_levels(&market.exchange, depth))
+    topic(market, stream_levels(&market.exchange, depth), false)
         .ok()
         .map(|topic| topic.key())
 }
@@ -223,6 +293,11 @@ struct State {
     live: bool,
     /// The server refused the topic, or it could not be made.
     failed: bool,
+    /// The last liquidity a book of this feed was known to have. Ferris
+    /// calls it unknown while its classification of the market is stale
+    /// (as live frames of Extended's markets often are); a book that says
+    /// so keeps this one.
+    liquidity: Option<Liquidity>,
 }
 
 /// A market's feed at one depth, shared by its leases.
@@ -233,6 +308,9 @@ type Feed = FeedNode<(MarketKey, u32), Book>;
 struct Book {
     market: MarketSelection,
     levels: u32,
+    /// Ferris cannot give this market's amounts in the base asset: the
+    /// feed asks for them as the venue sends them.
+    native: Cell<bool>,
     state: RefCell<State>,
     subscription: RefCell<Option<super::Subscription>>,
     snapshot: RefCell<Option<TaskHandle>>,
@@ -243,10 +321,12 @@ impl Book {
         Self {
             market: market.clone(),
             levels,
+            native: Cell::new(false),
             state: RefCell::new(State {
                 book: None,
                 live: false,
                 failed: false,
+                liquidity: None,
             }),
             subscription: RefCell::new(None),
             snapshot: RefCell::new(None),
@@ -262,12 +342,48 @@ impl Book {
 }
 
 /// Starts a new feed: subscribes to its topic, then asks for the book as
-/// it stands.
+/// it stands. Both ask for base amounts; a snapshot refused because
+/// Ferris cannot convert them ([`UNCONVERTED`]) makes the feed ask for both
+/// again as the venue sends them.
 fn start(ferris: &Ferris, feed: &Rc<Feed>) {
+    subscribe(ferris, feed);
     let book = feed.state();
     let label = book.label();
-    match topic(&book.market, book.levels) {
+    let (ferris, weak) = (ferris.clone(), Rc::downgrade(feed));
+    let (market, levels) = (book.market.clone(), book.levels);
+    let task = TaskHandle::spawn(async move {
+        let payload = match snapshot(&ferris, &market, levels, false, &label).await {
+            Snapshot::Book(payload) => payload,
+            Snapshot::None => return,
+            Snapshot::Unconverted => {
+                let Some(feed) = weak.upgrade() else {
+                    return;
+                };
+                log::info!("Order book: {label} has no base amounts; streaming native ones");
+                feed.state().native.set(true);
+                subscribe(&ferris, &feed);
+                drop(feed);
+                match snapshot(&ferris, &market, levels, true, &label).await {
+                    Snapshot::Book(payload) => payload,
+                    Snapshot::None | Snapshot::Unconverted => return,
+                }
+            }
+        };
+        if let Some(feed) = weak.upgrade() {
+            receive(&feed, &payload, false);
+        }
+    });
+    *book.snapshot.borrow_mut() = Some(task);
+}
+
+/// Subscribes the feed to its topic (in the unit [`Book::native`] says),
+/// in place of the one it had.
+fn subscribe(ferris: &Ferris, feed: &Rc<Feed>) {
+    let book = feed.state();
+    let label = book.label();
+    match topic(&book.market, book.levels, book.native.get()) {
         Ok(topic) => {
+            book.state.borrow_mut().failed = false;
             let (on_data, on_phase) = (Rc::downgrade(feed), Rc::downgrade(feed));
             let subscription = ferris.subscribe_with_phase(
                 topic,
@@ -282,37 +398,45 @@ fn start(ferris: &Ferris, feed: &Rc<Feed>) {
                     }
                 },
             );
-            *book.subscription.borrow_mut() = Some(subscription);
+            drop(book.subscription.replace(Some(subscription)));
         }
         Err(error) => {
             log::error!("Order book: cannot stream {label}: {}", error.message);
             book.state.borrow_mut().failed = true;
         }
     }
-    let (ferris, weak) = (ferris.clone(), Rc::downgrade(feed));
-    let (market, levels) = (book.market.clone(), book.levels);
-    let task = TaskHandle::spawn(async move {
-        let Some(payload) = snapshot(&ferris, &market, levels, &label).await else {
-            return;
-        };
-        if let Some(feed) = weak.upgrade() {
-            receive(&feed, &payload, false);
-        }
-    });
-    *book.snapshot.borrow_mut() = Some(task);
 }
 
 /// Takes in a live frame's book, or the snapshot (`live: false`) while no
-/// live frame has come.
+/// live frame has come. A snapshot after a live frame still says what the
+/// market's liquidity is.
 fn receive(feed: &Feed, payload: &Value, live: bool) {
     {
         let mut state = feed.state().state.borrow_mut();
-        if !live && state.live {
-            return;
-        }
-        let Some(book) = OrderBook::from_value(payload, unix_ms()) else {
+        let Some(mut book) = OrderBook::from_value(payload, unix_ms()) else {
             return;
         };
+        let known = book
+            .traits
+            .liquidity
+            .filter(|kind| *kind != Liquidity::Unknown);
+        if known.is_some() {
+            state.liquidity = known;
+        } else if book.traits.liquidity.is_some() {
+            book.traits.liquidity = state.liquidity.or(book.traits.liquidity);
+        }
+        if !live && state.live {
+            let Some(kept) = state.book.as_mut() else {
+                return;
+            };
+            if known.is_none() || kept.traits.liquidity == known {
+                return;
+            }
+            Rc::make_mut(kept).traits.liquidity = known;
+            drop(state);
+            feed.notify();
+            return;
+        }
         if live {
             // Only live data says the topic streams; a snapshot does not.
             state.live = true;
@@ -338,15 +462,25 @@ fn phase_changed(feed: &Feed, phase: TopicPhase) {
     }
 }
 
-/// `market`'s book as it stands, `levels` a side, unless its venue serves
-/// no book over REST. A failure is logged and the feed goes on live only,
-/// as the old app's did.
+/// What asking for a book as it stands brought.
+enum Snapshot {
+    Book(Value),
+    /// None: the venue serves no book over REST, or the request failed.
+    None,
+    /// Ferris cannot give the market's amounts in the base asset.
+    Unconverted,
+}
+
+/// `market`'s book as it stands, `levels` a side, its amounts in the base
+/// asset unless `native`, unless its venue serves no book over REST. A
+/// failure is logged and the feed goes on live only, as the old app's did.
 async fn snapshot(
     ferris: &Ferris,
     market: &MarketSelection,
     levels: u32,
+    native: bool,
     label: &str,
-) -> Option<Value> {
+) -> Snapshot {
     if let Ok(capabilities) = ferris.capabilities().await
         && Requirement::snapshot(Operation::FetchOrderBook).availability(
             &capabilities,
@@ -354,15 +488,21 @@ async fn snapshot(
             market.kind.product(),
         ) == Availability::Unsupported
     {
-        return None;
+        return Snapshot::None;
     }
-    let RestTarget {
+    let Ok(RestTarget {
         exchange,
         symbol,
         mut params,
-    } = market.rest_target().ok()?;
+    }) = market.rest_target()
+    else {
+        return Snapshot::None;
+    };
     if !Venue::of(&market.exchange).book_depth_by_limit {
         params.insert("levels".to_owned(), json!(levels));
+    }
+    if !native {
+        params.insert(BASE_AMOUNTS.0.to_owned(), json!(BASE_AMOUNTS.1));
     }
     let body = json!({
         "exchange": exchange,
@@ -374,14 +514,15 @@ async fn snapshot(
         .request::<Value>(Operation::FetchOrderBook, &body)
         .await
     {
-        Ok(payload) => Some(payload),
+        Ok(payload) => Snapshot::Book(payload),
+        Err(error) if !native && error.message.contains(UNCONVERTED) => Snapshot::Unconverted,
         Err(error) => {
             log::warn!(
                 "Order book: no snapshot for {label} ({}: {}); streaming only",
                 error.code,
                 error.message
             );
-            None
+            Snapshot::None
         }
     }
 }
@@ -487,6 +628,49 @@ mod tests {
     }
 
     #[test]
+    fn a_book_says_what_its_amounts_are_in_and_what_its_levels_are() {
+        let traits = |extra: Value| {
+            let mut payload = json!({ "bids": [[1, 1]], "asks": [] });
+            payload
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            OrderBook::from_value(&payload, 5.0).unwrap().traits
+        };
+        // KuCoin's contracts, converted.
+        assert_eq!(
+            traits(json!({
+                "amountUnit": "base",
+                "amountCurrency": "BTC",
+                "sourceAmountUnit": "contracts",
+                "liquidityKind": "orderBook",
+            })),
+            BookTraits {
+                unit: Some(AmountUnit::Base),
+                currency: Some("BTC".into()),
+                liquidity: Some(Liquidity::OrderBook),
+            }
+        );
+        // Extended's RFQ markets, and what Ferris could not classify.
+        let rfq = traits(json!({ "amountUnit": "contracts", "liquidityKind": "indicative" }));
+        assert_eq!(
+            (rfq.unit, rfq.currency, rfq.liquidity),
+            (
+                Some(AmountUnit::Contracts),
+                None,
+                Some(Liquidity::Indicative)
+            )
+        );
+        let odd = traits(json!({ "amountUnit": "lots", "liquidityKind": "unknown" }));
+        assert_eq!(
+            (odd.unit, odd.liquidity),
+            (Some(AmountUnit::Unknown), Some(Liquidity::Unknown))
+        );
+        // A server that says nothing claims nothing.
+        assert_eq!(traits(json!({})), BookTraits::default());
+    }
+
+    #[test]
     fn a_depth_streams_the_levels_its_venue_serves() {
         // Bybit's topics come in four depths.
         for (depth, levels) in [
@@ -514,7 +698,7 @@ mod tests {
         let key = stream_key(&market, 200).expect("it has a topic");
         assert_eq!(
             key,
-            r#"orderbook:bybit:BTC/USDT:USDT:{"category":"linear","levels":200}"#
+            r#"orderbook:bybit:BTC/USDT:USDT:{"amountUnit":"base","category":"linear","levels":200}"#
         );
         // A depth that streams the same levels, and a selection saved with
         // more metadata.

@@ -35,7 +35,7 @@ use std::{
 
 use nsh_core::time::unix_ms;
 
-use super::{Ferris, MarketKey, MarketSelection, OrderBook, OrderBookFeed};
+use super::{BookTraits, Ferris, MarketKey, MarketSelection, OrderBook, OrderBookFeed};
 use crate::data::net::{FeedLease, FeedNode};
 
 /// The samples a pair keeps (the old `MAX_PREMIUM_ARB_POINTS`).
@@ -243,6 +243,17 @@ impl PricePairFeed {
     /// asked for.
     pub fn failed(&self) -> bool {
         self.0.state().failed.get()
+    }
+
+    /// What its books' newest states say of their amounts and liquidity,
+    /// the primary's first; none for a book that has not arrived.
+    pub fn traits(&self) -> [Option<BookTraits>; 2] {
+        match self.0.state().books.borrow().as_ref() {
+            Some(books) => books
+                .each_ref()
+                .map(|book| Some(book.book()?.traits.clone())),
+            None => [None, None],
+        }
     }
 }
 
