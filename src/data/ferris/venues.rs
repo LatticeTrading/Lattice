@@ -15,8 +15,8 @@
 use std::time::Duration;
 
 use super::{
-    MarketType, Product, StatsFieldName,
     market::{self, Derived, Requested},
+    MarketType, Product, StatsFieldName,
 };
 
 /// One catalog request profile: its `category` (none for `{}`) and the
@@ -226,8 +226,8 @@ const PERP_SPOT: &[StatsProfile] = &[
     ("spot", "Spot", Product::Spot, TYPE_SPOT),
 ];
 const PERP: &[StatsProfile] = &[("perp", "Perpetuals", Product::Perp, TYPE_PERP)];
-/// Perpl and Phoenix take no parameters: Phoenix rejects `type`, and both
-/// catalogs are perpetuals only.
+/// Perpl, Phoenix and TxFlow take no parameters: Phoenix and TxFlow reject
+/// `type`, and all three catalogs are perpetuals only.
 const UNTYPED_PERP: &[StatsProfile] = &[("perp", "Perpetuals", Product::Perp, &[])];
 
 /// Every exchange Lattice knows, in the old app's order.
@@ -377,6 +377,18 @@ pub static VENUES: &[Venue] = &[
         name: "Perpl",
         logo: logo!("perpl"),
         stats_profiles: UNTYPED_PERP,
+        book_depth_by_limit: true,
+        ..DEFAULT
+    },
+    Venue {
+        id: "txflow",
+        name: "TxFlow",
+        logo: logo!("txflow"),
+        // Perpetuals only; every request param but `amountUnit` is
+        // refused, `type` and `levels` included (checked live 2026-11-15).
+        stats_profiles: UNTYPED_PERP,
+        // REST books stop at 20 levels a side, the stream at 200.
+        book_level_cap: Some(200),
         book_depth_by_limit: true,
         ..DEFAULT
     },
