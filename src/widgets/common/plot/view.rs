@@ -62,6 +62,19 @@ const LABEL: f32 = 14.0;
 /// measuring them.
 const ADVANCE: f32 = 0.6;
 
+/// How a plot names its bars' times, on its axis and beside its crosshair.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Times {
+    /// As the series is drawn: the time of day for a line's point (ticks
+    /// seconds apart), the day and the time for a candle.
+    #[default]
+    ByMode,
+    /// The day and the time: a line whose points are hours or days apart.
+    DayTime,
+    /// The day with its year: a line over months or years.
+    Date,
+}
+
 /// What a widget's plot shows besides its series.
 pub(crate) struct PlotLook {
     /// What its test ids start with (`chart`: `chart-plot`,
@@ -82,6 +95,8 @@ pub(crate) struct PlotLook {
     /// under the header reach (the Chart's indicators), 0 for none: the
     /// hovered bar's prices show under them.
     pub legend: Memo<f32>,
+    /// How its bars' times are named.
+    pub times: Memo<Times>,
 }
 
 /// What a widget does with the pointer over its plot before the plot does
@@ -125,6 +140,7 @@ pub(crate) fn plot_view(plot: &Rc<Plot>, look: PlotLook, over: View) -> View {
         status,
         pointer,
         legend,
+        times,
     } = look;
     let (scene, size) = (plot.scene, plot.size);
     let has_bars = computed(move || scene.with(|scene| scene.0.bars > 0));
@@ -136,7 +152,8 @@ pub(crate) fn plot_view(plot: &Rc<Plot>, look: PlotLook, over: View) -> View {
     let cross = computed(move || {
         let (x, y) = hover.get()?;
         let prefs = prefs();
-        scene.with(|scene| Cross::at(&scene.0, x, y, prefs))
+        let times = times.get();
+        scene.with(|scene| Cross::at(&scene.0, x, y, times, prefs))
     });
 
     view()
@@ -166,7 +183,7 @@ pub(crate) fn plot_view(plot: &Rc<Plot>, look: PlotLook, over: View) -> View {
                 .style_when(move || !has_bars.get(), |s| s.hidden()),
         )
         .children(price_labels(scene, size))
-        .children(time_labels(scene, prefs))
+        .children(time_labels(scene, times, prefs))
         .children(last_price(id, scene, size))
         .child(over)
         .child(messages(id, status, has_bars))
@@ -255,13 +272,17 @@ fn unavailable(frame: View) -> View {
         .child(text("GPU rendering is unavailable in this environment."))
 }
 
-/// A bar's time as the axis and the crosshair name it: the time of day for
-/// a line's point, the day and the time for a candle.
-fn time_text(mode: Mode, time: f64, prefs: ClockPrefs) -> String {
+/// A bar's time as the axis and the crosshair name it, as `times` says:
+/// left to the series' mode, the time of day for a line's point and the
+/// day and the time for a candle.
+fn time_text(mode: Mode, times: Times, time: f64, prefs: ClockPrefs) -> String {
     let secs = time.floor() as i64;
-    match mode {
-        Mode::Line => clock::format_time(secs, prefs),
-        Mode::Candles => clock::format_day_time(secs, prefs),
+    match (times, mode) {
+        (Times::ByMode, Mode::Line | Mode::Signed | Mode::SignedArea) => {
+            clock::format_time(secs, prefs)
+        }
+        (Times::ByMode, Mode::Candles) | (Times::DayTime, _) => clock::format_day_time(secs, prefs),
+        (Times::Date, _) => clock::format_date(secs, prefs),
     }
 }
 
@@ -299,11 +320,11 @@ struct Mark {
 
 /// The time axis' labels for `scene`: each centered under its bar, kept
 /// inside the plot, and left out where it would touch the one before.
-fn marks(scene: &Scene, prefs: ClockPrefs) -> Vec<Mark> {
+fn marks(scene: &Scene, times: Times, prefs: ClockPrefs) -> Vec<Mark> {
     const SIZE: f32 = 10.0;
     let mut marks: Vec<Mark> = Vec::new();
     for (x, time) in scene.time_marks(TIME_MARKS) {
-        let text = time_text(scene.mode, time, prefs);
+        let text = time_text(scene.mode, times, time, prefs);
         let width = text.chars().count() as f32 * SIZE * ADVANCE;
         let left = (x - width / 2.0).min(scene.width - width).max(0.0);
         let free = marks.last().is_none_or(|before| {
@@ -320,11 +341,12 @@ fn marks(scene: &Scene, prefs: ClockPrefs) -> Vec<Mark> {
 /// The time axis: up to [`TIME_MARKS`] labels under the plot.
 fn time_labels(
     scene: Signal<Shared<Scene>>,
+    times: Memo<Times>,
     prefs: impl Fn() -> ClockPrefs + Copy + 'static,
 ) -> impl Iterator<Item = Text> {
     let marks = computed(move || {
-        let prefs = prefs();
-        scene.with(|scene| marks(&scene.0, prefs))
+        let (times, prefs) = (times.get(), prefs());
+        scene.with(|scene| marks(&scene.0, times, prefs))
     });
     (0..TIME_MARKS).map(move |slot| {
         text(move || {
@@ -468,7 +490,7 @@ struct Cross {
 impl Cross {
     /// The crosshair for a pointer at (`x`, `y`) on `scene`'s plot; none
     /// while no bar shows.
-    fn at(scene: &Scene, x: f32, y: f32, prefs: ClockPrefs) -> Option<Self> {
+    fn at(scene: &Scene, x: f32, y: f32, times: Times, prefs: ClockPrefs) -> Option<Self> {
         let (middle, bar) = scene.bucket_near(x)?;
         let y = y.clamp(0.0, scene.height);
         Some(Self {
@@ -477,7 +499,7 @@ impl Cross {
             pointer: x,
             price: price_text(scene.prices.price_at(f64::from(y / scene.height))),
             lines: [
-                format!("T {}", time_text(scene.mode, bar.time, prefs)),
+                format!("T {}", time_text(scene.mode, times, bar.time, prefs)),
                 format!("O {}", price_text(bar.open)),
                 format!("H {}", price_text(bar.high)),
                 format!("L {}", price_text(bar.low)),

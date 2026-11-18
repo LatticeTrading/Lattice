@@ -1,0 +1,771 @@
+//! The Account Summary's session ([`AccountSummarySession`]): the reports
+//! of the account its settings name, and what its view shows of them (the
+//! widget's data, described in the parent module): the account's
+//! [`Overview`] and its [`Holding`]s.
+//!
+//! Everything shown is made here from the reports, so the view only lays
+//! it out and the figures are tested without one.
+
+use std::rc::Rc;
+
+use nsh_core::prelude::*;
+
+use super::settings::AccountSummarySettings;
+use crate::{
+    data::{
+        net::Watch,
+        portfolio::{
+            Account, Balance, Balances, Direction, Fees, MarginAccount, MarginMode, Performance,
+            Period, Position, Prices, Scope, Staking, Unavailable, Vaults,
+        },
+        Portfolio, SessionScope,
+    },
+    format,
+    widgets::common::{
+        accounts::{follow, shown, AccountSettings, Report, Tone, NONE},
+        Shared,
+    },
+};
+
+/// What a holding is worth at least to show while small balances are
+/// hidden, in the quote currency.
+pub(super) const SMALL: f64 = 1.0;
+
+/// One figure of the summary: a row of one of its tiles, or its headline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Figure {
+    Total,
+    DayChange,
+    DayReturn,
+    MarginRatio,
+    Buffer,
+    Maintenance,
+    CrossEquity,
+    Equity,
+    MarginUsed,
+    Withdrawable,
+    Leverage,
+    Isolated,
+    IsolatedMargin,
+    Long,
+    Short,
+    Net,
+    Gross,
+    Positions,
+    Largest,
+    Unrealized,
+    Funding,
+    WeekPnl,
+    MonthPnl,
+    DayVolume,
+    FeeTier,
+    FeeVolume,
+    NextTier,
+    PerpRates,
+    SpotRates,
+    Discount,
+    Staked,
+    StakedValue,
+    Undelegated,
+    Unstaking,
+    VaultEquity,
+    VaultCount,
+}
+
+impl Figure {
+    /// Every figure, in the order [`Overview`] keeps them.
+    pub const ALL: [Self; 36] = [
+        Self::Total,
+        Self::DayChange,
+        Self::DayReturn,
+        Self::MarginRatio,
+        Self::Buffer,
+        Self::Maintenance,
+        Self::CrossEquity,
+        Self::Equity,
+        Self::MarginUsed,
+        Self::Withdrawable,
+        Self::Leverage,
+        Self::Isolated,
+        Self::IsolatedMargin,
+        Self::Long,
+        Self::Short,
+        Self::Net,
+        Self::Gross,
+        Self::Positions,
+        Self::Largest,
+        Self::Unrealized,
+        Self::Funding,
+        Self::WeekPnl,
+        Self::MonthPnl,
+        Self::DayVolume,
+        Self::FeeTier,
+        Self::FeeVolume,
+        Self::NextTier,
+        Self::PerpRates,
+        Self::SpotRates,
+        Self::Discount,
+        Self::Staked,
+        Self::StakedValue,
+        Self::Undelegated,
+        Self::Unstaking,
+        Self::VaultEquity,
+        Self::VaultCount,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Total => "Total Value",
+            Self::DayChange => "24H Change",
+            Self::DayReturn => "24H Return",
+            Self::MarginRatio => "Cross Margin Ratio",
+            Self::Buffer => "Liquidation Buffer",
+            Self::Maintenance => "Maintenance Margin",
+            Self::CrossEquity => "Cross Equity",
+            Self::Equity => "Perps Equity",
+            Self::MarginUsed => "Margin Used",
+            Self::Withdrawable => "Withdrawable",
+            Self::Leverage => "Leverage",
+            Self::Isolated => "Isolated Positions",
+            Self::IsolatedMargin => "Isolated Margin",
+            Self::Long => "Long",
+            Self::Short => "Short",
+            Self::Net => "Net Exposure",
+            Self::Gross => "Position Value",
+            Self::Positions => "Open Positions",
+            Self::Largest => "Largest",
+            Self::Unrealized => "Unrealized PnL",
+            Self::Funding => "Funding Since Open",
+            Self::WeekPnl => "7D PnL",
+            Self::MonthPnl => "30D PnL",
+            Self::DayVolume => "24H Volume",
+            Self::FeeTier => "Fee Tier",
+            Self::FeeVolume => "14D Volume",
+            Self::NextTier => "Next Tier",
+            Self::PerpRates => "Perps Rate",
+            Self::SpotRates => "Spot Rate",
+            Self::Discount => "Discount",
+            Self::Staked => "Staked",
+            Self::StakedValue => "Staked Value",
+            Self::Undelegated => "Undelegated",
+            Self::Unstaking => "Unstaking",
+            Self::VaultEquity => "Vault Equity",
+            Self::VaultCount => "Vaults",
+        }
+    }
+
+    /// What its row's tooltip says, for a figure whose name leaves it out.
+    pub const fn hint(self) -> Option<&'static str> {
+        match self {
+            Self::PerpRates | Self::SpotRates => Some("Taker / Maker"),
+            _ => None,
+        }
+    }
+
+    /// What its row's test id ends with.
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Total => "total",
+            Self::DayChange => "day-change",
+            Self::DayReturn => "day-return",
+            Self::MarginRatio => "margin-ratio",
+            Self::Buffer => "liquidation-buffer",
+            Self::Maintenance => "maintenance-margin",
+            Self::CrossEquity => "cross-equity",
+            Self::Equity => "equity",
+            Self::MarginUsed => "margin-used",
+            Self::Withdrawable => "withdrawable",
+            Self::Leverage => "leverage",
+            Self::Isolated => "isolated-positions",
+            Self::IsolatedMargin => "isolated-margin",
+            Self::Long => "long",
+            Self::Short => "short",
+            Self::Net => "net-exposure",
+            Self::Gross => "position-value",
+            Self::Positions => "open-positions",
+            Self::Largest => "largest",
+            Self::Unrealized => "unrealized-pnl",
+            Self::Funding => "funding",
+            Self::WeekPnl => "week-pnl",
+            Self::MonthPnl => "month-pnl",
+            Self::DayVolume => "day-volume",
+            Self::FeeTier => "fee-tier",
+            Self::FeeVolume => "fee-volume",
+            Self::NextTier => "next-tier",
+            Self::PerpRates => "perp-rates",
+            Self::SpotRates => "spot-rates",
+            Self::Discount => "discount",
+            Self::Staked => "staked",
+            Self::StakedValue => "staked-value",
+            Self::Undelegated => "undelegated",
+            Self::Unstaking => "unstaking",
+            Self::VaultEquity => "vault-equity",
+            Self::VaultCount => "vault-count",
+        }
+    }
+}
+
+/// What a figure reads, and what colors it (a gain or a loss); `None` is
+/// primary text.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Shown {
+    pub text: String,
+    pub tone: Option<Tone>,
+}
+
+impl Shown {
+    fn plain(text: String) -> Self {
+        Self { text, tone: None }
+    }
+
+    /// `amount` gained or lost, signed and toned; a dash when not reported.
+    fn gain(amount: Option<f64>) -> Self {
+        Self {
+            text: shown(amount, format::signed_usd),
+            tone: amount.map(Tone::of),
+        }
+    }
+
+    fn none() -> Self {
+        Self::plain(NONE.to_owned())
+    }
+}
+
+/// How near the cross positions are to liquidation, by the margin ratio:
+/// what colors its gauge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Health {
+    /// Under half the cross margin is maintenance.
+    Safe,
+    /// Under four fifths.
+    Caution,
+    /// Four fifths or more: liquidation is at all of it.
+    Danger,
+}
+
+impl Health {
+    pub fn of(ratio: f64) -> Self {
+        if ratio < 0.5 {
+            Self::Safe
+        } else if ratio < 0.8 {
+            Self::Caution
+        } else {
+            Self::Danger
+        }
+    }
+}
+
+/// A part of what the account is worth, as its share of the whole.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Part {
+    /// The perpetuals account (the venue's own dex).
+    Perps,
+    /// The token balances, at the tokens' prices.
+    Spot,
+    Staked,
+    Vaults,
+    /// What the venue counts in the account's value and the parts above do
+    /// not (Hyperliquid: positions on other perpetuals dexes).
+    Other,
+}
+
+impl Part {
+    /// Every part, in the bar's order.
+    pub const ALL: [Self; 5] = [
+        Self::Perps,
+        Self::Spot,
+        Self::Staked,
+        Self::Vaults,
+        Self::Other,
+    ];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Perps => "Perps",
+            Self::Spot => "Spot",
+            Self::Staked => "Staked",
+            Self::Vaults => "Vaults",
+            Self::Other => "Other",
+        }
+    }
+
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Perps => "perps",
+            Self::Spot => "spot",
+            Self::Staked => "staked",
+            Self::Vaults => "vaults",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// One part's share, as the bar and its legend show it.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Share {
+    /// Of the whole, `0.0` to `1.0`; `0.0` hides it.
+    pub fraction: f64,
+    pub value: String,
+    pub percent: String,
+}
+
+/// The reports the summary is made of, each `None` until it arrives (or
+/// when the venue does not make it).
+#[derive(Clone, Copy, Default)]
+pub(super) struct Reports<'a> {
+    pub margin: Option<&'a MarginAccount>,
+    pub balances: Option<&'a Balances>,
+    pub prices: Option<&'a Prices>,
+    pub performance: Option<&'a Performance>,
+    pub staking: Option<&'a Staking>,
+    pub vaults: Option<&'a Vaults>,
+    pub fees: Option<&'a Fees>,
+}
+
+/// What the summary shows of its account: every figure, and the fractions
+/// its bars are drawn to.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Overview {
+    /// What each figure reads, in [`Figure::ALL`]'s order.
+    figures: Vec<Shown>,
+    /// The parts of the account's worth, in [`Part::ALL`]'s order.
+    shares: Vec<Share>,
+    /// The cross margin ratio (liquidation at `1.0`).
+    pub margin_ratio: Option<f64>,
+    /// How much of the perpetuals' equity their margin holds.
+    pub margin_usage: Option<f64>,
+    /// What is long and what is short, each a fraction of both together.
+    pub sides: Option<(f64, f64)>,
+    /// How far the volume is from its tier's start to the next's (`1.0` at
+    /// the top tier).
+    pub tier_progress: Option<f64>,
+}
+
+/// `fraction` as a percentage with `places` decimals (`41.80%`).
+fn percent(fraction: f64, places: usize) -> String {
+    format!("{}%", format::grouped(fraction * 100.0, places))
+}
+
+/// A fee rate to four decimals of a percent, its trailing zeros dropped:
+/// `0.036%`, `0.0108%`, and `0%` for none.
+fn rate(fraction: f64) -> String {
+    let figure = format::grouped(fraction * 100.0, 4);
+    let trimmed = if figure.contains('.') {
+        figure.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        figure.as_str()
+    };
+    format!("{trimmed}%")
+}
+
+/// A large amount of dollars in short (`$25M`).
+fn compact_usd(amount: f64) -> String {
+    format!("${}", format::compact_amount(&format!("{amount:.2}")))
+}
+
+/// What `balances` are worth at `prices`; the assets that are not priced
+/// are left out.
+fn spot_value(balances: &Balances, prices: &Prices) -> f64 {
+    balances
+        .0
+        .iter()
+        .filter_map(|balance| Some(balance.total * prices.of(&balance.asset)?))
+        .sum()
+}
+
+impl Overview {
+    /// The overview of `reports`; a dash for every figure they do not make.
+    pub fn of(reports: Reports<'_>) -> Self {
+        let Reports {
+            margin,
+            balances,
+            prices,
+            performance,
+            staking,
+            vaults,
+            fees,
+        } = reports;
+        let window = |period: Period| performance.and_then(|p| p.window(period, Scope::Total));
+        let pnl = |period: Period| {
+            window(period)
+                .and_then(|window| window.pnl.last())
+                .map(|point| point.value)
+        };
+        let day = window(Period::Day);
+
+        // What the account is worth, and of what.
+        let perps = margin.and_then(|margin| margin.equity);
+        let spot = balances.zip(prices).map(|(b, p)| spot_value(b, p));
+        let staked_value = staking
+            .zip(prices)
+            .and_then(|(staking, prices)| Some(staking.total() * prices.of(&staking.asset)?));
+        let vault_equity = vaults.map(Vaults::equity);
+        let parts = [perps, spot, staked_value, vault_equity];
+        let counted: f64 = parts.iter().flatten().sum();
+        let reported = day
+            .and_then(|day| day.value.last())
+            .map(|point| point.value);
+        let total = reported.or_else(|| parts.iter().any(Option::is_some).then_some(counted));
+        // A remainder too small to see is the reports' timing, not a part.
+        let other = reported
+            .map(|total| total - counted)
+            .filter(|other| *other > reported.unwrap_or(0.0).abs() * 0.001 && *other >= 0.01);
+        let whole = total.unwrap_or(0.0).max(counted + other.unwrap_or(0.0));
+        let shares = [perps, spot, staked_value, vault_equity, other]
+            .map(|part| {
+                let value = part.unwrap_or(0.0).max(0.0);
+                let fraction = if whole > 0.0 { value / whole } else { 0.0 };
+                Share {
+                    fraction,
+                    value: shown(part, format::usd),
+                    percent: percent(fraction, 1),
+                }
+            })
+            .to_vec();
+
+        // The day's change, counted from what the account was worth when
+        // the day began.
+        let change = pnl(Period::Day);
+        let opened = day
+            .and_then(|day| day.value.first())
+            .map(|point| point.value);
+        let day_return = change
+            .zip(opened)
+            .and_then(|(change, opened)| (opened > 0.0).then(|| change / opened));
+
+        // Exposure, from the open positions.
+        let sided = |side: Direction| {
+            margin.map(|margin| {
+                margin
+                    .positions
+                    .iter()
+                    .filter(|position| position.direction == side)
+                    .filter_map(|position| position.value)
+                    .sum::<f64>()
+            })
+        };
+        let (long, short) = (sided(Direction::Long), sided(Direction::Short));
+        let gross = long.zip(short).map(|(long, short)| long + short);
+        let sides = long
+            .zip(short)
+            .and_then(|(long, short)| (long + short > 0.0).then_some((long, short)))
+            .map(|(long, short)| (long / (long + short), short / (long + short)));
+        let largest = margin.and_then(|margin| {
+            let gross = gross.filter(|gross| *gross > 0.0)?;
+            let top = margin
+                .positions
+                .iter()
+                .filter_map(|position| Some((position, position.value?)))
+                .max_by(|a, b| a.1.total_cmp(&b.1))?;
+            Some(format!(
+                "{} · {}",
+                top.0.instrument,
+                percent(top.1 / gross, 0)
+            ))
+        });
+
+        // The isolated positions, each with margin of its own the cross
+        // margin ratio leaves out.
+        let isolated: Option<Vec<&Position>> = margin.map(|margin| {
+            margin
+                .positions
+                .iter()
+                .filter(|position| {
+                    position
+                        .leverage
+                        .is_some_and(|leverage| leverage.mode == MarginMode::Isolated)
+                })
+                .collect()
+        });
+        let isolated_margin = isolated.as_ref().map(|isolated| {
+            isolated
+                .iter()
+                .filter_map(|position| position.margin_used)
+                .sum::<f64>()
+        });
+
+        let margin_ratio = margin.and_then(MarginAccount::margin_ratio);
+        let margin_usage = margin.and_then(|margin| {
+            let (used, equity) = (margin.margin_used?, margin.equity?);
+            (equity > 0.0).then(|| (used / equity).clamp(0.0, 1.0))
+        });
+
+        // Fees.
+        let tier = fees.and_then(|fees| fees.tier);
+        let tier_progress = fees.and_then(|fees| {
+            let (volume, floor) = (fees.volume?, fees.tier_floor?);
+            Some(match fees.next_tier {
+                Some(next) if next > floor => ((volume - floor) / (next - floor)).clamp(0.0, 1.0),
+                Some(_) => 0.0,
+                None => 1.0,
+            })
+        });
+        let next_tier = fees.and_then(|fees| {
+            let tier = fees.tier?;
+            Some(fees.next_tier.map_or_else(
+                || "Top tier".to_owned(),
+                |next| format!("Tier {} at {}", tier + 1, compact_usd(next)),
+            ))
+        });
+        let rates = |taker: Option<f64>, maker: Option<f64>| match taker.zip(maker) {
+            Some((taker, maker)) => format!("{} / {}", rate(taker), rate(maker)),
+            None => NONE.to_owned(),
+        };
+
+        // Staking, in its token.
+        let staked = |amount: fn(&Staking) -> f64| {
+            staking.map_or_else(
+                || NONE.to_owned(),
+                |staking| format!("{} {}", format::quantity(amount(staking)), staking.asset),
+            )
+        };
+        let usd = |figure: Option<f64>| Shown::plain(shown(figure, format::usd));
+
+        let figures = Figure::ALL
+            .iter()
+            .map(|figure| match figure {
+                Figure::Total => usd(total),
+                Figure::DayChange => Shown::gain(change),
+                Figure::DayReturn => Shown {
+                    text: shown(day_return, format::signed_percent),
+                    tone: day_return.map(|fraction| Tone::of(fraction * 100.0)),
+                },
+                Figure::MarginRatio => Shown::plain(shown(margin_ratio, |ratio| percent(ratio, 2))),
+                Figure::Buffer => usd(margin.and_then(MarginAccount::liquidation_buffer)),
+                Figure::Maintenance => usd(margin.and_then(|margin| margin.maintenance_margin)),
+                Figure::CrossEquity => usd(margin.and_then(|margin| margin.cross_equity)),
+                Figure::Equity => usd(perps),
+                Figure::MarginUsed => usd(margin.and_then(|margin| margin.margin_used)),
+                Figure::Withdrawable => usd(margin.and_then(|margin| margin.withdrawable)),
+                Figure::Leverage => Shown::plain(shown(
+                    margin.and_then(MarginAccount::leverage),
+                    |leverage| format!("{}x", format::grouped(leverage, 2)),
+                )),
+                Figure::Isolated => Shown::plain(
+                    isolated
+                        .as_ref()
+                        .map_or_else(|| NONE.to_owned(), |isolated| isolated.len().to_string()),
+                ),
+                Figure::IsolatedMargin => usd(isolated_margin),
+                Figure::Long => usd(long),
+                Figure::Short => usd(short),
+                Figure::Net => Shown::plain(shown(
+                    long.zip(short).map(|(long, short)| long - short),
+                    format::signed_usd,
+                )),
+                Figure::Gross => usd(gross),
+                Figure::Positions => Shown::plain(margin.map_or_else(
+                    || NONE.to_owned(),
+                    |margin| margin.positions.len().to_string(),
+                )),
+                Figure::Largest => Shown::plain(largest.clone().unwrap_or_else(|| NONE.to_owned())),
+                Figure::Unrealized => Shown::gain(margin.and_then(|margin| margin.unrealized_pnl)),
+                Figure::Funding => Shown::gain(margin.and_then(|margin| margin.funding)),
+                Figure::WeekPnl => Shown::gain(pnl(Period::Week)),
+                Figure::MonthPnl => Shown::gain(pnl(Period::Month)),
+                Figure::DayVolume => usd(day.and_then(|day| day.volume)),
+                Figure::FeeTier => Shown::plain(
+                    tier.map_or_else(|| NONE.to_owned(), |tier| format!("Tier {tier}")),
+                ),
+                Figure::FeeVolume => usd(fees.and_then(|fees| fees.volume)),
+                Figure::NextTier => {
+                    Shown::plain(next_tier.clone().unwrap_or_else(|| NONE.to_owned()))
+                }
+                Figure::PerpRates => Shown::plain(
+                    fees.map_or_else(|| NONE.to_owned(), |fees| rates(fees.taker, fees.maker)),
+                ),
+                Figure::SpotRates => Shown::plain(fees.map_or_else(
+                    || NONE.to_owned(),
+                    |fees| rates(fees.spot_taker, fees.spot_maker),
+                )),
+                Figure::Discount => {
+                    Shown::plain(shown(fees.and_then(|fees| fees.discount), |discount| {
+                        percent(discount, 1)
+                    }))
+                }
+                Figure::Staked => Shown::plain(staked(|staking| staking.delegated)),
+                Figure::StakedValue => usd(staked_value),
+                Figure::Undelegated => Shown::plain(staked(|staking| staking.undelegated)),
+                Figure::Unstaking => Shown::plain(staked(|staking| staking.pending_withdrawal)),
+                Figure::VaultEquity => usd(vault_equity),
+                Figure::VaultCount => Shown::plain(
+                    vaults.map_or_else(|| NONE.to_owned(), |vaults| vaults.0.len().to_string()),
+                ),
+            })
+            .collect();
+        Self {
+            figures,
+            shares,
+            margin_ratio,
+            margin_usage,
+            sides,
+            tier_progress,
+        }
+    }
+
+    /// What `figure` reads.
+    pub fn figure(&self, figure: Figure) -> &Shown {
+        static DASH: std::sync::OnceLock<Shown> = std::sync::OnceLock::new();
+        Figure::ALL
+            .iter()
+            .position(|kept| *kept == figure)
+            .and_then(|at| self.figures.get(at))
+            .unwrap_or_else(|| DASH.get_or_init(Shown::none))
+    }
+
+    /// `part`'s share of the account's worth.
+    pub fn share(&self, part: Part) -> Option<&Share> {
+        let at = Part::ALL.iter().position(|kept| *kept == part)?;
+        self.shares.get(at)
+    }
+}
+
+/// One asset the account holds, as its row shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Holding {
+    /// What tells the row apart: the asset's name.
+    pub key: Rc<str>,
+    pub total: String,
+    /// What open orders do not hold of it.
+    pub available: String,
+    /// What it is worth now, a dash when it is not priced.
+    pub value: String,
+    /// What it cost, a dash when not reported.
+    pub cost: String,
+    /// What it has made since: its worth less its cost, when both are known
+    /// and it cost something.
+    pub pnl: String,
+    pub tone: Option<Tone>,
+    /// Its worth, which orders the rows.
+    worth: Option<f64>,
+}
+
+impl Holding {
+    fn of(balance: &Balance, prices: Option<&Prices>) -> Self {
+        let worth = prices
+            .and_then(|prices| prices.of(&balance.asset))
+            .map(|price| balance.total * price);
+        let made = worth
+            .zip(balance.entry_value.filter(|cost| *cost > 0.0))
+            .map(|(worth, cost)| worth - cost);
+        Self {
+            key: balance.asset.as_str().into(),
+            total: format::quantity(balance.total),
+            available: format::quantity(balance.available()),
+            value: shown(worth, format::usd),
+            cost: shown(balance.entry_value, format::usd),
+            pnl: shown(made, format::signed_usd),
+            tone: made.map(Tone::of),
+            worth,
+        }
+    }
+}
+
+/// The rows of `balances` priced at `prices`, an asset once: the most
+/// valuable first, then those that are not priced, in the exchange's order.
+/// `hide_small` leaves out the priced ones worth less than [`SMALL`].
+pub(super) fn holdings_of(
+    balances: &Balances,
+    prices: Option<&Prices>,
+    hide_small: bool,
+) -> Vec<Holding> {
+    let mut holdings: Vec<Holding> = Vec::with_capacity(balances.0.len());
+    for balance in &balances.0 {
+        if !holdings
+            .iter()
+            .any(|kept| *kept.key == *balance.asset.as_str())
+        {
+            holdings.push(Holding::of(balance, prices));
+        }
+    }
+    if hide_small {
+        holdings.retain(|holding| holding.worth.is_none_or(|worth| worth >= SMALL));
+    }
+    // Stable: the unpriced keep the exchange's order.
+    holdings.sort_by(|a, b| match (a.worth, b.worth) {
+        (Some(a), Some(b)) => b.total_cmp(&a),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    holdings
+}
+
+/// The report `each` makes of the account `account` holds, followed as it
+/// changes.
+fn watched<T: 'static>(
+    scope: SessionScope,
+    portfolio: &Portfolio,
+    account: Memo<Option<Account>>,
+    each: fn(&Portfolio, &Account) -> Result<Watch<T>, Unavailable>,
+) -> Report<T> {
+    let portfolio = portfolio.clone();
+    follow(scope, account, move |account| each(&portfolio, account))
+}
+
+/// An Account Summary's session state: its account's reports, and what its
+/// view shows of them (its watches live in the effects `follow` starts).
+pub(crate) struct AccountSummarySession {
+    /// The exchanges that report accounts, which its account's rows list.
+    pub(super) portfolio: Portfolio,
+    /// The margin report of the account the settings name, which the frame
+    /// speaks for.
+    pub(super) margin: Report<MarginAccount>,
+    /// Its balances, which the balances' own note speaks for.
+    pub(super) balances: Report<Balances>,
+    /// The overview, updated while the widget is visible.
+    pub(super) overview: Signal<Overview>,
+    /// The holdings, in the table's order, updated while it is visible.
+    pub(super) holdings: Signal<Shared<Vec<Holding>>>,
+}
+
+impl AccountSummarySession {
+    /// A session following `settings`, the session's copy of the tab's.
+    pub(super) fn new(
+        scope: SessionScope,
+        portfolio: Portfolio,
+        settings: Signal<AccountSummarySettings>,
+    ) -> Self {
+        let account = computed(move || settings.with(|settings| settings.account().cloned()));
+        let hide_small = computed(move || settings.with(AccountSummarySettings::small_hidden));
+        let margin = watched(scope, &portfolio, account, Portfolio::watch_margin);
+        let balances = watched(scope, &portfolio, account, Portfolio::watch_balances);
+        let prices = watched(scope, &portfolio, account, Portfolio::watch_prices);
+        let performance = watched(scope, &portfolio, account, Portfolio::watch_performance);
+        let staking = watched(scope, &portfolio, account, Portfolio::watch_staking);
+        let vaults = watched(scope, &portfolio, account, Portfolio::watch_vaults);
+        let fees = watched(scope, &portfolio, account, Portfolio::watch_fees);
+        let overview = signal(Overview::of(Reports::default()));
+        let holdings = signal(Shared::new(Vec::new()));
+        scope.while_visible(move || {
+            effect(move || {
+                let (margin, balances, prices) = (margin.data(), balances.data(), prices.data());
+                let (performance, staking) = (performance.data(), staking.data());
+                let (vaults, fees) = (vaults.data(), fees.data());
+                overview.set(Overview::of(Reports {
+                    margin: margin.as_deref(),
+                    balances: balances.as_deref(),
+                    prices: prices.as_deref(),
+                    performance: performance.as_deref(),
+                    staking: staking.as_deref(),
+                    vaults: vaults.as_deref(),
+                    fees: fees.as_deref(),
+                }));
+            });
+            effect(move || {
+                let prices = prices.data();
+                let next = balances.data().map_or_else(Vec::new, |balances| {
+                    holdings_of(&balances, prices.as_deref(), hide_small.get())
+                });
+                holdings.set(Shared::new(next));
+            });
+        });
+        Self {
+            portfolio,
+            margin,
+            balances,
+            overview,
+            holdings,
+        }
+    }
+}

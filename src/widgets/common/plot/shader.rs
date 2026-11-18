@@ -1,5 +1,6 @@
 //! The plot's GPU program: one WGSL fragment shader that draws a tile of
-//! the plot ([`super::scene::Tile`]): the grid, then candles or a line.
+//! the plot ([`super::scene::Tile`]): the grid, then candles or a line
+//! (one color, or two about a baseline, with its area filled or not).
 //! The old `WebGLGeometryRenderer`, and the grid of its
 //! `ChartOverlayRenderer`.
 //!
@@ -27,8 +28,9 @@ use crate::theme;
 
 /// The vectors of the uniform array.
 const SLOTS: usize = 256;
-/// The vectors before the prices: the view, the plot and four colors.
-const HEAD: usize = 6;
+/// The vectors before the prices: the view, the plot, four colors and the
+/// baseline.
+const HEAD: usize = 7;
 /// The candles a tile can hold: a vector each (open, high, low, close).
 pub(super) const CANDLE_CAPACITY: usize = SLOTS - HEAD;
 /// The points of a line a tile can hold: four closes a vector.
@@ -41,14 +43,16 @@ pub(super) const GRID_ROWS: f32 = 6.0;
 
 /// The program. `d[0]` is the view (the slot at the tile's left edge
 /// counted from its first value, the slots across the tile, how many
-/// values it has, 0 for candles or 1 for a line); `d[1]` the plot (the
+/// values it has, 0 for candles, 1 for a line, 2 for a signed line, 3 for
+/// a signed area); `d[1]` the plot (the
 /// tile's left edge and the plot's width in points, the grid's columns and
 /// rows, none for no grid); `d[2]` to `d[5]` the colors of rising and
-/// falling candles, the line and the grid.
+/// falling candles, the line and the grid; `d[6].x` the baseline a signed
+/// line is colored about, as a fraction down the plot.
 const SOURCE: &str = r"
 struct Uniforms { d: array<vec4f, 256> }
 
-const HEAD: i32 = 6;
+const HEAD: i32 = 7;
 
 // `rgb` at `alpha` over `under` (straight alpha, as NSH takes colors).
 fn over(under: vec4f, rgb: vec3f, alpha: f32) -> vec4f {
@@ -132,7 +136,34 @@ fn shade(uv: vec2f) -> vec4f {
             color = over(color, tint.rgb, tint.a * max(body, wick));
         }
     } else {
-        let stroke = uniforms.d[4];
+        var stroke = uniforms.d[4];
+        let base = uniforms.d[6].x * size.y;
+        if (view.w > 1.5) {
+            // Above the baseline (further up) rising, below it falling.
+            if (p.y > base) {
+                stroke = uniforms.d[3];
+            } else {
+                stroke = uniforms.d[2];
+            }
+            if (view.w > 2.5) {
+                // The area between the line and the baseline, strongest
+                // at the line.
+                let k = i32(floor(slot - 0.5));
+                if (k >= 0 && k + 1 < count) {
+                    let t = slot - 0.5 - f32(k);
+                    let y = mix(close_at(k), close_at(k + 1), t) * size.y;
+                    if (p.y >= min(y, base) && p.y <= max(y, base)) {
+                        let reach = max(abs(base - y), 1.0);
+                        let near = 1.0 - clamp(abs(p.y - y) / reach, 0.0, 1.0);
+                        color = over(color, stroke.rgb, stroke.a * (0.04 + 0.26 * near));
+                    }
+                }
+            }
+            if (base >= 0.0 && base <= size.y) {
+                let grid = uniforms.d[5];
+                color = over(color, grid.rgb, min(grid.a * 2.0, 1.0) * hairline(p.y, base, size.y));
+            }
+        }
         let j = i32(floor(slot - 0.5));
         var nearest = 1e9;
         for (var k = j - 1; k <= j + 1; k++) {
@@ -200,7 +231,11 @@ pub(super) fn uniforms(scene: &Scene, tile: &Tile, grid: bool, palette: &Palette
     let mode = match scene.mode {
         Mode::Candles => 0.0,
         Mode::Line => 1.0,
+        Mode::Signed => 2.0,
+        Mode::SignedArea => 3.0,
     };
+    // As far off the plot as the scene draws a price at most.
+    let baseline = scene.prices.fraction(scene.baseline).clamp(-64.0, 64.0) as f32;
     let (columns, rows) = if grid {
         (GRID_COLUMNS, GRID_ROWS)
     } else {
@@ -214,6 +249,7 @@ pub(super) fn uniforms(scene: &Scene, tile: &Tile, grid: bool, palette: &Palette
         palette.falling.clone(),
         palette.line.clone(),
         palette.grid.clone(),
+        [baseline, 0.0, 0.0, 0.0].into(),
     ]);
     debug_assert_eq!(slots.len(), HEAD);
     slots.extend(tile.values.chunks(4).map(|chunk| {

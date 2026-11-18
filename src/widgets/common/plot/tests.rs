@@ -358,9 +358,11 @@ fn the_shader_compiles_and_takes_a_tile_in_one_array() {
         [word(12), word(13), word(14), word(15)],
         [1.0, 0.0, 0.0, 1.0]
     );
+    // The baseline, down the plot: a price of nothing is its bottom.
+    assert_eq!(word(24), 1.0);
     // The first candle after the head: open, high, low, close down the plot.
     assert_eq!(
-        [word(24), word(25), word(26), word(27)],
+        [word(28), word(29), word(30), word(31)],
         [0.75, 0.125, 0.875, 0.25]
     );
     // Whatever a tile holds fits the array.

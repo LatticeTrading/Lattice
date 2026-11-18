@@ -30,7 +30,7 @@ use crate::{
     exchanges, theme,
     widgets::{
         TabContext,
-        common::plot::{self, PlotLook, plot_view},
+        common::plot::{self, PlotLook, Times, plot_view},
     },
 };
 
@@ -50,6 +50,7 @@ pub(super) fn chart_view(session: &Rc<ChartSession>, tab: &TabContext<ChartSetti
         status: computed(move || status.get().text()),
         pointer: Some(editor.clone()),
         legend,
+        times: computed(Times::default),
     };
     let over = view()
         .absolute()

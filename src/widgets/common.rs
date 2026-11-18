@@ -1,13 +1,15 @@
 //! Building blocks several widgets use: the market picker, exchange logos,
 //! market tags, a settings panel's market box, the compact number field,
 //! double clicks, wheel steps, a canvas pen, what the widgets that draw
-//! order books share ([`books`]), and what the ones that plot a series
-//! over time do ([`plot`]).
+//! order books share ([`books`]), what the ones that plot a series over
+//! time do ([`plot`]), and what the ones that show an account do
+//! ([`accounts`]).
 //! [`Shared`] (signals of big values) and [`Keyed`] (watches and leases kept
 //! in step with what is wanted) are the data layer's, named here too for
 //! the widgets that use them. What every widget needs (app-wide controls,
 //! panels, list scrolling) is in `crate::ui`.
 
+pub(crate) mod accounts;
 pub(crate) mod books;
 mod clicks;
 mod exchange_logo;

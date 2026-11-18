@@ -30,7 +30,7 @@ use crate::{
         common::{
             books::{self, Pair},
             market_tags,
-            plot::{self, PlotLook, plot_view},
+            plot::{self, PlotLook, Times, plot_view},
         },
     },
 };
@@ -84,6 +84,7 @@ fn plot(session: &Rc<PremiumArbSession>, saved: Memo<PremiumArbSettings>) -> Vie
         status: computed(move || status.get().text()),
         pointer: None,
         legend: computed(|| 0.0),
+        times: computed(Times::default),
     };
     let header = plot::header(move || {
         saved.with(|settings| {

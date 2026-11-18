@@ -211,6 +211,12 @@ impl<S: KindSettings> TabContext<S> {
         self.shown.get() && self.panel.open.get()
     }
 
+    /// Opens the widget's settings panel, as the pane's gear does: for a
+    /// view that asks for a setting it cannot go on without.
+    pub fn open_settings(&self) {
+        self.panel.open.set(true);
+    }
+
     pub fn close_settings(&self) {
         self.panel.open.set(false);
     }

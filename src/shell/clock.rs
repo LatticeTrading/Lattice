@@ -114,13 +114,15 @@ pub(crate) fn format_time(secs: i64, prefs: ClockPrefs) -> String {
     }
 }
 
+/// The months as a chart's time axis names them.
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
 /// `secs` (since the Unix epoch) as a day and a time of day on the clock,
 /// without seconds: `Nov 14 14:05`, or `Nov 14 02:05 PM` in 12-hour time
 /// (a chart's time axis).
 pub(crate) fn format_day_time(secs: i64, prefs: ClockPrefs) -> String {
-    const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
     let local = secs + i64::from(prefs.offset) * 60;
     let (_, month, day) = crate::format::civil_date(local.div_euclid(86_400));
     let month = MONTHS[(month - 1).clamp(0, 11) as usize];
@@ -128,6 +130,15 @@ pub(crate) fn format_day_time(secs: i64, prefs: ClockPrefs) -> String {
     // `14:05:09` or `02:05:09 PM`, less its seconds.
     let (clock, suffix) = time.split_at(8.min(time.len()));
     format!("{month} {day} {}{suffix}", &clock[..5.min(clock.len())])
+}
+
+/// `secs` (since the Unix epoch) as a day of a year on the clock: `Nov 14
+/// 2026` (the time axis of a chart over months or years).
+pub(crate) fn format_date(secs: i64, prefs: ClockPrefs) -> String {
+    let local = secs + i64::from(prefs.offset) * 60;
+    let (year, month, day) = crate::format::civil_date(local.div_euclid(86_400));
+    let month = MONTHS[(month - 1).clamp(0, 11) as usize];
+    format!("{month} {day} {year}")
 }
 
 /// An offset's name: `UTC+0`, `UTC-6`, `UTC+5:30`.
@@ -138,5 +149,29 @@ pub(crate) fn offset_label(offset: i16) -> String {
         format!("UTC{sign}{hours}")
     } else {
         format!("UTC{sign}{hours}:{minutes:02}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_chart_s_days_are_the_clock_s() {
+        // 2025-03-13T17:23:50Z.
+        const AT: i64 = 1_741_886_630;
+        let utc = ClockPrefs::default();
+        assert_eq!(format_day_time(AT, utc), "Mar 13 17:23");
+        assert_eq!(format_date(AT, utc), "Mar 13 2025");
+        // The clock's offset moves the day, and the year with it.
+        let ahead = ClockPrefs {
+            offset: 8 * 60,
+            ..utc
+        };
+        assert_eq!(format_day_time(AT, ahead), "Mar 14 01:23");
+        assert_eq!(format_date(AT, ahead), "Mar 14 2025");
+        let new_year = 1_767_225_600 - 1;
+        assert_eq!(format_date(new_year, utc), "Dec 31 2025");
+        assert_eq!(format_date(new_year, ahead), "Jan 1 2026");
     }
 }

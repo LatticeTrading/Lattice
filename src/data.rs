@@ -9,6 +9,12 @@
 //!   which the connection panel lists ([`DataServices::connections`]).
 //! - [`ferris`] is the first integration built on it: Lattice's own market
 //!   data backend, treated like any other external API.
+//! - [`hyperliquid`] is the second: Hyperliquid's own API, asked by the app
+//!   itself for what Ferris does not carry (accounts), within the user's
+//!   own rate limit there.
+//! - [`portfolio`] is what an account holds and has made, in one shape
+//!   whatever its exchange, and the exchanges that report accounts
+//!   ([`Portfolio`]): what the portfolio widgets read.
 //! - [`session`] gives each widget a session that owns its data for as long
 //!   as the widget is in the workspace, whether or not it is on screen.
 //! - [`markets`] is the app's one directory of every market Ferris lists,
@@ -20,18 +26,41 @@
 //! connection go.
 
 pub mod ferris;
+pub mod hyperliquid;
 mod keyed;
 pub mod markets;
 pub mod net;
+pub mod portfolio;
 pub mod session;
 mod shared;
 
 pub(crate) use keyed::Keyed;
 pub use markets::Markets;
+pub use portfolio::Portfolio;
 pub use session::{SessionScope, Sessions, WidgetId, WidgetView};
 pub use shared::Shared;
 
+use std::rc::Rc;
+
 use nsh_core::prelude::*;
+
+/// Where each API the app talks to is: production's, a build's overrides, or
+/// a test's stand-ins.
+#[derive(Clone, Debug, Default)]
+pub struct DataConfig {
+    pub ferris: ferris::FerrisConfig,
+    pub hyperliquid: hyperliquid::HyperliquidConfig,
+}
+
+/// A Ferris of one's own, with everything else as the build has it.
+impl From<ferris::FerrisConfig> for DataConfig {
+    fn from(ferris: ferris::FerrisConfig) -> Self {
+        Self {
+            ferris,
+            ..Self::default()
+        }
+    }
+}
 
 /// The app's data services, shared by every widget. Cloning is cheap: every
 /// clone is the same services.
@@ -41,6 +70,10 @@ pub struct DataServices {
     pub status: net::StatusBoard,
     /// Lattice's market data backend.
     pub ferris: ferris::Ferris,
+    /// Hyperliquid's own API, which the app asks itself.
+    pub hyperliquid: hyperliquid::Hyperliquid,
+    /// The accounts widgets watch, whichever exchange each is on.
+    pub portfolio: Portfolio,
     /// Every widget's session (what a widget streams and keeps).
     pub sessions: Sessions,
     /// Every market Ferris lists, shared by whatever offers or ranks them.
@@ -52,22 +85,40 @@ impl DataServices {
     /// them to everything made under it from now on. They shut down with
     /// that owner.
     pub fn provide() -> Self {
-        Self::provide_with(ferris::FerrisConfig::default())
+        Self::provide_with(DataConfig::default())
     }
 
-    /// [`Self::provide`] with Ferris at `config` (a test's backend).
-    pub fn provide_with(config: ferris::FerrisConfig) -> Self {
+    /// [`Self::provide`] with the APIs at `config` (a test's backends; a
+    /// [`FerrisConfig`](ferris::FerrisConfig) alone is that Ferris with the
+    /// rest as built).
+    pub fn provide_with(config: impl Into<DataConfig>) -> Self {
+        let config = config.into();
         let status = net::StatusBoard::new();
-        let ferris = ferris::Ferris::new(config, status).unwrap_or_else(|error| {
+        let ferris = ferris::Ferris::new(config.ferris, status).unwrap_or_else(|error| {
             log::error!("Lattice: invalid Ferris configuration ({error}); using production");
             ferris::Ferris::new(ferris::FerrisConfig::production(), status)
                 .expect("the production Ferris configuration is valid")
         });
+        let hyperliquid = hyperliquid::Hyperliquid::new(&config.hyperliquid, status)
+            .unwrap_or_else(|error| {
+                log::error!(
+                    "Lattice: invalid Hyperliquid configuration ({error}); using production"
+                );
+                let production = hyperliquid::HyperliquidConfig::production();
+                hyperliquid::Hyperliquid::new(&production, status)
+                    .expect("the production Hyperliquid configuration is valid")
+            });
+        // The exchanges that report accounts, in the order widgets offer
+        // them: a new one is its integration above and its line here.
+        let portfolio =
+            Portfolio::new([Rc::new(hyperliquid.clone()) as Rc<dyn portfolio::AccountSource>]);
         let sessions = Sessions::new();
         let markets = Markets::new(ferris.clone());
         let services = Self {
             status,
             ferris,
+            hyperliquid,
+            portfolio,
             sessions,
             markets,
         };
@@ -77,6 +128,7 @@ impl DataServices {
             // Sessions first: they hold the subscriptions and watches.
             shutdown.sessions.shutdown();
             shutdown.ferris.shutdown();
+            shutdown.hyperliquid.shutdown();
         });
         services
     }
@@ -98,6 +150,8 @@ impl DataServices {
     /// changed; this reads what each carries and for whom, from the sources
     /// themselves. A new integration adds its sources here.
     pub fn connections(&self) -> Vec<net::SourceDetails> {
-        self.ferris.sources()
+        let mut sources = self.ferris.sources();
+        sources.extend(self.hyperliquid.sources());
+        sources
     }
 }

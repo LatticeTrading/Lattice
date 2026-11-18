@@ -18,25 +18,33 @@ pub(crate) mod picker;
 mod registry;
 
 // The widgets, each listed once in the registry below.
+mod account_performance;
+mod account_summary;
 mod chart;
 mod depth_chart;
 mod funding_rates;
 mod market_screener;
 mod order_book;
+mod positions;
 mod premium_arb_chart;
 mod price_delta_monitor;
+mod trade_history;
 mod trade_stream;
 
 pub(crate) use host::{Category, Linking, SettingsPanel, TabContext, TabHandle};
 
 registry::registry! {
+    account_performance::AccountPerformance,
+    account_summary::AccountSummary,
     chart::Chart,
     depth_chart::DepthChart,
     funding_rates::FundingRates,
     market_screener::MarketScreener,
     order_book::OrderBook,
+    positions::Positions,
     premium_arb_chart::PremiumArbChart,
     price_delta_monitor::PriceDeltaMonitor,
+    trade_history::TradeHistory,
     trade_stream::TradeStream,
 }
 

@@ -1,7 +1,38 @@
-//! Stable keys from JSON, so two requests or topics that mean the same
-//! thing share one key whatever order their members were written in.
+//! JSON as APIs write it: stable keys ([`canonical_json`]), so two requests
+//! or topics that mean the same thing share one key whatever order their
+//! members were written in, and figures written as decimal text
+//! ([`Figure`]).
 
+use serde::{Deserialize, Deserializer, de::Error as _};
 use serde_json::Value;
+
+/// A figure as an API writes it: a JSON number, or decimal text
+/// (`"13104.514502"`, how exchanges keep a float from rounding it on the
+/// way). For what is added up, plotted or shown rounded (an account's
+/// value, a position's size); a price shown digit for digit stays text.
+/// Anything else, or a number that is not finite, fails to read.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct Figure(pub f64);
+
+impl Figure {
+    /// The figure `value` holds, if it holds one.
+    pub fn of(value: &Value) -> Option<Self> {
+        match value {
+            Value::Number(number) => number.as_f64(),
+            Value::String(text) => text.trim().parse().ok(),
+            _ => None,
+        }
+        .filter(|number: &f64| number.is_finite())
+        .map(Self)
+    }
+}
+
+impl<'de> Deserialize<'de> for Figure {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = Value::deserialize(deserializer)?;
+        Self::of(&value).ok_or_else(|| D::Error::custom(format!("`{value}` is not a number")))
+    }
+}
 
 /// `value` as compact JSON with every object's members sorted by name, at
 /// every depth.

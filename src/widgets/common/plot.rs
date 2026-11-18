@@ -43,8 +43,8 @@ pub(crate) use self::{
     scene::{Mode, Scene},
     timeline::Timeline,
     view::{
-        AREA_ORIGIN, HEADER_ORIGIN, PlotLook, Pointer, UNDER_HEADER, area, header, header_end,
-        plot_view,
+        AREA_ORIGIN, HEADER_ORIGIN, PlotLook, Pointer, Times, UNDER_HEADER, area, header,
+        header_end, plot_view,
     },
     viewport::{DEFAULT_CANDLES, DEFAULT_TICKS, Viewport},
 };

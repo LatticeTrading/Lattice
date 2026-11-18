@@ -1,6 +1,6 @@
 # Lattice
 
-Native Rust trading terminal built with **Native Shell (NSH) 0.5.1**, a port
+Native Rust trading terminal built with **Native Shell (NSH) 0.6.0**, a port
 of the lattice-pro web app. Lattice has one shared Rust UI for native desktop
 and WebAssembly web targets.
 
@@ -16,7 +16,15 @@ depth on a price ladder) and the Depth Chart (their running depth as curves
 about the mid price), all four drawn on the GPU through NSH's WGSL shader
 views, the Market Screener, the Trade Stream and the Funding Rates (a
 watchlist of perpetuals' funding); the others still to port have empty folders
-under `src/widgets/`. The Everything Bar's symbol search finds any
+under `src/widgets/`. Four portfolio widgets watch an account by its public
+address: the Positions, the Account Summary (total value, margin health,
+exposure, fees, staking and balances), the Trade History (its latest trades,
+fees and closed PnL) and the Account Performance (its value or profit over
+time, on the Chart's plot).
+An account's data is asked of its exchange directly rather than of Ferris, so
+the exchange's rate limit is each user's own; Hyperliquid is the first
+exchange, behind an exchange-neutral portfolio layer the widgets read. The
+Everything Bar's symbol search finds any
 market and sends it to the widgets linked to the bar's link color (the
 Chart, from its pane header's link button); its connection indicator shows
 the health of the app's data sources and opens a panel of everything the
@@ -95,8 +103,8 @@ visual and native-caption acceptance remains a user-run check.
 - `src/storage.rs`: versioned NSH storage-service persistence.
 - `src/theme.rs`, `src/theme/roles.rs`: the theme engine and its color roles.
 - `src/assets.rs`, `assets/`: compile-time fonts and app assets (icons, exchange logos).
-- `src/data.rs`, `src/data/`: the data layer (`net/`: shared HTTP, WebSocket, polling, and live-feed plumbing; `ferris/`: the Ferris integration, with per-exchange rules in `ferris/venues.rs`; `session.rs`: per-widget data sessions; `markets.rs`: the app's one directory of every market, which the search and the market picker read).
-- `src/widgets.rs`, `src/widgets/`: the widget registry, the widget picker, shared widget parts (`common/`: market picker, exchange logos, number field, double clicks, in `common/books/` what the widgets that draw order books share, and in `common/plot/` the GPU plot the two charts share), and one folder per widget (`chart/`, `depth_chart/`, `funding_rates/`, `market_screener/`, `order_book/`, `premium_arb_chart/`, `trade_stream/`).
+- `src/data.rs`, `src/data/`: the data layer (`net/`: shared HTTP, WebSocket, polling, live-feed and rate-limit plumbing; `ferris/`: the Ferris integration, with per-exchange rules in `ferris/venues.rs`; `hyperliquid/`: Hyperliquid's own API, asked by the app itself within its rate limit; `portfolio/`: what an account holds and has made, in one shape whatever its exchange, and the trait an exchange's integration implements to report accounts; `session.rs`: per-widget data sessions; `markets.rs`: the app's one directory of every market, which the search and the market picker read).
+- `src/widgets.rs`, `src/widgets/`: the widget registry, the widget picker, shared widget parts (`common/`: market picker, exchange logos, number field, double clicks, in `common/books/` what the widgets that draw order books share, in `common/plot/` the GPU plot the charts share, and in `common/accounts/` what the widgets that show an account share), and one folder per widget (`account_performance/`, `account_summary/`, `chart/`, `depth_chart/`, `funding_rates/`, `market_screener/`, `order_book/`, `positions/`, `premium_arb_chart/`, `price_delta_monitor/`, `trade_stream/`).
 - `src/link.rs`: color linking (the link colors, and the Everything Bar's).
 - `src/exchanges.rs`, `src/format.rs`: exchange names and logos; number formatting.
 - `src/platform/`: future native integrations (empty).

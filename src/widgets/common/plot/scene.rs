@@ -36,6 +36,20 @@ pub(crate) enum Mode {
     Candles,
     /// A line through the closes (a tick chart, a spread).
     Line,
+    /// A line through the closes in the rising candles' color above the
+    /// scene's baseline ([`Scene::with_baseline`]) and the falling ones'
+    /// below it, with the baseline faint across the plot.
+    Signed,
+    /// [`Self::Signed`], with the area between the line and the baseline
+    /// filled in the same colors, fading toward the baseline.
+    SignedArea,
+}
+
+impl Mode {
+    /// Whether it colors the line by the side of the baseline it is on.
+    pub fn is_signed(self) -> bool {
+        matches!(self, Self::Signed | Self::SignedArea)
+    }
 }
 
 /// One shader view's stretch of the plot.
@@ -89,6 +103,9 @@ pub(crate) struct Scene {
     pub first_bucket: usize,
     pub tiles: Vec<Tile>,
     pub last: Option<Last>,
+    /// The price a signed line ([`Mode::is_signed`]) is colored about: 0
+    /// until told otherwise.
+    pub baseline: f64,
 }
 
 impl Scene {
@@ -120,7 +137,7 @@ impl Scene {
         let (width, height) = (width.max(1.0), height.max(1.0));
         let (pitch, capacity) = match mode {
             Mode::Candles => (CANDLE_PITCH, CANDLE_CAPACITY),
-            Mode::Line => (LINE_PITCH, LINE_CAPACITY),
+            Mode::Line | Mode::Signed | Mode::SignedArea => (LINE_PITCH, LINE_CAPACITY),
         };
         let bucket = ((pitch * (right - left) / f64::from(width)).ceil() as usize).max(1);
         let (from, to) = (left / bucket as f64, right / bucket as f64);
@@ -179,7 +196,9 @@ impl Scene {
                         .flat_map(|bar| [bar.open, bar.high, bar.low, bar.close])
                         .map(down)
                         .collect(),
-                    Mode::Line => shown.iter().map(|bar| down(bar.close)).collect(),
+                    Mode::Line | Mode::Signed | Mode::SignedArea => {
+                        shown.iter().map(|bar| down(bar.close)).collect()
+                    }
                 };
                 Tile {
                     left: x0 as f32,
@@ -209,7 +228,22 @@ impl Scene {
                 close: bar.close,
                 rising: bar.close >= bar.open,
             }),
+            baseline: 0.0,
         }
+        .with_baseline(0.0)
+    }
+
+    /// The scene with a signed line colored about `baseline` (the newest
+    /// close's mark too); a scene of another mode as it was.
+    #[must_use]
+    pub fn with_baseline(mut self, baseline: f64) -> Self {
+        if self.mode.is_signed() {
+            self.baseline = baseline;
+            if let Some(last) = &mut self.last {
+                last.rising = last.close >= baseline;
+            }
+        }
+        self
     }
 
     /// Where `slot` is across the plot, in points from its left edge.

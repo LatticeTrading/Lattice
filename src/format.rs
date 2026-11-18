@@ -165,6 +165,88 @@ pub fn funding_rate(value: &str) -> String {
     }
 }
 
+/// A figure with `places` decimals and its thousands grouped
+/// (`13,109.48`), `--` for one that is no number. One that rounds to zero
+/// has no sign.
+pub fn grouped(value: f64, places: usize) -> String {
+    if !value.is_finite() {
+        return "--".to_owned();
+    }
+    let digits = format!("{:.places$}", value.abs());
+    let (whole, fraction) = digits.split_once('.').unwrap_or((&digits, ""));
+    let mut out = String::with_capacity(digits.len() + whole.len() / 3 + 1);
+    if value < 0.0 && digits.bytes().any(|digit| matches!(digit, b'1'..=b'9')) {
+        out.push('-');
+    }
+    for (at, digit) in whole.chars().enumerate() {
+        if at > 0 && (whole.len() - at) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    if !fraction.is_empty() {
+        out.push('.');
+        out.push_str(fraction);
+    }
+    out
+}
+
+/// An amount of US dollars to the cent: `$13,109.48`, `-$100.01`.
+pub fn usd(value: f64) -> String {
+    let figure = grouped(value, 2);
+    if !value.is_finite() {
+        return figure;
+    }
+    match figure.strip_prefix('-') {
+        Some(magnitude) => format!("-${magnitude}"),
+        None => format!("${figure}"),
+    }
+}
+
+/// [`usd`] for what was gained or lost: a gain says so (`+$5.00`), and
+/// nothing either way is `$0.00`.
+pub fn signed_usd(value: f64) -> String {
+    let amount = usd(value);
+    if value > 0.0 && amount != "$0.00" {
+        format!("+{amount}")
+    } else {
+        amount
+    }
+}
+
+/// A fraction as a percentage with two decimals, a gain saying so:
+/// `+1.25%`, `-0.27%`, `0.00%`.
+pub fn signed_percent(fraction: f64) -> String {
+    let figure = grouped(fraction * 100.0, 2);
+    if !fraction.is_finite() {
+        figure
+    } else if fraction > 0.0 && figure != "0.00" {
+        format!("+{figure}%")
+    } else {
+        format!("{figure}%")
+    }
+}
+
+/// How much of something is held: fewer decimals the more there is (two
+/// from a thousand, four from one, six below), without trailing zeros, its
+/// thousands grouped (`2,000`, `14.6255`, `0.0335`).
+pub fn quantity(value: f64) -> String {
+    let places = match value.abs() {
+        size if size >= 1_000.0 => 2,
+        size if size >= 1.0 => 4,
+        _ => 6,
+    };
+    let figure = grouped(value, places);
+    if figure.contains('.') {
+        figure
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_owned()
+    } else {
+        figure
+    }
+}
+
 /// A decimal's sign, order of magnitude and significant digits, for
 /// [`compare_decimals`].
 fn magnitude(text: &str) -> (i8, i64, String) {
@@ -254,4 +336,52 @@ pub fn iso_time(ms: Option<f64>) -> String {
         in_day / 1000 % 60,
         in_day % 1000
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn figures_are_grouped_signed_and_rounded_as_they_show() {
+        assert_eq!(grouped(13_109.482_328, 2), "13,109.48");
+        assert_eq!(grouped(1_234_567.0, 0), "1,234,567");
+        assert_eq!(grouped(999.995, 2), "1,000.00");
+        assert_eq!(grouped(-1_000.5, 1), "-1,000.5");
+        assert_eq!(grouped(12.0, 2), "12.00");
+        // What rounds to zero has no sign; what is no number says so.
+        assert_eq!(grouped(-0.004, 2), "0.00");
+        assert_eq!(grouped(f64::NAN, 2), "--");
+        assert_eq!(grouped(f64::INFINITY, 2), "--");
+
+        assert_eq!(usd(13_109.482_328), "$13,109.48");
+        assert_eq!(usd(-100.014), "-$100.01");
+        assert_eq!(usd(0.0), "$0.00");
+        assert_eq!(usd(f64::NAN), "--");
+
+        assert_eq!(signed_usd(5.0), "+$5.00");
+        assert_eq!(signed_usd(-5.0), "-$5.00");
+        assert_eq!(signed_usd(0.0), "$0.00");
+        assert_eq!(signed_usd(0.004), "$0.00");
+        assert_eq!(signed_usd(-0.004), "$0.00");
+
+        assert_eq!(signed_percent(0.0125), "+1.25%");
+        assert_eq!(signed_percent(-0.002_678_9), "-0.27%");
+        assert_eq!(signed_percent(0.0), "0.00%");
+        assert_eq!(signed_percent(0.000_04), "0.00%");
+        assert_eq!(signed_percent(f64::NAN), "--");
+    }
+
+    #[test]
+    fn a_quantity_has_fewer_decimals_the_more_there_is() {
+        assert_eq!(quantity(2_000.0), "2,000");
+        assert_eq!(quantity(12_345.678), "12,345.68");
+        assert_eq!(quantity(14.625_485), "14.6255");
+        assert_eq!(quantity(20.0), "20");
+        assert_eq!(quantity(0.0335), "0.0335");
+        assert_eq!(quantity(0.000_012_3), "0.000012");
+        assert_eq!(quantity(0.0), "0");
+        assert_eq!(quantity(-0.1), "-0.1");
+        assert_eq!(quantity(100.0), "100");
+    }
 }

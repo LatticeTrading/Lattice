@@ -1,7 +1,7 @@
 //! Networking that every integration shares and none owns.
 //!
 //! An integration (Ferris today; an exchange or news API later) is built
-//! from five parts, each usable on its own:
+//! from six parts, each usable on its own:
 //!
 //! - [`HttpClient`]: one API origin, JSON in and out, a deadline on every
 //!   request and one [`ApiError`] model. It runs on NSH's `fetch`, so it is
@@ -19,6 +19,9 @@
 //! - [`FeedHub`]: shared live feeds, one per key (a market's trades),
 //!   started by the first lease and ended by the last; [`FeedHubs`] holds
 //!   one hub per feed type.
+//! - [`RateBudget`]: what an API lets one client ask of it in a window of
+//!   time, spent before each request of an API the app asks directly (an
+//!   exchange's own), so the user's limit there is kept by the user's app.
 //! - [`StatusBoard`]: each socket and query hub reports its health there,
 //!   which is what the connection indicator shows. What a source carries
 //!   and for whom is read from the source itself when the connection panel
@@ -33,6 +36,7 @@
 //! call, not the shared socket or poll loop (desktop builds; on the web a
 //! panic aborts the module, see `guard.rs`).
 
+mod budget;
 mod consumer;
 mod error;
 mod feed;
@@ -44,11 +48,12 @@ mod socket;
 mod status;
 mod task;
 
+pub use budget::RateBudget;
 pub use consumer::{Consumer, Held};
 pub use error::{ApiError, ErrorKind};
 pub use feed::{FeedHub, FeedHubs, FeedLease, FeedNode};
 pub use http::{ErrorDecoder, HttpClient, HttpOptions, Request};
-pub use json::canonical_json;
+pub use json::{Figure, canonical_json};
 pub use query::{Queries, QuerySpec, QueryState, Watch};
 pub use socket::{
     Inbound, Route, SharedSocket, SocketConfig, SocketProtocol, Subscription, TopicPhase,
