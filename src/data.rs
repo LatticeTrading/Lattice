@@ -14,6 +14,7 @@
 //!   own rate limit there.
 //! - [`lighter`] is the third: Lighter's own API, asked the same way for
 //!   the same reason.
+//! - [`txflow`] is the fourth: TxFlow's own API, asked the same way again.
 //! - [`portfolio`] is what an account holds and has made, in one shape
 //!   whatever its exchange, and the exchanges that report accounts
 //!   ([`Portfolio`]): what the portfolio widgets read.
@@ -36,6 +37,7 @@ pub mod net;
 pub mod portfolio;
 pub mod session;
 mod shared;
+pub mod txflow;
 
 pub(crate) use keyed::Keyed;
 pub use markets::Markets;
@@ -54,6 +56,7 @@ pub struct DataConfig {
     pub ferris: ferris::FerrisConfig,
     pub hyperliquid: hyperliquid::HyperliquidConfig,
     pub lighter: lighter::LighterConfig,
+    pub txflow: txflow::TxFlowConfig,
 }
 
 /// A Ferris of one's own, with everything else as the build has it.
@@ -78,6 +81,8 @@ pub struct DataServices {
     pub hyperliquid: hyperliquid::Hyperliquid,
     /// Lighter's own API, which the app asks itself.
     pub lighter: lighter::Lighter,
+    /// TxFlow's own API, which the app asks itself.
+    pub txflow: txflow::TxFlow,
     /// The accounts widgets watch, whichever exchange each is on.
     pub portfolio: Portfolio,
     /// Every widget's session (what a widget streams and keeps).
@@ -119,11 +124,17 @@ impl DataServices {
             lighter::Lighter::new(&lighter::LighterConfig::production(), status)
                 .expect("the production Lighter configuration is valid")
         });
+        let txflow = txflow::TxFlow::new(&config.txflow, status).unwrap_or_else(|error| {
+            log::error!("Lattice: invalid TxFlow configuration ({error}); using production");
+            txflow::TxFlow::new(&txflow::TxFlowConfig::production(), status)
+                .expect("the production TxFlow configuration is valid")
+        });
         // The exchanges that report accounts, in the order widgets offer
         // them: a new one is its integration above and its line here.
         let portfolio = Portfolio::new([
             Rc::new(hyperliquid.clone()) as Rc<dyn portfolio::AccountSource>,
             Rc::new(lighter.clone()),
+            Rc::new(txflow.clone()),
         ]);
         let sessions = Sessions::new();
         let markets = Markets::new(ferris.clone());
@@ -132,6 +143,7 @@ impl DataServices {
             ferris,
             hyperliquid,
             lighter,
+            txflow,
             portfolio,
             sessions,
             markets,
@@ -144,6 +156,7 @@ impl DataServices {
             shutdown.ferris.shutdown();
             shutdown.hyperliquid.shutdown();
             shutdown.lighter.shutdown();
+            shutdown.txflow.shutdown();
         });
         services
     }
@@ -168,6 +181,7 @@ impl DataServices {
         let mut sources = self.ferris.sources();
         sources.extend(self.hyperliquid.sources());
         sources.extend(self.lighter.sources());
+        sources.extend(self.txflow.sources());
         sources
     }
 }

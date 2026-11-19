@@ -20,8 +20,8 @@ use crate::{
     widgets::{
         common::accounts::{
             testing::{
-                account, accounts, asked, asked_lighter, count, lighter_account, on, start,
-                workspace_of, IDLE, TRADER, USER, WHALE,
+                account, accounts, asked, asked_lighter, asked_txflow, count, lighter_account, on,
+                start, txflow_account, workspace_of, IDLE, TRADER, USER, WHALE,
             },
             AccountSettings, Mark, Tone, NONE,
         },
@@ -855,6 +855,56 @@ fn a_lighter_address_is_summed_up_from_what_lighter_reports() {
         asked(&network).is_empty(),
         "nothing is asked of Hyperliquid"
     );
+}
+
+/// One watching an address on TxFlow.
+#[component]
+fn Flowing() -> impl IntoElement {
+    workspace_of(WidgetKind::AccountSummary, Some(txflow_account(USER)))
+}
+
+#[test]
+fn a_txflow_address_is_summed_up_from_what_txflow_reports() {
+    let (mut app, network) = start(Root::of::<Flowing>());
+    for arrived in ["$20,000.00", "+$504.00", "$1,000.00", "Tier 1"] {
+        app.wait_for(arrived).unwrap();
+    }
+    for (id, read) in [
+        // The perpetuals and the vault share, as TxFlow reports no worth
+        // over time to take the total from.
+        ("total", "$21,000.00"),
+        ("day-change", "+$72.00"),
+        ("equity", "$20,000.00"),
+        ("withdrawable", "$16,900.00"),
+        ("isolated-positions", "1"),
+        ("long", "$31,000.00"),
+        ("unrealized-pnl", "+$1,000.00"),
+        ("funding", "-$4.50"),
+        ("week-pnl", "+$504.00"),
+        ("month-pnl", "+$500.00"),
+        ("day-volume", "$26,400.00"),
+        ("fee-tier", "Tier 1"),
+        ("vault-equity", "$1,000.00"),
+        ("part-perps", "$20,000.00"),
+        // What TxFlow does not report is a dash.
+        ("staked", NONE),
+    ] {
+        assert!(reads(&app, id, read), "{id}: {read}");
+    }
+
+    // Its sub-account, its fees and vaults once, and its day, week and
+    // month, of its perpetuals and of everything; no balances or prices.
+    let requests = asked_txflow(&network);
+    let kinds = |kind: &str| requests.iter().filter(|body| body["type"] == kind).count();
+    assert_eq!(kinds("clearinghouseState"), 1, "{requests:?}");
+    assert_eq!(kinds("userFees"), 1);
+    assert_eq!(kinds("uservaultequities"), 1);
+    assert_eq!(kinds("userOverview"), 6);
+    assert_eq!(requests.len(), 9, "{requests:?}");
+    assert!(requests
+        .iter()
+        .any(|body| body["account_type"] == json!(["perps", "outcome"])));
+    assert!(asked(&network).is_empty() && asked_lighter(&network).is_empty());
 }
 
 /// One watching an account on Hyperliquid and an address on Lighter.

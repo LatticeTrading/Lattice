@@ -33,7 +33,8 @@
 //! among the portfolio's sources. No widget changes: the venue shows up in
 //! their settings, and a report it does not make reads as not reported.
 //! Hyperliquid's ([`super::hyperliquid`]) is the first, Lighter's
-//! ([`super::lighter`]) the second.
+//! ([`super::lighter`]) the second, TxFlow's ([`super::txflow`]) the
+//! third.
 
 mod account;
 mod combine;

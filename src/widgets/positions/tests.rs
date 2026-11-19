@@ -13,9 +13,9 @@ use crate::{
     widgets::{
         common::accounts::{
             testing::{
-                account, accounts, asked, asked_lighter, count, lighter_account, on, start,
-                start_manual, workspace_of, workspace_within, IDLE, LIMITED, SLOW, SLOW_FOR,
-                TRADER, USER,
+                account, accounts, asked, asked_lighter, asked_txflow, count, lighter_account, on,
+                start, start_manual, txflow_account, workspace_of, workspace_within, IDLE, LIMITED,
+                SLOW, SLOW_FOR, TRADER, USER,
             },
             AccountSettings, Mark, Tone, NONE,
         },
@@ -401,6 +401,44 @@ fn a_lighter_address_lists_the_positions_of_its_accounts() {
         asked(&network).is_empty(),
         "nothing is asked of Hyperliquid"
     );
+}
+
+/// One watching an address on TxFlow.
+#[component]
+fn Flowing() -> impl IntoElement {
+    workspace_of(WidgetKind::Positions, Some(txflow_account(USER)))
+}
+
+#[test]
+fn a_txflow_address_lists_its_perpetuals_positions() {
+    let (mut app, network) = start(Root::of::<Flowing>());
+    app.wait_for("$31,000.00").unwrap();
+    assert!(app
+        .screen()
+        .matches("label:Change account: TxFlow 0x0123…4567")
+        .unwrap());
+    // Its isolated BTC long at TxFlow's own mark price, its return read
+    // from TxFlow's percent.
+    for shown in [
+        "BTC-USDC",
+        "10x Isolated",
+        "0.5",
+        "60000.0",
+        "62000.0",
+        "+$1,000.00 (+32.26%)",
+        "54321.0",
+        "$3,100.00",
+    ] {
+        assert!(app.shows(shown), "{shown}");
+    }
+
+    // Its perpetuals sub-account, once.
+    let requests = asked_txflow(&network);
+    assert_eq!(
+        requests,
+        [json!({ "type": "clearinghouseState", "user": USER, "accountType": "perp" })]
+    );
+    assert!(asked(&network).is_empty() && asked_lighter(&network).is_empty());
 }
 
 /// One watching an account on Hyperliquid and an address on Lighter.

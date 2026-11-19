@@ -14,6 +14,11 @@
 //! the trades of each; any other address holds no account there, and
 //! [`LIMITED`]'s requests are refused there too. Its assets' prices are
 //! the same for every address.
+//!
+//! The stubbed TxFlow ([`TXFLOW`]) knows [`USER`] too: an isolated BTC
+//! long, two trades, a day's, a week's and a month's figures, a fee tier and
+//! a vault share. Any other address is an empty account there, and
+//! [`LIMITED`]'s requests are refused.
 
 use std::{
     sync::Arc,
@@ -24,7 +29,7 @@ use nsh_core::{
     element::Root,
     platform::{Idiom, Os},
     prelude::*,
-    time::Clock,
+    time::{unix_ms, Clock},
 };
 use nsh_engine::{EngineConfig, HttpBody, HttpRequest};
 use nsh_testing::{Headless, MemoryStorage, StubNetwork, StubReply, StubResponse, StubRoute};
@@ -33,8 +38,8 @@ use serde_json::{json, Value};
 use super::AddressGroups;
 use crate::{
     data::{
-        ferris::FerrisConfig, hyperliquid::HyperliquidConfig, lighter::LighterConfig, DataConfig,
-        DataServices,
+        ferris::FerrisConfig, hyperliquid::HyperliquidConfig, lighter::LighterConfig,
+        txflow::TxFlowConfig, DataConfig, DataServices,
     },
     layout,
     shell::clock::Clock as BarClock,
@@ -46,6 +51,8 @@ use crate::{
 pub(crate) const HYPERLIQUID: &str = "https://hyperliquid.test";
 /// A Lighter no test reaches either.
 pub(crate) const LIGHTER: &str = "https://lighter.test";
+/// A TxFlow no test reaches either.
+pub(crate) const TXFLOW: &str = "https://txflow.test";
 /// An account with positions, balances and a history.
 pub(crate) const USER: &str = "0x0123456789abcdef0123456789abcdef01234567";
 /// An account that never traded.
@@ -74,6 +81,11 @@ pub(crate) fn account(address: &str) -> Value {
 /// What settings save for `address` on Lighter.
 pub(crate) fn lighter_account(address: &str) -> Value {
     json!({ "account": on("lighterxyz", address) })
+}
+
+/// What settings save for `address` on TxFlow.
+pub(crate) fn txflow_account(address: &str) -> Value {
+    json!({ "account": on("txflow", address) })
 }
 
 /// What settings save for `address` on `venue`, as one of several.
@@ -115,6 +127,10 @@ pub(crate) fn workspace_within(
         lighter: LighterConfig {
             http_base: LIGHTER.to_owned(),
             ..LighterConfig::production()
+        },
+        txflow: TxFlowConfig {
+            http_base: TXFLOW.to_owned(),
+            ..TxFlowConfig::production()
         },
     });
     provide_context(BarClock::restore());
@@ -182,6 +198,10 @@ fn start_on(root: Root, clock: Clock, storage: Arc<MemoryStorage>) -> (Headless,
                 format!("GET {LIGHTER}/api/v1/*"),
                 StubRoute::Handler(Arc::new(stub_lighter)),
             ),
+            (
+                format!("POST {TXFLOW}/info"),
+                StubRoute::Handler(Arc::new(stub_txflow)),
+            ),
         ])
         .with_clock(clock.clone()),
     );
@@ -196,12 +216,23 @@ fn start_on(root: Root, clock: Clock, storage: Arc<MemoryStorage>) -> (Headless,
     (app, network)
 }
 
-/// The bodies of the info requests made so far, in order.
+/// The bodies of the info requests made of Hyperliquid so far, in order.
 pub(crate) fn asked(network: &StubNetwork) -> Vec<Value> {
+    asked_at(network, HYPERLIQUID)
+}
+
+/// The bodies of the info requests made of TxFlow so far, in order.
+pub(crate) fn asked_txflow(network: &StubNetwork) -> Vec<Value> {
+    asked_at(network, TXFLOW)
+}
+
+/// The bodies of the info requests made of the API at `origin` so far.
+fn asked_at(network: &StubNetwork, origin: &str) -> Vec<Value> {
+    let info = format!("{origin}/info");
     network
         .requests()
         .into_iter()
-        .filter(|request| request.url.ends_with("/info"))
+        .filter(|request| request.url == info)
         .filter_map(|request| match &request.body {
             HttpBody::Bytes(bytes) => serde_json::from_slice(bytes).ok(),
             _ => None,
@@ -749,5 +780,145 @@ fn stub_lighter(request: HttpRequest, reply: StubReply) {
         response.status = 200;
     }
     response.body = serde_json::to_vec(&answer).expect("the answer is JSON");
+    reply.send(response);
+}
+
+/// [`USER`]'s perpetuals sub-account on TxFlow: an isolated BTC long.
+fn txflow_state() -> Value {
+    json!({
+        "assetPositions": [{
+            "position": {
+                "coin": "BTC-USDC", "asset": "1", "entryPx": "60000.0",
+                "leverage": { "type": "Isolated", "value": 10, "rawUsd": "-27900.0" },
+                "liquidationPx": "54321.0", "marginUsed": "3100.0",
+                "positionValue": "31000.0", "returnOnEquity": "32.258064",
+                "szi": "0.5", "unrealizedPnl": "1000.0", "maxLeverage": 75,
+                "cumFunding": { "allTime": "", "sinceOpen": "4.5", "sinceChange": "4.5" },
+                "markPx": "62000.0", "updateTime": 1_710_364_000_000_u64
+            },
+            "type": "OneWay"
+        }],
+        "crossMarginSummary": {
+            "accountValue": "16900.0", "totalMarginUsed": "0.0",
+            "totalNtlPos": "0.0", "totalRawUsd": "16900.0"
+        },
+        "marginSummary": {
+            "accountValue": "20000.0", "totalMarginUsed": "3100.0",
+            "totalNtlPos": "31000.0", "totalRawUsd": "-11000.0"
+        },
+        "crossMaintenanceMarginUsed": "0.0", "crossMarginRatio": "0.0000",
+        "withdrawable": "16900.0", "vaultEquity": "0.0",
+        "time": 1_710_364_000_000_u64
+    })
+}
+
+/// [`USER`]'s latest trades on TxFlow: the BTC long opened, and an ETH
+/// long closed.
+fn txflow_fills() -> Value {
+    json!({
+        "data": [
+            { "coin": "BTC", "symbol": "BTC-USDC", "px": "60000.0", "sz": "0.5", "side": "B",
+              "time": 1_710_364_000_000_u64, "startPosition": "0", "dir": "Buy",
+              "closedPnl": "0", "hash": "0x01", "oid": 1, "crossed": null, "fee": "8.4",
+              "tid": 101, "feeToken": "USDC", "tradeSide": "Taker", "instrumentId": 1 },
+            { "coin": "ETH", "symbol": "ETH-USDC", "px": "1800.0", "sz": "1", "side": "A",
+              "time": 1_710_363_880_000_u64, "startPosition": "2", "dir": "Sell",
+              "closedPnl": "25.5", "hash": "0x02", "oid": 2, "crossed": null, "fee": "0.036",
+              "tid": 102, "feeToken": "USDC", "tradeSide": "Maker", "instrumentId": 2 }
+        ],
+        "hasMore": false,
+        "total": 2
+    })
+}
+
+/// What [`USER`] made over `period` on TxFlow (`24H`, `7D`, `30D`), and
+/// what it traded.
+fn txflow_overview(period: &str, known: bool) -> Value {
+    let (pnl, volume) = match period {
+        _ if !known => ("0", "0"),
+        "24H" => ("72.0", "26400.0"),
+        "7D" => ("504.0", "90000.0"),
+        _ => ("500.0", "250000.0"),
+    };
+    json!({
+        "code": 0, "msg": "", "period": period, "pnl": pnl, "roe": "0.36",
+        "volume": volume, "maxDrawdown": "1.2", "totalEquity": "20000.0"
+    })
+}
+
+/// TxFlow's fee schedule, with `daily` as the user's volume of yesterday.
+fn txflow_fees(daily: &str) -> Value {
+    let yesterday = (unix_ms() / 86_400_000.0).floor() * 86_400_000.0 - 86_400_000.0;
+    json!({
+        "activeReferralDiscount": "0.1",
+        "dailyUserVlm": [{
+            "date": format!("{yesterday:.0}"), "exchange": daily, "userAdd": daily, "userCross": daily
+        }],
+        "feeSchedule": { "tiers": { "mm": [], "vip": [
+            { "add": "0.000150", "cross": "0.000450", "ntlCutoff": "0.00" },
+            { "add": "0.000120", "cross": "0.000400", "ntlCutoff": "5000000.00" }
+        ] } },
+        "userAddRate": "0.000135", "userCrossRate": "0.000405"
+    })
+}
+
+/// Answers the stubbed TxFlow's info requests, wrapped as TxFlow wraps
+/// them (but for the history's). It knows [`USER`]; any other address is
+/// an empty account, and [`LIMITED`]'s requests are refused.
+fn stub_txflow(request: HttpRequest, reply: StubReply) {
+    let body: Value = match &request.body {
+        HttpBody::Bytes(bytes) => serde_json::from_slice(bytes).unwrap_or_default(),
+        _ => Value::Null,
+    };
+    let user = body["user"]
+        .as_str()
+        .or_else(|| body["user_address"].as_str())
+        .unwrap_or_default();
+    let known = user == USER;
+    let mut response = StubResponse::default();
+    if user == LIMITED {
+        response.status = 429;
+        response.body =
+            br#"{"success":false,"code":10000,"message":"rate limit exceeded"}"#.to_vec();
+        reply.send(response);
+        return;
+    }
+    let data = match body["type"].as_str().unwrap_or_default() {
+        "clearinghouseState" if known => txflow_state(),
+        "clearinghouseState" => json!({
+            "assetPositions": [],
+            "marginSummary": { "accountValue": "0.000000", "totalMarginUsed": "0.000000",
+                               "totalNtlPos": "0.000000", "totalRawUsd": "0.000000" },
+            "crossMaintenanceMarginUsed": "0.000000", "withdrawable": "0.000000",
+            "time": 1_710_364_000_000_u64
+        }),
+        "userFills" if known => txflow_fills(),
+        "userFills" => json!({ "data": [], "hasMore": false, "total": 0 }),
+        "userFees" => txflow_fees(if known { "6000000.0" } else { "0" }),
+        "uservaultequities" if known => json!([
+            { "vaultAddress": "0x664989a76069c2b153720745bc1c3c8eeee504c1",
+              "equity": "1000.0", "lockedUntilTimestamp": 1_792_830_521_530_u64 }
+        ]),
+        "uservaultequities" => json!([]),
+        "userOverview" => {
+            let period = body["period"].as_str().unwrap_or_default();
+            response.status = 200;
+            response.body =
+                serde_json::to_vec(&txflow_overview(period, known)).expect("the answer is JSON");
+            reply.send(response);
+            return;
+        }
+        _ => {
+            response.status = 400;
+            response.body =
+                br#"{"success":false,"code":10000,"message":"This action is not allowed."}"#
+                    .to_vec();
+            reply.send(response);
+            return;
+        }
+    };
+    response.status = 200;
+    response.body = serde_json::to_vec(&json!({ "success": true, "code": 0, "data": data }))
+        .expect("the answer is JSON");
     reply.send(response);
 }

@@ -15,8 +15,8 @@ use crate::{
     widgets::{
         common::accounts::{
             testing::{
-                account, accounts, asked, asked_lighter, count, lighter_account, on, start,
-                workspace_of, IDLE, TRADER, TRADER_MAIN, TRADER_SUB, USER,
+                account, accounts, asked, asked_lighter, asked_txflow, count, lighter_account, on,
+                start, txflow_account, workspace_of, IDLE, TRADER, TRADER_MAIN, TRADER_SUB, USER,
             },
             AccountSettings, Mark, Tone, NONE,
         },
@@ -318,4 +318,47 @@ fn accounts_on_several_exchanges_are_one_list_of_trades() {
         .screen()
         .matches("id:trade-history-account >> text:2 accounts")
         .unwrap());
+}
+
+/// One watching an address on TxFlow.
+#[component]
+fn Flowing() -> impl IntoElement {
+    workspace_of(WidgetKind::TradeHistory, Some(txflow_account(USER)))
+}
+
+#[test]
+fn a_txflow_address_lists_its_trades_with_what_each_did() {
+    let (mut app, network) = start(Root::of::<Flowing>());
+    app.wait_for("$30,000.00").unwrap();
+    assert!(app
+        .screen()
+        .matches("label:Change account: TxFlow 0x0123…4567")
+        .unwrap());
+    for shown in [
+        // TxFlow says only the side: what each did is read from the
+        // position it started from.
+        "OPEN LONG",
+        "Taker",
+        "60000.0",
+        "0.5",
+        "$8.4",
+        "ETH",
+        "CLOSE LONG",
+        "Maker",
+        "1800.00",
+        "$1,800.00",
+        "+$25.50",
+        "2 trades since Mar 13 21:04:40",
+        "$31,800.00",
+    ] {
+        assert!(app.shows(shown), "{shown}");
+    }
+
+    // The latest trades, once.
+    let requests = asked_txflow(&network);
+    assert_eq!(
+        requests,
+        [json!({ "type": "userFills", "user": USER, "limit": 2000 })]
+    );
+    assert!(asked(&network).is_empty() && asked_lighter(&network).is_empty());
 }
