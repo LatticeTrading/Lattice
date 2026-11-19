@@ -23,6 +23,9 @@ fees and closed PnL) and the Account Performance (value or profit over
 time, on the Chart's plot). Each shows one account or several together, on
 one exchange or on several: what they hold listed in one table, each row
 marked with its account, and what they are worth and made added up.
+Lists of addresses can be kept as named groups ("Groups", beside Add where
+accounts are set), each address with the exchanges it is watched on, and a
+whole group given to a widget at once.
 An account's data is asked of its exchange directly rather than of Ferris, so
 the exchange's rate limit is each user's own; Hyperliquid is the first
 exchange and Lighter the second (an L1 address's accounts there together:

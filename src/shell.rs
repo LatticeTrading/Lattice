@@ -6,7 +6,11 @@ mod settings;
 
 use nsh_core::prelude::*;
 
-use crate::{data::DataServices, layout, storage, theme, widgets::picker::Picker};
+use crate::{
+    data::DataServices,
+    layout, storage, theme,
+    widgets::{common::accounts::AddressGroups, picker::Picker},
+};
 
 /// The root shell: Everything Bar above the persistent workspace grid.
 pub fn shell() -> impl IntoElement {
@@ -17,6 +21,9 @@ pub fn shell() -> impl IntoElement {
     let clock = clock::Clock::restore();
     // Widgets that show times (the Trade Stream) show them as the bar does.
     provide_context(clock);
+    // The address groups the account widgets share, whichever one changes
+    // them.
+    AddressGroups::provide();
     let mut saved = storage::load();
     layout::normalize(&mut saved);
     if let Err(error) = storage::save(&saved) {

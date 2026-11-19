@@ -28,7 +28,10 @@
 //! - [`mark`]: whose a row is, in a widget that lists what several accounts
 //!   hold ([`Mark`], [`mark_view`]);
 //! - [`panel`]: its settings panel ([`account_panel`]): the accounts'
-//!   rows, then the widget's own.
+//!   rows, then the widget's own;
+//! - [`groups`]: the lists of addresses the user keeps
+//!   ([`AddressGroups`]), and the manager the rows open to fill them and
+//!   to give a widget one whole.
 //!
 //! A new account widget holds a [`Watched`] in its settings, follows the
 //! reports it shows in its session ([`follow_all`]), shows them together
@@ -39,6 +42,7 @@ mod badge;
 mod figures;
 mod form;
 mod frame;
+mod groups;
 mod mark;
 mod panel;
 mod report;
@@ -51,6 +55,7 @@ pub(crate) use self::{
     figures::{NONE, Tone, shown},
     form::account_rows,
     frame::{account_frame, bare_account_frame, report_note},
+    groups::AddressGroups,
     mark::{Mark, mark_view},
     panel::account_panel,
     report::{Reports, Standing, follow_all},

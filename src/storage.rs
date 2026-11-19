@@ -106,6 +106,24 @@ pub(crate) fn save_settings(settings: &StoredSettings) -> Result<()> {
     Ok(())
 }
 
+const ADDRESS_GROUPS_KEY: &str = "lattice.address-groups.v1";
+
+/// The saved address groups as they were written, which their model reads
+/// leniently (`crate::widgets::common::accounts`); `None` when none are
+/// saved or what is saved is not JSON.
+pub(crate) fn load_address_groups() -> Option<serde_json::Value> {
+    let contents = Storage::get_item(ADDRESS_GROUPS_KEY)?;
+    serde_json::from_str(&contents)
+        .map_err(|error| log::warn!("Lattice: ignoring malformed address groups: {error}"))
+        .ok()
+}
+
+pub(crate) fn save_address_groups(groups: &impl Serialize) -> Result<()> {
+    let contents = serde_json::to_string(groups).context("serializing address groups")?;
+    Storage::set_item(ADDRESS_GROUPS_KEY, contents).context("saving address groups")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

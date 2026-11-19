@@ -9,9 +9,14 @@
 //!   shows at its right, listing the exchanges that report accounts (the
 //!   portfolio's sources);
 //! - under them, the address of an account to add, with the exchange's hint
-//!   of what one looks like while it is empty, then an Add button half the
-//!   dropdown's width that commits it as Enter does;
+//!   of what one looks like while it is empty, then "Groups", then an Add
+//!   button half the dropdown's width that commits it as Enter does;
 //! - under that, why what was typed is no address, while it is not.
+//!
+//! "Groups" opens the address groups' manager ([`group_manager`]) in the
+//! middle of the window: the lists of addresses the user keeps, each
+//! address with the exchanges it is watched on. Using one there adds its
+//! accounts to those shown (each once), or shows them instead.
 //!
 //! Enter or Add adds what is typed, on the exchange picked, to the accounts
 //! shown (once: one already shown stays as it is) and empties the field for
@@ -26,7 +31,11 @@ use std::rc::Rc;
 use nsh_base::SelectItem;
 use nsh_core::{LineHeight, prelude::*};
 
-use super::{AccountSettings, frame::venue_name};
+use super::{
+    AccountSettings,
+    frame::venue_name,
+    groups::{AddressGroups, Use, group_manager},
+};
 use crate::{
     data::{Portfolio, portfolio::Account},
     theme, ui,
@@ -171,6 +180,43 @@ pub(crate) fn account_rows<S: AccountSettings>(tab: &TabContext<S>, portfolio: &
         .label("Add account")
         .test_id(&format!("{}-add", S::TEST_ID))
         .on_press(move || add());
+
+    // The address groups' manager, which gives the widget a whole group.
+    let groups = AddressGroups::get();
+    let managing = signal(false);
+    let manage = ui::button("Groups", ui::Tone::Normal)
+        .flex_none()
+        .border_l_1()
+        .border_color(theme::BORDER)
+        .label("Address groups")
+        .test_id(&format!("{}-groups", S::TEST_ID))
+        .tooltip(ui::hint(|| {
+            "Saved lists of addresses, to add to the widget at once".to_owned()
+        }))
+        .on_press(move || managing.set(true));
+    let manager = {
+        let (tab, portfolio) = (tab.clone(), portfolio.clone());
+        dynamic(move || {
+            managing.get().then(|| {
+                let tab = tab.clone();
+                let take = move |accounts: Vec<Account>, how: Use| {
+                    let settings = saved.get_untracked();
+                    let next: Vec<Account> = match how {
+                        Use::Add => settings
+                            .accounts()
+                            .iter()
+                            .cloned()
+                            .chain(accounts)
+                            .collect(),
+                        Use::Replace => accounts,
+                    };
+                    tab.save(&settings.with_accounts(next));
+                };
+                let close = move || managing.set(false);
+                group_manager(&portfolio, groups, &venue.get_untracked(), take, close)
+            })
+        })
+    };
     let shown = {
         let (tab, portfolio) = (tab.clone(), portfolio.clone());
         let accounts = computed(move || saved.with(|settings| settings.accounts().to_vec()));
@@ -197,6 +243,7 @@ pub(crate) fn account_rows<S: AccountSettings>(tab: &TabContext<S>, portfolio: &
         .border_t_1()
         .border_color(theme::BORDER)
         .child(field)
+        .child(manage)
         .child(add);
 
     let said = view()
@@ -224,6 +271,7 @@ pub(crate) fn account_rows<S: AccountSettings>(tab: &TabContext<S>, portfolio: &
         .child(exchange)
         .child(address)
         .child(said)
+        .child(manager)
 }
 
 /// The line of `account`, the `at`th of those `tab`'s widget shows: its

@@ -220,6 +220,27 @@ pub fn check_row(
     disabled: impl Fn() -> bool + Copy + 'static,
     on_toggle: impl Fn() + 'static,
 ) -> View {
+    check_row_of(None, name, checked, disabled, on_toggle)
+}
+
+/// A [`check_row`] with `icon` (an exchange's logo) before its name.
+pub fn icon_check_row(
+    icon: View,
+    name: &'static str,
+    checked: impl Fn() -> bool + Copy + 'static,
+    disabled: impl Fn() -> bool + Copy + 'static,
+    on_toggle: impl Fn() + 'static,
+) -> View {
+    check_row_of(Some(icon), name, checked, disabled, on_toggle)
+}
+
+fn check_row_of(
+    icon: Option<View>,
+    name: &'static str,
+    checked: impl Fn() -> bool + Copy + 'static,
+    disabled: impl Fn() -> bool + Copy + 'static,
+    on_toggle: impl Fn() + 'static,
+) -> View {
     let mark = view()
         .size(px(12.0))
         .flex_none()
@@ -270,6 +291,7 @@ pub fn check_row(
         .active(|style| style.bg(theme::BORDER))
         .disabled_style(|style| style.opacity(0.5))
         .on_press(on_toggle)
+        .children(icon)
         .child(
             view()
                 .flex_1()

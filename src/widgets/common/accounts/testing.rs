@@ -30,6 +30,7 @@ use nsh_engine::{EngineConfig, HttpBody, HttpRequest};
 use nsh_testing::{Headless, MemoryStorage, StubNetwork, StubReply, StubResponse, StubRoute};
 use serde_json::{json, Value};
 
+use super::AddressGroups;
 use crate::{
     data::{
         ferris::FerrisConfig, hyperliquid::HyperliquidConfig, lighter::LighterConfig, DataConfig,
@@ -117,6 +118,7 @@ pub(crate) fn workspace_within(
         },
     });
     provide_context(BarClock::restore());
+    AddressGroups::provide();
     let mut workspace = StoredWorkspace::default();
     layout::normalize(&mut workspace);
     layout::spawn(&mut workspace, kind);
@@ -143,16 +145,31 @@ pub(crate) fn workspace_within(
 /// The app rooted at `root` over the stubbed Hyperliquid, and the stub
 /// network, which keeps the requests made.
 pub(crate) fn start(root: Root) -> (Headless, Arc<StubNetwork>) {
-    start_on(root, Clock::system())
+    start_on(root, Clock::system(), MemoryStorage::new([]))
 }
 
 /// [`start`] on a clock that moves only when the test moves it
 /// (`Headless::run_for`), for what happens over minutes.
 pub(crate) fn start_manual(root: Root) -> (Headless, Arc<StubNetwork>) {
-    start_on(root, Clock::manual(SystemTime::now()))
+    start_on(
+        root,
+        Clock::manual(SystemTime::now()),
+        MemoryStorage::new([]),
+    )
 }
 
-fn start_on(root: Root, clock: Clock) -> (Headless, Arc<StubNetwork>) {
+/// [`start`] over storage that holds `saved` (keys and what is saved under
+/// them), and that storage, which shows what the app saves.
+pub(crate) fn start_storing(
+    root: Root,
+    saved: impl IntoIterator<Item = (String, String)>,
+) -> (Headless, Arc<MemoryStorage>) {
+    let storage = MemoryStorage::new(saved);
+    let (app, _network) = start_on(root, Clock::system(), storage.clone());
+    (app, storage)
+}
+
+fn start_on(root: Root, clock: Clock, storage: Arc<MemoryStorage>) -> (Headless, Arc<StubNetwork>) {
     // Delayed replies pass on the app's clock, so a test that moves it
     // moves them.
     let network = Arc::new(
@@ -170,7 +187,7 @@ fn start_on(root: Root, clock: Clock) -> (Headless, Arc<StubNetwork>) {
     );
     let mut config = EngineConfig::new(root);
     config.viewport = Size::new(px(1280.0), px(800.0));
-    config.storage = Some(MemoryStorage::new([]));
+    config.storage = Some(storage);
     config.network = Some(network.clone());
     config.clock = clock;
     config.environment.os = Os::Windows;
