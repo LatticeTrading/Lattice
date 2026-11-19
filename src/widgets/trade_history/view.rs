@@ -117,8 +117,8 @@ pub(super) fn history_view(
     tab: &TabContext<TradeHistorySettings>,
 ) -> View {
     let (reports, rows, totals) = (session.reports, session.rows, session.totals);
-    // No trades: said once a report has arrived to say it.
-    let none_made = computed(move || reports.shown() && rows.with(|rows| rows.0.is_empty()));
+    // No trades: said once every account has arrived to say it.
+    let none_made = computed(move || reports.settled() && rows.with(|rows| rows.0.is_empty()));
     let empty = view()
         .test_id(&format!("{ID}-empty"))
         .px(px(PADDING))

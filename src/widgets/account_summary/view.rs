@@ -229,10 +229,10 @@ pub(super) fn summary_view(
     let (overview, holdings) = (session.overview, session.holdings);
     let balances = session.balances.standing;
     let hidden = computed(move || !saved.with(AccountSummarySettings::balances));
-    // Nothing held: said once a report has arrived to say it.
+    // Nothing held: said once every account has arrived to say it.
     let held = session.balances;
     let none_held =
-        computed(move || held.shown() && holdings.with(|holdings| holdings.0.is_empty()));
+        computed(move || held.settled() && holdings.with(|holdings| holdings.0.is_empty()));
     let empty = view()
         .test_id(&format!("{ID}-no-balances"))
         .px(px(PADDING))

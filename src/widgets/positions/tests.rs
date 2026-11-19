@@ -14,7 +14,8 @@ use crate::{
         common::accounts::{
             testing::{
                 account, accounts, asked, asked_lighter, count, lighter_account, on, start,
-                start_manual, workspace_of, workspace_within, IDLE, LIMITED, TRADER, USER,
+                start_manual, workspace_of, workspace_within, IDLE, LIMITED, SLOW, SLOW_FOR,
+                TRADER, USER,
             },
             AccountSettings, Mark, Tone, NONE,
         },
@@ -483,4 +484,51 @@ fn an_account_that_cannot_be_read_is_named_over_the_others_positions() {
     .unwrap();
     assert!(app.shows("$6,100.00") && app.shows("$100.03"));
     assert!(!app.shows("No open positions"));
+}
+
+/// One watching an account Hyperliquid is slow to answer about, and the
+/// stubbed account.
+#[component]
+fn Staggered() -> impl IntoElement {
+    let saved = accounts(&[on("hyperliquid", SLOW), on("hyperliquid", USER)]);
+    workspace_of(WidgetKind::Positions, Some(saved))
+}
+
+/// One watching the slow account and one that never traded.
+#[component]
+fn Waiting() -> impl IntoElement {
+    let saved = accounts(&[on("hyperliquid", SLOW), on("hyperliquid", IDLE)]);
+    workspace_of(WidgetKind::Positions, Some(saved))
+}
+
+#[test]
+fn an_account_shows_as_soon_as_it_arrives_without_waiting_for_the_others() {
+    let (mut app, _network) = start_manual(Root::of::<Staggered>());
+    // The account that has arrived is listed, under how many show so far.
+    app.wait_for("$6,100.00").unwrap();
+    app.wait_for("Loading positions… 1 of 2 accounts shown.")
+        .unwrap();
+    assert!(!app.shows("$25,931,382.67"));
+
+    // The other joins it when it arrives, and nothing more is said.
+    app.run_for(SLOW_FOR + Duration::from_secs(1)).unwrap();
+    app.wait_for("$25,931,382.67").unwrap();
+    assert!(app.shows("$6,100.00"));
+    let loading = |app: &nsh_testing::Headless| {
+        app.screen()
+            .texts()
+            .iter()
+            .any(|text| text.starts_with("Loading positions"))
+    };
+    assert!(!loading(&app));
+
+    // An account with nothing open does not say so for the rest: the one
+    // still on its way may have some.
+    let (mut app, _network) = start_manual(Root::of::<Waiting>());
+    app.wait_for("Loading positions… 1 of 2 accounts shown.")
+        .unwrap();
+    assert!(!app.shows("No open positions"));
+    app.run_for(SLOW_FOR + Duration::from_secs(1)).unwrap();
+    app.wait_for("$25,931,382.67").unwrap();
+    assert!(!app.shows("No open positions") && !loading(&app));
 }

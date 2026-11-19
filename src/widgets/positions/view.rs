@@ -110,8 +110,8 @@ pub(super) fn positions_view(
     tab: &TabContext<PositionsSettings>,
 ) -> View {
     let (reports, rows) = (session.reports, session.rows);
-    // Nothing open: said once a report has arrived to say it.
-    let none_open = computed(move || reports.shown() && rows.with(|rows| rows.0.is_empty()));
+    // Nothing open: said once every account has arrived to say it.
+    let none_open = computed(move || reports.settled() && rows.with(|rows| rows.0.is_empty()));
     let empty = view()
         .test_id(&format!("{ID}-empty"))
         .px(px(PADDING))

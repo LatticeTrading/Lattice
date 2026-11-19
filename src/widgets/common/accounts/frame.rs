@@ -9,7 +9,9 @@
 //!   ([`super::account_badge`], over its plot) has its frame without the
 //!   strip ([`bare_account_frame`]);
 //! - what is to be said of the report the widget shows ([`Standing`]): that
-//!   it is loading, in muted text; that it could not be asked for or read,
+//!   it is loading, in muted text (with how many of several accounts show
+//!   so far, each as soon as its own has arrived); that it could not be
+//!   asked for or read,
 //!   or has not been brought up to date, as a warning. The figures of a
 //!   report that is merely not up to date stay, and so does what some of
 //!   several accounts add up to while the others are missing;
@@ -146,6 +148,10 @@ fn said(standing: &Standing, venue: &str, what: &str) -> Option<(bool, String)> 
     Some(match standing {
         Standing::Unset | Standing::Ready => return None,
         Standing::Loading => (false, format!("Loading {what}…")),
+        Standing::Arriving { arrived, total } => (
+            false,
+            format!("Loading {what}… {arrived} of {total} accounts shown."),
+        ),
         Standing::Unavailable(Unavailable::UnknownVenue) => (
             true,
             "This account's exchange is not available in this version of Lattice.".to_owned(),
@@ -280,6 +286,17 @@ mod tests {
         assert_eq!(
             said(Standing::Loading),
             Some((false, "Loading positions…".to_owned()))
+        );
+        // Some of several accounts so far: no warning, they are coming.
+        assert_eq!(
+            said(Standing::Arriving {
+                arrived: 2,
+                total: 6
+            }),
+            Some((
+                false,
+                "Loading positions… 2 of 6 accounts shown.".to_owned()
+            ))
         );
         assert_eq!(
             said(Standing::Failed("offline".to_owned())),

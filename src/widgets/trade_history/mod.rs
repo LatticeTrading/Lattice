@@ -15,9 +15,10 @@
 //!   settings: another account is watched before the last one is let go,
 //!   and with none there is no watch. A hidden widget keeps its watch, so
 //!   showing it again is instant.
-//! - Of several accounts it watches each one's trades. Nothing is listed
-//!   until each has arrived or failed; with some missing, the others' are
-//!   listed and the frame says which are not.
+//! - Of several accounts it watches each one's trades, and lists an
+//!   account's as soon as they arrive, none waiting for another: while
+//!   some are still on their way the frame says how many show, and with
+//!   some missing it says which are not.
 //! - While it shows, each report makes the rows again: the latest
 //!   [`session::MAX_ROWS`] (the totals count every trade reported). A
 //!   hidden widget makes none.

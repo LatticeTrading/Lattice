@@ -9,11 +9,19 @@
 //! watched before those no longer named are let go. Every widget watching
 //! one account shares one request (the source's hub does that).
 //!
-//! Several accounts stand as one ([`together`]): loading until each has
-//! either arrived or failed, so that a sum never shows with an account still
-//! on its way; then ready with all of them, and with only some saying which
-//! are missing and why ([`Standing::Partial`]) over what the others add up
-//! to. One account stands as itself.
+//! Several accounts stand as one ([`together`]), and none waits for
+//! another: each shows as soon as its own report arrives, whichever
+//! exchange it is on and however long the others take.
+//!
+//! - Until one has arrived they are loading.
+//! - With some arrived and others still on their way, those show, under a
+//!   count of how many of them do ([`Standing::Arriving`]): what they add
+//!   up to is not yet the whole, and says so.
+//! - Once each has arrived or failed they are ready with all of them, and
+//!   with only some say which are missing and why ([`Standing::Partial`])
+//!   over what the others add up to.
+//!
+//! One account stands as itself.
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
@@ -40,6 +48,10 @@ pub(crate) enum Standing {
     Loading,
     /// Nothing has arrived, and the latest request failed: why.
     Failed(String),
+    /// A report shows of some of the accounts a widget shows together
+    /// while the others' are still on their way: of how many, out of how
+    /// many.
+    Arriving { arrived: usize, total: usize },
     /// A report shows.
     Ready,
     /// A report shows, and the latest request for a newer one failed: why.
@@ -115,15 +127,11 @@ impl<T> Clone for Reports<T> {
 impl<T> Copy for Reports<T> {}
 
 impl<T> Reports<T> {
-    /// The reports that have arrived, each with its account, in the
-    /// settings' order, once every account's has arrived or failed
-    /// (tracked): what the widget shows and adds up. `None` while one is
-    /// still on its way, and when none has arrived.
+    /// The reports that have arrived so far, each with its account, in the
+    /// settings' order (tracked): what the widget shows and adds up, an
+    /// account as soon as its own is there. `None` until one has arrived.
     pub fn arrived(&self) -> Option<Vec<(Account, Rc<T>)>> {
         self.parts.with(|parts| {
-            if parts.iter().any(|part| part.standing == Standing::Loading) {
-                return None;
-            }
             let arrived: Vec<(Account, Rc<T>)> = parts
                 .iter()
                 .filter_map(|part| Some((part.account.clone(), part.data.clone()?)))
@@ -132,9 +140,11 @@ impl<T> Reports<T> {
         })
     }
 
-    /// Whether a report shows: every account's has arrived or failed, and
-    /// one at least has arrived (tracked).
-    pub fn shown(&self) -> bool {
+    /// Whether what shows is all there is to show: every account's report
+    /// has arrived or failed, and one at least has arrived (tracked). What
+    /// a widget says of having nothing (no positions, no trades) waits for
+    /// it: accounts still on their way may have some.
+    pub fn settled(&self) -> bool {
         matches!(
             self.standing.get(),
             Standing::Ready | Standing::Stale(_) | Standing::Partial(_)
@@ -178,7 +188,18 @@ pub(super) fn together(parts: &[(&Account, &Standing)]) -> Standing {
         .iter()
         .any(|(_, standing)| **standing == Standing::Loading)
     {
-        return Standing::Loading;
+        // Those that have arrived show meanwhile.
+        let arrived = parts
+            .iter()
+            .filter(|(_, standing)| matches!(standing, Standing::Ready | Standing::Stale(_)))
+            .count();
+        return match arrived {
+            0 => Standing::Loading,
+            arrived => Standing::Arriving {
+                arrived,
+                total: parts.len(),
+            },
+        };
     }
     let absent: Vec<String> = parts
         .iter()
@@ -294,10 +315,33 @@ mod tests {
         // None, and one alone, which stands as itself.
         assert_eq!(together(&[]), Standing::Unset);
         assert_eq!(together(&[(&first, &failed())]), failed());
-        // Loading until each has arrived or failed.
+        // Loading until one has arrived, which then shows while the others
+        // are on their way.
         assert_eq!(of(Standing::Ready, Standing::Ready), Standing::Ready);
-        assert_eq!(of(Standing::Ready, Standing::Loading), Standing::Loading);
+        assert_eq!(of(Standing::Loading, Standing::Loading), Standing::Loading);
         assert_eq!(of(failed(), Standing::Loading), Standing::Loading);
+        let arriving = Standing::Arriving {
+            arrived: 1,
+            total: 2,
+        };
+        assert_eq!(of(Standing::Ready, Standing::Loading), arriving);
+        assert_eq!(
+            of(Standing::Loading, Standing::Stale("slow".to_owned())),
+            arriving
+        );
+        // One that failed is said once none is still on its way.
+        let third = account("bybit");
+        assert_eq!(
+            together(&[
+                (&first, &Standing::Ready),
+                (&second, &failed()),
+                (&third, &Standing::Loading),
+            ]),
+            Standing::Arriving {
+                arrived: 1,
+                total: 3
+            }
+        );
         // Some of them: which are missing, and why.
         assert_eq!(
             of(Standing::Ready, failed()),

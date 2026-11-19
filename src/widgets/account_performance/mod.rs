@@ -28,9 +28,9 @@
 //! - Of several accounts it watches each one's history and plots them as
 //!   one ([`Performance::combined`](crate::data::portfolio::Performance::combined)):
 //!   added up at every time any of them was sampled, whichever exchange
-//!   each is on. Nothing is plotted until each has arrived or failed, so a
-//!   sum never shows with an account still on its way; with some missing,
-//!   the others are plotted and the frame says which are not.
+//!   each is on. Each is plotted as soon as it arrives, none waiting for
+//!   another: while some are still on their way the frame says how many
+//!   show, and with some missing it says which are not.
 //! - While it shows, a new report or another window marks its plot, which
 //!   makes the scene its view draws at most once a frame, and at once when
 //!   the viewport moves or the plot is resized. A hidden widget does none

@@ -823,9 +823,9 @@ impl AccountSummarySession {
         {
             let portfolio = portfolio.clone();
             scope.while_visible(move || {
-                // Each kind of report counts once every account's has
-                // arrived or failed, so no figure adds up with an account
-                // still on its way.
+                // An account counts as soon as its own reports arrive, none
+                // waiting for another's: the frame says how many show
+                // meanwhile.
                 effect(move || {
                     let listed = accounts.get();
                     let margin = margin.arrived().unwrap_or_default();

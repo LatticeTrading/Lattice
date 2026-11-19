@@ -22,8 +22,9 @@
 //!   overview of them (described in [`session`]): what they are worth and
 //!   made added up, each one's holdings at its own exchange's prices, the
 //!   margin ratio of the one nearest liquidation, and no fee schedule when
-//!   several report theirs. A kind of report counts once every account's
-//!   has arrived or failed; with some missing, the frame says which.
+//!   several report theirs. An account counts as soon as its own reports
+//!   arrive, none waiting for another's: the frame says how many show
+//!   meanwhile, and with some missing which are not.
 //! - While it shows, the reports make its overview (every figure, and the
 //!   fractions its bars are drawn to) and its holdings again. A hidden
 //!   widget makes none.

@@ -115,7 +115,7 @@ pub(super) fn said(standing: &Standing, plotted: bool) -> &'static str {
     match standing {
         _ if plotted => "",
         Standing::Unset => "",
-        Standing::Loading => LOADING,
+        Standing::Loading | Standing::Arriving { .. } => LOADING,
         Standing::Unavailable(_) | Standing::Failed(_) => UNAVAILABLE,
         Standing::Ready | Standing::Stale(_) | Standing::Partial(_) => EMPTY,
     }
@@ -165,8 +165,8 @@ impl AccountPerformanceSession {
                 portfolio.watch_performance(account)
             })
         };
-        // What is plotted: the one account's history, or the several
-        // accounts' as one, once each has arrived or failed.
+        // What is plotted: the one account's history, or as one those of
+        // the several accounts that have arrived so far.
         let history = computed(move || {
             let arrived = reports.arrived()?;
             Some(match &arrived[..] {

@@ -6,7 +6,7 @@
 //! two positions, three tokens, a history, staked HYPE, a vault share and
 //! a fee tier; [`IDLE`], one that never traded; and [`LIMITED`], whose
 //! every request is refused with a `429`. The tokens' prices are the same
-//! for every account.
+//! for every account. A fourth, [`SLOW`], is answered [`SLOW_FOR`] late.
 //!
 //! The stubbed Lighter ([`LIGHTER`]) knows one address, [`TRADER`], which
 //! holds a main account, a sub-account that began ten days ago and a pool
@@ -15,7 +15,10 @@
 //! [`LIMITED`]'s requests are refused there too. Its assets' prices are
 //! the same for every address.
 
-use std::{sync::Arc, time::SystemTime};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use nsh_core::{
     element::Root,
@@ -48,6 +51,11 @@ pub(crate) const USER: &str = "0x0123456789abcdef0123456789abcdef01234567";
 pub(crate) const IDLE: &str = "0x00000000000000000000000000000000000000aa";
 /// An account worth millions, whose figures are as wide as figures get.
 pub(crate) const WHALE: &str = "0x1f250df59a777d61cb8bd043c12970f3afe4f925";
+/// An account Hyperliquid takes [`SLOW_FOR`] to answer about, with
+/// [`WHALE`]'s positions.
+pub(crate) const SLOW: &str = "0x00000000000000000000000000000000000000cc";
+/// How long [`SLOW`]'s replies take: less than a request's deadline.
+pub(crate) const SLOW_FOR: Duration = Duration::from_secs(10);
 /// An account whose requests Hyperliquid refuses, and Lighter.
 pub(crate) const LIMITED: &str = "0x00000000000000000000000000000000000000ff";
 /// An address with two accounts and a pool on Lighter.
@@ -145,16 +153,21 @@ pub(crate) fn start_manual(root: Root) -> (Headless, Arc<StubNetwork>) {
 }
 
 fn start_on(root: Root, clock: Clock) -> (Headless, Arc<StubNetwork>) {
-    let network = Arc::new(StubNetwork::new([
-        (
-            format!("POST {HYPERLIQUID}/info"),
-            StubRoute::Handler(Arc::new(stub_hyperliquid)),
-        ),
-        (
-            format!("GET {LIGHTER}/api/v1/*"),
-            StubRoute::Handler(Arc::new(stub_lighter)),
-        ),
-    ]));
+    // Delayed replies pass on the app's clock, so a test that moves it
+    // moves them.
+    let network = Arc::new(
+        StubNetwork::new([
+            (
+                format!("POST {HYPERLIQUID}/info"),
+                StubRoute::Handler(Arc::new(stub_hyperliquid)),
+            ),
+            (
+                format!("GET {LIGHTER}/api/v1/*"),
+                StubRoute::Handler(Arc::new(stub_lighter)),
+            ),
+        ])
+        .with_clock(clock.clone()),
+    );
     let mut config = EngineConfig::new(root);
     config.viewport = Size::new(px(1280.0), px(800.0));
     config.storage = Some(MemoryStorage::new([]));
@@ -434,10 +447,13 @@ fn stub_hyperliquid(request: HttpRequest, reply: StubReply) {
         reply.send(response);
         return;
     }
+    if user == SLOW {
+        response.delay = SLOW_FOR;
+    }
     let known = user == USER;
     let answer = match kind {
         "clearinghouseState" if known => clearinghouse_state(),
-        "clearinghouseState" if user == WHALE => whale_state(),
+        "clearinghouseState" if user == WHALE || user == SLOW => whale_state(),
         "clearinghouseState" => empty_state(),
         "spotClearinghouseState" if known => spot_state(),
         "spotClearinghouseState" => json!({ "balances": [] }),
