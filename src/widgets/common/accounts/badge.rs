@@ -112,7 +112,6 @@ pub(crate) fn account_badge<S: AccountSettings>(
                     view()
                         .test_id(&format!("{}-account-panel", S::TEST_ID))
                         .flex_col()
-                        .py(px(4.0))
                         .child(account_rows(&tab, &portfolio)),
                 )
             })

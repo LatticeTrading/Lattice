@@ -150,8 +150,7 @@ fn the_table_shows_the_account_s_positions_and_follows_its_settings() {
     let (mut app, network) = start(Root::of::<Unset>());
 
     // No account: the widget asks for one, and asks Hyperliquid nothing.
-    app.wait_for("No account").unwrap();
-    assert!(app.screen().matches("id:positions-no-account").unwrap());
+    app.wait_for("id:positions-no-account").unwrap();
     assert!(
         !app.screen().matches("id:positions-table").unwrap(),
         "no table without an account"
@@ -174,7 +173,7 @@ fn the_table_shows_the_account_s_positions_and_follows_its_settings() {
     )
     .unwrap();
     app.wait_for("$6,100.00").unwrap();
-    assert!(!app.shows("No account"));
+    assert!(!app.screen().matches("id:positions-no-account").unwrap());
     assert!(app
         .screen()
         .matches("label:Change account: Hyperliquid 0x0123…4567")
@@ -234,7 +233,7 @@ fn the_table_shows_the_account_s_positions_and_follows_its_settings() {
     // An emptied field watches nothing again.
     app.clear(FIELD).unwrap();
     app.type_text(FIELD, "\n").unwrap();
-    app.wait_for("No account").unwrap();
+    app.wait_for("id:positions-no-account").unwrap();
     app.press("label:Close Positions settings").unwrap();
     app.wait_for_gone("id:positions-settings", WAIT).unwrap();
     assert!(!app.shows("No open positions"));

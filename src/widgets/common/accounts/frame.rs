@@ -11,8 +11,8 @@
 //!   or has not been brought up to date, as a warning. The figures of a
 //!   report that is merely not up to date stay;
 //! - the widget's content;
-//! - instead of all three while no account is set: what the widget is
-//!   waiting for, and the rows that set one ([`account_rows`]).
+//! - instead of all three while no account is set: the rows that set one
+//!   ([`account_rows`]), one bordered piece in the middle.
 
 use nsh_core::{LineHeight, prelude::*};
 
@@ -38,8 +38,8 @@ const LOGO: LogoStyle = LogoStyle {
     initials_size: 7.0,
     boxed: true,
 };
-/// The widest the form is while no account is set.
-const FORM_WIDTH: f32 = 400.0;
+/// The widest the rows are while no account is set.
+const FORM_WIDTH: f32 = 360.0;
 
 /// `body` (the widget's content, which fills what is left) in the frame of
 /// a widget showing `what` (`positions`: the words its notes use) of its
@@ -82,7 +82,7 @@ fn frame<S: AccountSettings>(
     let venue = venue_of(portfolio, account);
     let ask = {
         let (tab, portfolio) = (tab.clone(), portfolio.clone());
-        dynamic(move || unset.get().then(|| ask(&tab, &portfolio, what)))
+        dynamic(move || unset.get().then(|| ask(&tab, &portfolio)))
     };
     view()
         .test_id(S::TEST_ID)
@@ -251,38 +251,9 @@ fn note(venue: Memo<String>, standing: Memo<Standing>, what: &'static str) -> Vi
         )
 }
 
-/// What a widget with no account shows: what it is waiting for, and the
-/// rows that set one.
-fn ask<S: AccountSettings>(tab: &TabContext<S>, portfolio: &Portfolio, what: &'static str) -> View {
-    let form = view()
-        .w_full()
-        .max_w(px(FORM_WIDTH))
-        .flex_col()
-        .gap(px(6.0))
-        .child(
-            text("No account")
-                .number_of_lines(1)
-                .text_size(px(13.0))
-                .font_weight(FontWeight::SEMIBOLD),
-        )
-        .child(
-            text(format!(
-                "Enter an account's public address to watch its {what}. \
-                 Only the address is sent to the exchange."
-            ))
-            .text_size(px(11.0))
-            .text_color(theme::TEXT_MUTED)
-            .line_height(LineHeight::Multiple(1.5)),
-        )
-        .child(
-            view()
-                .mt(px(4.0))
-                .py(px(4.0))
-                .bg(theme::PANEL)
-                .border_1()
-                .border_color(theme::BORDER)
-                .child(account_rows(tab, portfolio)),
-        );
+/// What a widget with no account shows: the rows that set one, one
+/// bordered piece in the middle of it.
+fn ask<S: AccountSettings>(tab: &TabContext<S>, portfolio: &Portfolio) -> View {
     view()
         .test_id(&format!("{}-no-account", S::TEST_ID))
         .flex_1()
@@ -292,7 +263,13 @@ fn ask<S: AccountSettings>(tab: &TabContext<S>, portfolio: &Portfolio, what: &'s
         .items_center()
         .justify_center()
         .p(px(16.0))
-        .child(form)
+        .child(
+            account_rows(tab, portfolio)
+                .max_w(px(FORM_WIDTH))
+                .bg(theme::PANEL)
+                .border_1()
+                .border_color(theme::BORDER),
+        )
 }
 
 #[cfg(test)]

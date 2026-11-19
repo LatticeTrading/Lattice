@@ -10,6 +10,7 @@ use nsh_core::prelude::*;
 use super::{AccountSettings, account_rows};
 use crate::{
     data::Portfolio,
+    theme,
     ui::{self, Side},
     widgets::TabContext,
 };
@@ -28,9 +29,12 @@ pub(crate) fn account_panel<S: AccountSettings>(
     let body = view()
         .test_id(&format!("{}-settings", S::TEST_ID))
         .flex_col()
-        .py(px(4.0))
-        .child(account_rows(tab, portfolio))
-        .children(rows);
+        .child(
+            account_rows(tab, portfolio)
+                .border_b_1()
+                .border_color(theme::BORDER),
+        )
+        .child(view().flex_col().py(px(4.0)).children(rows));
     let close = {
         let tab = tab.clone();
         move || tab.close_settings()
