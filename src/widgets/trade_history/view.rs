@@ -1,5 +1,5 @@
 //! The Trade History's view: the frame every account widget has (the
-//! account's strip, what could not be read, the form while no account is
+//! accounts' strip, what could not be read, the form while no account is
 //! set: [`account_frame`]) around its totals and its table.
 //!
 //! - The totals: how many trades are listed and since when, then their
@@ -7,13 +7,14 @@
 //!   zero, red below), side by side.
 //! - The table is one grid, a row per trade under titles that stay at the
 //!   top while the rows scroll: when (as the clock writes it), the market
-//!   (its instrument, what the trade did, green for a buy and red for a
+//!   (whose it is, while several accounts show: its exchange's logo, named
+//!   in its tooltip; its instrument, what the trade did, green for a buy and red for a
 //!   sell, and whether it took liquidity), its price, size and worth, its
 //!   fee and what it closed.
 //! - A column is at least as wide as its figures and they share the room
 //!   left over; a pane narrower than the columns scrolls sideways, and one
 //!   shorter than the rows scrolls down under the titles.
-//! - An account with no trades says so under the titles.
+//! - Accounts with no trades say so under the titles.
 //!
 //! A row is made once per trade and its cells follow its row's values, so
 //! a new report rewrites text and makes no view for a trade already shown.
@@ -31,7 +32,7 @@ use crate::{
     theme,
     widgets::{
         common::{
-            accounts::{account_frame, Standing, Tone},
+            accounts::{account_frame, mark_view, Tone},
             Shared,
         },
         TabContext,
@@ -115,12 +116,9 @@ pub(super) fn history_view(
     session: &TradeHistorySession,
     tab: &TabContext<TradeHistorySettings>,
 ) -> View {
-    let (report, rows, totals) = (session.report, session.rows, session.totals);
+    let (reports, rows, totals) = (session.reports, session.rows, session.totals);
     // No trades: said once a report has arrived to say it.
-    let none_made = computed(move || {
-        matches!(report.standing.get(), Standing::Ready | Standing::Stale(_))
-            && rows.with(|rows| rows.0.is_empty())
-    });
+    let none_made = computed(move || reports.shown() && rows.with(|rows| rows.0.is_empty()));
     let empty = view()
         .test_id(&format!("{ID}-empty"))
         .px(px(PADDING))
@@ -154,7 +152,7 @@ pub(super) fn history_view(
         .flex_col()
         .child(summary(totals))
         .child(area);
-    account_frame(tab, &session.portfolio, report.standing, "trades", whole)
+    account_frame(tab, &session.portfolio, reports.standing, "trades", whole)
 }
 
 /// The totals over the table: what is listed, then what the trades come to.
@@ -317,8 +315,11 @@ fn cell(
                 TradeSide::Buy => theme::POSITIVE.get(),
                 TradeSide::Sell => theme::NEGATIVE.get(),
             };
+            // A row keeps its account: it is in its key.
+            let owner = row.with_untracked(|row| row.owner.clone());
             boxed(ROW_HEIGHT, column)
                 .gap(px(8.0))
+                .children(owner.as_ref().map(mark_view))
                 .child(
                     figure()
                         .min_w(px(0.0))

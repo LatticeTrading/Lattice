@@ -9,14 +9,21 @@ use super::{
     settings::AccountSummarySettings,
 };
 use crate::{
-    data::portfolio::{
-        Balance, Balances, Direction, Fees, Leverage, MarginAccount, MarginMode, Performance,
-        Period, Point, Position, Prices, Scope, Staking, VaultShare, Vaults, Window,
+    data::{
+        portfolio::{
+            Account, Balance, Balances, Direction, Fees, Leverage, MarginAccount, MarginMode,
+            Performance, Period, Point, Position, Prices, Scope, Staking, VaultShare, Vaults,
+            Window,
+        },
+        Portfolio,
     },
     widgets::{
         common::accounts::{
-            testing::{account, asked, count, start, workspace_of, IDLE, USER, WHALE},
-            AccountSettings, Tone, NONE,
+            testing::{
+                account, accounts, asked, asked_lighter, count, lighter_account, on, start,
+                workspace_of, IDLE, TRADER, USER, WHALE,
+            },
+            AccountSettings, Mark, Tone, NONE,
         },
         WidgetKind,
     },
@@ -27,7 +34,7 @@ fn settings_save_only_what_differs_and_read_leniently() {
     // Defaults save nothing: no account, the balances shown, none hidden.
     let defaults = AccountSummarySettings::default();
     assert_eq!(serde_json::to_value(&defaults).unwrap(), json!({}));
-    assert!(defaults.balances() && !defaults.small_hidden() && defaults.account().is_none());
+    assert!(defaults.balances() && !defaults.small_hidden() && defaults.accounts().is_empty());
     assert_eq!(
         AccountSummarySettings::from(json!({ "showBalances": true, "hideSmallBalances": false })),
         defaults
@@ -40,7 +47,7 @@ fn settings_save_only_what_differs_and_read_leniently() {
     saved["hideSmallBalances"] = json!(true);
     let settings = AccountSummarySettings::from(saved.clone());
     assert!(!settings.balances() && settings.small_hidden());
-    assert_eq!(settings.account().unwrap().address, USER);
+    assert_eq!(settings.accounts()[0].address, USER);
     assert_eq!(serde_json::to_value(&settings).unwrap(), saved);
     assert_eq!(
         serde_json::to_value(settings.with_balances(true).with_small_hidden(false)).unwrap(),
@@ -302,6 +309,178 @@ fn the_overview_reads_every_report_and_dashes_what_is_not_reported() {
     });
     assert_eq!(rated.figure(Figure::PerpRates).text, "0.03% / 0%");
     assert_eq!(rated.figure(Figure::SpotRates).text, "0.025% / -0.001%");
+}
+
+#[test]
+fn several_accounts_make_one_overview() {
+    let balance = |asset: &str, total: f64| Balance {
+        asset: asset.to_owned(),
+        total,
+        held: 0.0,
+        entry_value: None,
+    };
+    let staking = |asset: &str, delegated: f64| Staking {
+        asset: asset.to_owned(),
+        delegated,
+        undelegated: 1.0,
+        pending_withdrawal: 0.0,
+    };
+    let fees = Fees {
+        tier: Some(1),
+        volume: Some(1_000.0),
+        ..Fees::default()
+    };
+    // One at ease on an exchange that reports everything.
+    let eased = MarginAccount {
+        equity: Some(10_000.0),
+        unrealized_pnl: Some(100.0),
+        position_value: Some(4_000.0),
+        margin_used: Some(1_000.0),
+        maintenance_margin: Some(500.0),
+        withdrawable: Some(9_000.0),
+        cross_equity: Some(10_000.0),
+        funding: Some(1.0),
+        positions: vec![position("BTC", Direction::Long, 4_000.0)],
+        ..MarginAccount::default()
+    };
+    let (held, priced) = (
+        Balances(vec![balance("USDC", 500.0), balance("TOK", 10.0)]),
+        Prices(HashMap::from([
+            ("USDC".to_owned(), 1.0),
+            ("TOK".to_owned(), 2.0),
+        ])),
+    );
+    let (staked, history) = (
+        staking("TOK", 5.0),
+        Performance(vec![window(Period::Day, [9_000.0, 99_999.0], 140.0)]),
+    );
+    // One near liquidation on another, which prices the token its own way
+    // and reports no fees.
+    let strained = MarginAccount {
+        equity: Some(2_000.0),
+        unrealized_pnl: Some(-50.0),
+        position_value: Some(6_000.0),
+        margin_used: Some(1_200.0),
+        maintenance_margin: Some(1_500.0),
+        withdrawable: Some(100.0),
+        cross_equity: Some(2_000.0),
+        funding: Some(-3.0),
+        positions: vec![position("BTC", Direction::Short, 6_000.0)],
+        ..MarginAccount::default()
+    };
+    let (also_held, also_priced, also_staked) = (
+        Balances(vec![balance("TOK", 10.0)]),
+        Prices(HashMap::from([("TOK".to_owned(), 3.0)])),
+        staking("LIT", 7.0),
+    );
+    let first = Reports {
+        margin: Some(&eased),
+        balances: Some(&held),
+        prices: Some(&priced),
+        performance: Some(&history),
+        staking: Some(&staked),
+        fees: Some(&fees),
+        ..Reports::default()
+    };
+    let second = Reports {
+        margin: Some(&strained),
+        balances: Some(&also_held),
+        prices: Some(&also_priced),
+        staking: Some(&also_staked),
+        ..Reports::default()
+    };
+    let overview = Overview::of_accounts(&[first, second]);
+    let read = |figure: Figure| overview.figure(figure).text.as_str();
+    for (figure, expected) in [
+        // What they are worth adds up.
+        (Figure::Equity, "$12,000.00"),
+        (Figure::CrossEquity, "$12,000.00"),
+        (Figure::Maintenance, "$2,000.00"),
+        (Figure::Buffer, "$10,000.00"),
+        (Figure::MarginUsed, "$2,200.00"),
+        (Figure::Withdrawable, "$9,100.00"),
+        (Figure::Leverage, "0.83x"),
+        // The ratio is the one nearest liquidation: 1,500 of 2,000.
+        (Figure::MarginRatio, "75.00%"),
+        // Exposure is of every position.
+        (Figure::Long, "$4,000.00"),
+        (Figure::Short, "$6,000.00"),
+        (Figure::Net, "-$2,000.00"),
+        (Figure::Positions, "2"),
+        (Figure::Largest, "BTC · 60%"),
+        (Figure::Unrealized, "+$50.00"),
+        (Figure::Funding, "-$2.00"),
+        // Each stake in its own token; the one its exchange does not price
+        // is worth nothing known.
+        (Figure::Staked, "5 TOK + 7 LIT"),
+        (Figure::Undelegated, "1 TOK + 1 LIT"),
+        (Figure::StakedValue, "$12.00"),
+        // The one fee schedule reported.
+        (Figure::FeeTier, "Tier 1"),
+        // One of them has no history: what both made is not said, and the
+        // whole is what is counted (12,000 + 550 + 12).
+        (Figure::DayChange, NONE),
+        (Figure::Total, "$12,562.00"),
+    ] {
+        assert_eq!(read(figure), expected, "{figure:?}");
+    }
+    // Each holding at its own exchange's price: 500 + 10 × 2, and 10 × 3.
+    assert_eq!(overview.share(Part::Spot).unwrap().value, "$550.00");
+    assert_eq!(overview.margin_ratio, Some(0.75));
+    assert_eq!(Health::of(overview.margin_ratio.unwrap()), Health::Caution);
+    assert_eq!(overview.sides, Some((0.4, 0.6)));
+
+    // With a history of each, the whole is theirs together; with a fee
+    // schedule of each, neither is the accounts'.
+    let second = Reports {
+        performance: Some(&history),
+        fees: Some(&fees),
+        ..second
+    };
+    let both = Overview::of_accounts(&[first, second]);
+    assert_eq!(both.figure(Figure::Total).text, "$199,998.00");
+    assert_eq!(both.figure(Figure::DayChange).text, "+$280.00");
+    assert_eq!(both.figure(Figure::FeeTier).text, NONE);
+    assert_eq!(both.figure(Figure::FeeVolume).text, NONE);
+
+    // Their holdings are one table, each marked with its account, the most
+    // valuable first: an asset both hold is a row of each.
+    let portfolio = Portfolio::new([]);
+    let mark = |venue: &str| {
+        Mark::of(
+            &portfolio,
+            &Account {
+                venue: venue.to_owned(),
+                address: USER.to_owned(),
+            },
+        )
+    };
+    let holdings = session::holdings_of_all(
+        &[
+            (Some(mark("hyperliquid")), &held, Some(&priced)),
+            (Some(mark("lighterxyz")), &also_held, Some(&also_priced)),
+        ],
+        false,
+    );
+    let listed: Vec<(&str, &str, &str)> = holdings
+        .iter()
+        .map(|holding| {
+            (
+                holding.owner.as_ref().unwrap().named.as_str(),
+                holding.asset.as_str(),
+                holding.value.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("Hyperliquid 0x0123…4567", "USDC", "$500.00"),
+            ("Lighter 0x0123…4567", "TOK", "$30.00"),
+            ("Hyperliquid 0x0123…4567", "TOK", "$20.00"),
+        ]
+    );
+    assert_ne!(holdings[1].key, holdings[2].key);
 }
 
 #[test]
@@ -601,4 +780,136 @@ fn an_account_that_holds_nothing_says_so() {
     assert!(reads(&app, "isolated-positions", "0"));
     assert!(reads(&app, "next-tier", NONE));
     assert!(!app.shows("COST"), "no titles over no rows");
+}
+
+/// One watching an address with two accounts on Lighter.
+#[component]
+fn Trading() -> impl IntoElement {
+    workspace_of(WidgetKind::AccountSummary, Some(lighter_account(TRADER)))
+}
+
+#[test]
+fn a_lighter_address_is_summed_up_from_what_lighter_reports() {
+    let (mut app, network) = start(Root::of::<Trading>());
+    // (Its history's total is also what its parts come to.)
+    for arrived in ["$23,900.00", "+$72.00", "LIT"] {
+        app.wait_for(arrived).unwrap();
+    }
+    for (id, read) in [
+        // The headline: its accounts' history together, and its day.
+        ("total", "$24,400.00"),
+        ("day-change", "+$72.00"),
+        // Margin health: its main account's ratio, the nearer liquidation.
+        ("margin-ratio", "4.29%"),
+        ("liquidation-buffer", "$22,940.00"),
+        ("maintenance-margin", "$960.00"),
+        ("cross-equity", "$23,900.00"),
+        ("equity", "$23,900.00"),
+        ("margin-used", "$2,231.00"),
+        ("withdrawable", "$21,700.00"),
+        ("isolated-positions", "1"),
+        ("isolated-margin", "$650.00"),
+        // Exposure: the BTC long against the SOL and BTC shorts.
+        ("long", "$31,000.00"),
+        ("short", "$7,120.00"),
+        ("net-exposure", "+$23,880.00"),
+        ("position-value", "$38,120.00"),
+        ("open-positions", "3"),
+        ("largest", "BTC · 81%"),
+        ("unrealized-pnl", "+$1,490.00"),
+        ("funding", "-$9.75"),
+        ("week-pnl", "+$504.00"),
+        ("month-pnl", "+$500.00"),
+        ("day-volume", "$26,400.00"),
+        // What Lighter does not report without a token is a dash.
+        ("fee-tier", NONE),
+        ("perp-rates", NONE),
+        ("staked", NONE),
+        ("vault-equity", NONE),
+        // The parts: the perpetuals, and its tokens at Lighter's prices.
+        ("part-perps", "$23,900.00"),
+        ("part-spot", "$500.00"),
+    ] {
+        assert!(reads(&app, id, read), "{id}: {read}");
+    }
+    // Its balances: what it holds, not what backs its perpetuals.
+    for shown in ["USDC", "250", "100", "90", "$250.00"] {
+        assert!(app.shows(shown), "{shown}");
+    }
+    assert!(!app.shows("No balances") && !app.shows("does not report"));
+
+    // Its accounts once for its margin, its balances and its history, a
+    // week of hours and every day of each, and the assets' prices.
+    let requests = asked_lighter(&network);
+    assert_eq!(requests.len(), 6, "{requests:?}");
+    let asked_for = |start: &str| {
+        requests
+            .iter()
+            .filter(|request| request.starts_with(start))
+            .count()
+    };
+    assert_eq!(asked_for("/api/v1/account?"), 1);
+    assert_eq!(asked_for("/api/v1/pnl?"), 4);
+    assert_eq!(asked_for("/api/v1/assetDetails"), 1);
+    assert!(
+        asked(&network).is_empty(),
+        "nothing is asked of Hyperliquid"
+    );
+}
+
+/// One watching an account on Hyperliquid and an address on Lighter.
+#[component]
+fn Everywhere() -> impl IntoElement {
+    let saved = accounts(&[on("hyperliquid", USER), on("lighterxyz", TRADER)]);
+    workspace_of(WidgetKind::AccountSummary, Some(saved))
+}
+
+#[test]
+fn accounts_on_several_exchanges_are_one_summary() {
+    let (mut app, _network) = start(Root::of::<Everywhere>());
+    for arrived in ["$37,009.48", "$37,458.00", "Tier 1", "LIT", "PURR"] {
+        app.wait_for(arrived).unwrap();
+    }
+    for (id, read) in [
+        // What both are worth and made, together.
+        ("total", "$37,458.00"),
+        ("day-change", "+$130.00"),
+        ("equity", "$37,009.48"),
+        ("cross-equity", "$37,004.51"),
+        ("maintenance-margin", "$1,021.00"),
+        // The ratio of the one nearer liquidation, not of the sums.
+        ("margin-ratio", "4.29%"),
+        ("open-positions", "5"),
+        ("isolated-positions", "2"),
+        ("long", "$31,100.03"),
+        ("short", "$13,220.00"),
+        ("unrealized-pnl", "+$1,589.99"),
+        ("funding", "+$2.75"),
+        ("month-pnl", "+$2,950.00"),
+        // What one of them alone reports is its own.
+        ("fee-tier", "Tier 1"),
+        ("staked", "10 HYPE"),
+        ("vault-count", "1"),
+        // The tokens of each at its own exchange's prices.
+        ("part-spot", "$1,514.63"),
+    ] {
+        assert!(reads(&app, id, read), "{id}: {read}");
+    }
+    // The strip counts them, and each balance says whose it is.
+    assert!(app
+        .screen()
+        .matches("id:account-summary-account >> text:2 accounts")
+        .unwrap());
+    assert_eq!(
+        app.screen()
+            .count("id:account-summary-holdings >> label:Lighter 0xe117…b9a8")
+            .unwrap(),
+        2
+    );
+    assert!(
+        app.screen()
+            .count("id:account-summary-holdings >> label:Hyperliquid 0x0123…4567")
+            .unwrap()
+            >= 2
+    );
 }

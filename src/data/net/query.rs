@@ -376,6 +376,17 @@ impl Entry {
     }
 }
 
+/// A [`Queries`] hub that may be gone ([`Queries::downgrade`]).
+#[derive(Clone)]
+pub struct WeakQueries(Weak<Core>);
+
+impl WeakQueries {
+    /// The hub, while the services that own it are there.
+    pub fn upgrade(&self) -> Option<Queries> {
+        self.0.upgrade().map(Queries)
+    }
+}
+
 impl Queries {
     /// A hub that reports to `status` as source `id` (`ferris.queries`)
     /// named `label` (`Ferris requests`).
@@ -482,6 +493,13 @@ impl Queries {
             .clone()
             .ok_or_else(|| ApiError::network("the request was abandoned"))?;
         typed(data, &spec.key)
+    }
+
+    /// The hub, held without keeping it alive: what a query's own fetch
+    /// holds to ask the hub for another request (one several reports are
+    /// read from), since the hub holds the fetch.
+    pub fn downgrade(&self) -> WeakQueries {
+        WeakQueries(Rc::downgrade(&self.0))
     }
 
     /// The cached value of `key`, without fetching.

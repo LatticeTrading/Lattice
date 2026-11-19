@@ -1,7 +1,8 @@
 //! The Account Summary's settings, saved in its tab's record:
 //!
-//! - `account`: the account it watches (what every widget that shows an
-//!   account saves: [`Watched`]);
+//! - `account`: the account it watches (what every widget that shows
+//!   accounts saves: [`Watched`]), or `accounts`: the several it sums up
+//!   together;
 //! - `showBalances`: whether the assets the account holds show under its
 //!   figures; on while left out;
 //! - `hideSmallBalances`: whether the balances leave out what is worth less
@@ -18,7 +19,7 @@ use crate::widgets::common::accounts::{AccountSettings, Watched};
 /// One Account Summary's settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub(crate) struct AccountSummarySettings {
-    /// The account summed up.
+    /// The accounts summed up, together.
     #[serde(flatten)]
     watched: Watched,
     /// `None` is on.

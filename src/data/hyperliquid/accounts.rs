@@ -32,8 +32,8 @@ use super::{
 use crate::data::{
     net::{Queries, QuerySpec, Subject},
     portfolio::{
-        short_address, AccountSource, AddressError, Balances, Fees, Fills, MarginAccount,
-        Performance, Prices, Staking, Vaults,
+        evm_address, short_address, AccountSource, AddressError, Balances, Fees, Fills,
+        MarginAccount, Performance, Prices, Staking, Vaults,
     },
 };
 
@@ -51,13 +51,7 @@ const REFRESH: Duration = Duration::from_secs(5 * 60);
 pub(super) fn parse_address(input: &str) -> Result<String, AddressError> {
     const INVALID: AddressError =
         AddressError("Enter the account's address: 0x followed by 40 hexadecimal characters.");
-    let address = input.trim().to_ascii_lowercase();
-    let digits = address.strip_prefix("0x").ok_or(INVALID)?;
-    if digits.len() == 40 && digits.bytes().all(|digit| digit.is_ascii_hexdigit()) {
-        Ok(address)
-    } else {
-        Err(INVALID)
-    }
+    evm_address(input).ok_or(INVALID)
 }
 
 /// What the connection panel calls a request about `address`.

@@ -13,7 +13,10 @@ use crate::{
         common::{
             accounts::{
                 AccountSettings, NONE, Standing, Tone,
-                testing::{IDLE, USER, account, asked, count, start, workspace_of},
+                testing::{
+                    IDLE, LIMITED, TRADER, TRADER_MAIN, TRADER_SUB, USER, account, accounts, asked,
+                    asked_lighter, count, on, start, workspace_of,
+                },
             },
             plot::{Mode, Scene, Viewport},
         },
@@ -30,7 +33,7 @@ fn settings_save_only_what_differs_and_read_leniently() {
         (defaults.period(), defaults.scope(), defaults.metric()),
         (Period::Month, Scope::Total, Metric::Value)
     );
-    assert!(defaults.grid() && defaults.account().is_none());
+    assert!(defaults.grid() && defaults.accounts().is_empty());
     let written = json!({
         "period": "month", "scope": "total", "metric": "value", "style": "line", "showGrid": true,
     });
@@ -50,7 +53,7 @@ fn settings_save_only_what_differs_and_read_leniently() {
     );
     assert!(!settings.grid());
     assert_eq!(settings.style(), Style::Area);
-    assert_eq!(settings.account().unwrap().address, USER);
+    assert_eq!(settings.accounts()[0].address, USER);
     assert_eq!(serde_json::to_value(&settings).unwrap(), saved);
     // Back at its default a choice is not saved.
     assert_eq!(
@@ -269,12 +272,10 @@ fn the_plot_shows_the_window_its_settings_pick_of_one_report() {
     // account too.
     app.press("Widget settings").unwrap();
     app.wait_for("id:account-performance-settings").unwrap();
-    assert_eq!(
-        app.screen()
-            .input_text("id:account-performance-settings >> id:account-performance-address")
-            .unwrap(),
-        Some(USER)
-    );
+    assert!(app
+        .screen()
+        .matches("id:account-performance-settings >> id:account-performance-accounts >> text:0x0123…4567")
+        .unwrap());
     app.press("id:account-performance-settings >> label:Of")
         .unwrap();
     app.press("role:option[Perpetuals]").unwrap();
@@ -302,38 +303,238 @@ fn the_plot_shows_the_window_its_settings_pick_of_one_report() {
     assert_eq!(requests.len(), 1);
 }
 
+/// Whether the header's account badge is named `label`.
+fn badge_is(app: &Headless, label: &str) -> bool {
+    app.screen()
+        .matches(&format!("id:account-performance-header >> label:{label}"))
+        .unwrap()
+}
+
 #[test]
-fn the_account_badge_opens_the_rows_that_change_the_account() {
+fn the_account_badge_opens_the_rows_that_list_add_and_take_out_accounts() {
     let (mut app, network) = start(Root::of::<Watching>());
     app.wait_for("12450.0").unwrap();
     app.press("id:account-performance-account").unwrap();
     app.wait_for("id:account-performance-account-panel")
         .unwrap();
+    const PANEL: &str = "id:account-performance-account-panel";
     const FIELD: &str = "id:account-performance-account-panel >> id:account-performance-address";
-    assert_eq!(app.screen().input_text(FIELD).unwrap(), Some(USER));
-
-    // Another account saved: it is watched in its place, and the panel
-    // has done its work.
-    app.clear(FIELD).unwrap();
-    app.type_text(FIELD, &format!("{IDLE}\n")).unwrap();
-    app.wait_for_gone("id:account-performance-account-panel", WAIT)
-        .unwrap();
-    app.wait_for(EMPTY).unwrap();
+    // The account plotted is listed; the field is for the next one.
     assert!(
         app.screen()
-            .matches("label:Change account: Hyperliquid 0x0000…00aa")
+            .matches(&format!(
+                "{PANEL} >> id:account-performance-accounts >> text:0x0123…4567"
+            ))
             .unwrap()
     );
-    assert_eq!(count(&asked(&network), "portfolio", IDLE), 1);
+    assert_eq!(app.screen().input_text(FIELD).unwrap(), Some(""));
 
-    // Its close button closes it with nothing changed.
-    app.press("id:account-performance-account").unwrap();
-    app.wait_for("id:account-performance-account-panel")
+    // What is no address of the exchange picked is not added.
+    app.type_text(FIELD, "vitalik.eth\n").unwrap();
+    app.wait_for("id:account-performance-address-problem")
         .unwrap();
-    app.press("label:Close Account").unwrap();
-    app.wait_for_gone("id:account-performance-account-panel", WAIT)
+    assert!(badge_is(&app, "Change account: Hyperliquid 0x0123…4567"));
+
+    // An address on another exchange: both are plotted as one, and the
+    // panel stays for the next.
+    app.clear(FIELD).unwrap();
+    app.press(&format!("{PANEL} >> label:Exchange")).unwrap();
+    app.press("role:option[Lighter]").unwrap();
+    app.type_text(
+        FIELD,
+        &format!("{}\n", TRADER.to_uppercase().replace("0X", "0x")),
+    )
+    .unwrap();
+    app.wait_for("36850.0").unwrap();
+    assert!(reads(&app, "pnl", "+$2,950.00"));
+    assert!(reads(&app, "volume", "$281,000.50"));
+    assert!(reads(&app, "account", "2 accounts"));
+    assert!(badge_is(
+        &app,
+        "Change accounts: Hyperliquid 0x0123…4567, Lighter 0xe117…b9a8"
+    ));
+    assert!(app.screen().matches(PANEL).unwrap());
+    assert_eq!(app.screen().input_text(FIELD).unwrap(), Some(""));
+    assert_eq!(
+        app.screen()
+            .count("id:account-performance-accounts >> role:button")
+            .unwrap(),
+        2
+    );
+    // Added again, it is still there once, and nothing more is asked for.
+    app.type_text(FIELD, &format!("{TRADER}\n")).unwrap();
+    app.wait_for("36850.0").unwrap();
+    assert!(reads(&app, "account", "2 accounts"));
+    assert_eq!(asked_lighter(&network).len(), 5);
+    assert_eq!(count(&asked(&network), "portfolio", USER), 1);
+
+    // × takes an account out: the other is plotted alone.
+    app.press("id:account-performance-remove-0").unwrap();
+    app.wait_for("24400.0").unwrap();
+    assert!(reads(&app, "pnl", "+$500.00"));
+    assert!(badge_is(&app, "Change account: Lighter 0xe117…b9a8"));
+
+    // Its close button closes it.
+    app.press("label:Close Accounts").unwrap();
+    app.wait_for_gone(PANEL, WAIT).unwrap();
+    app.wait_for("24400.0").unwrap();
+}
+
+/// One watching an address with two accounts on Lighter.
+#[component]
+fn Trading() -> impl IntoElement {
+    let saved = json!({ "account": on("lighterxyz", TRADER) });
+    workspace_of(WidgetKind::AccountPerformance, Some(saved))
+}
+
+#[test]
+fn a_lighter_address_plots_its_accounts_together() {
+    let (mut app, network) = start(Root::of::<Trading>());
+
+    // A month of what its main account and its sub-account are worth
+    // together, and made and traded together.
+    app.wait_for("24400.0").unwrap();
+    assert!(reads(&app, "pnl", "+$500.00"));
+    assert!(reads(&app, "volume", "$31,000.00"));
+    assert!(badge_is(&app, "Change account: Lighter 0xe117…b9a8"));
+    assert!(!app.shows(LOADING) && !app.shows(EMPTY));
+
+    // The day is cut from the same report.
+    app.press("id:account-performance-period").unwrap();
+    app.press("id:account-performance-period-day").unwrap();
+    app.wait_for_gone("id:account-performance-period-menu", WAIT)
         .unwrap();
+    assert!(reads(&app, "period", "24H"));
+    app.wait_for("+$72.00").unwrap();
+    assert!(reads(&app, "volume", "$26,400.00"));
+
+    // Its perpetuals alone are worth it all but its spot; Lighter says what
+    // the whole account traded, not what its perpetuals did.
+    app.press("Widget settings").unwrap();
+    app.wait_for("id:account-performance-settings").unwrap();
+    app.press("id:account-performance-settings >> label:Of")
+        .unwrap();
+    app.press("role:option[Perpetuals]").unwrap();
+    app.wait_for("23900.0").unwrap();
+    assert!(reads(&app, "pnl", "+$72.00"));
+    assert!(reads(&app, "volume", NONE));
+
+    // Its accounts were asked for once, then a week of hours and every day
+    // of each; the pool it runs, not at all.
+    let requests = asked_lighter(&network);
+    assert_eq!(requests.len(), 5, "{requests:?}");
+    assert!(requests[0].starts_with("/api/v1/account?by=l1_address&value=0xe117"));
+    for index in [TRADER_MAIN, TRADER_SUB] {
+        for resolution in ["1h", "1d"] {
+            let asked = format!("/api/v1/pnl?by=index&value={index}&resolution={resolution}&");
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|request| request.starts_with(&asked))
+                    .count(),
+                1,
+                "{asked}"
+            );
+        }
+    }
+    assert!(
+        asked(&network).is_empty(),
+        "nothing is asked of Hyperliquid"
+    );
+}
+
+/// One watching the same address on Hyperliquid and on Lighter, and an
+/// address Lighter holds no account of.
+#[component]
+fn Everywhere() -> impl IntoElement {
+    let saved = accounts(&[on("hyperliquid", USER), on("lighterxyz", TRADER)]);
+    workspace_of(WidgetKind::AccountPerformance, Some(saved))
+}
+
+#[test]
+fn accounts_on_several_exchanges_are_plotted_as_one() {
+    let (mut app, network) = start(Root::of::<Everywhere>());
+
+    // A month of what both are worth, made and traded, together.
+    app.wait_for("36850.0").unwrap();
+    assert!(reads(&app, "pnl", "+$2,950.00"));
+    assert!(reads(&app, "volume", "$281,000.50"));
+    assert!(reads(&app, "account", "2 accounts"));
+    assert!(badge_is(
+        &app,
+        "Change accounts: Hyperliquid 0x0123…4567, Lighter 0xe117…b9a8"
+    ));
+    assert!(!app.shows("Not every account is shown"));
+
+    // What they made instead, over all time: each counted from its start.
+    app.press("id:account-performance-period").unwrap();
+    app.press("id:account-performance-period-allTime").unwrap();
+    app.wait_for("37200.0").unwrap();
+    assert!(reads(&app, "pnl", "+$12,700.00"));
+
+    // Each exchange was asked for its own account, once.
+    assert_eq!(count(&asked(&network), "portfolio", USER), 1);
+    assert_eq!(asked(&network).len(), 1);
+    assert_eq!(asked_lighter(&network).len(), 5);
+
+    // The settings list them, and save them as a list.
+    app.press("Widget settings").unwrap();
+    app.wait_for("id:account-performance-settings").unwrap();
+    assert_eq!(
+        app.screen()
+            .count(
+                "id:account-performance-settings >> id:account-performance-accounts >> role:button"
+            )
+            .unwrap(),
+        2
+    );
+    let saved = AccountPerformanceSettings::from(accounts(&[
+        on("hyperliquid", USER),
+        on("lighterxyz", TRADER),
+    ]));
+    assert_eq!(saved.accounts().len(), 2);
+    assert_eq!(
+        serde_json::to_value(&saved).unwrap(),
+        accounts(&[on("hyperliquid", USER), on("lighterxyz", TRADER)])
+    );
+}
+
+/// One watching an account on Hyperliquid and one Lighter refuses.
+#[component]
+fn Halved() -> impl IntoElement {
+    let saved = accounts(&[on("hyperliquid", USER), on("lighterxyz", LIMITED)]);
+    workspace_of(WidgetKind::AccountPerformance, Some(saved))
+}
+
+#[test]
+fn an_account_that_cannot_be_read_is_named_over_what_the_others_add_up_to() {
+    let (mut app, _network) = start(Root::of::<Halved>());
+    app.wait_for(
+        "Not every account is shown. Lighter 0x0000…00ff: Lighter's request limit for this \
+         connection was reached; requests resume within a minute",
+    )
+    .unwrap();
+    // The other is plotted alone meanwhile.
+    app.wait_for("12450.0").unwrap();
+    assert!(reads(&app, "pnl", "+$2,450.00"));
+    assert!(reads(&app, "account", "2 accounts"));
+}
+
+/// One watching an address Lighter holds no account of.
+#[component]
+fn Unknown() -> impl IntoElement {
+    let saved = json!({ "account": on("lighterxyz", IDLE) });
+    workspace_of(WidgetKind::AccountPerformance, Some(saved))
+}
+
+#[test]
+fn an_address_with_no_account_on_lighter_is_an_empty_account() {
+    let (mut app, network) = start(Root::of::<Unknown>());
     app.wait_for(EMPTY).unwrap();
+    assert!(reads(&app, "pnl", NONE));
+    assert!(reads(&app, "volume", "$0.00"));
+    assert!(!app.shows("Could not load"));
+    assert_eq!(asked_lighter(&network).len(), 1);
 }
 
 #[test]

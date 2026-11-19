@@ -1,5 +1,6 @@
-//! The Account Summary's settings panel: the rows its account is set with
-//! (what every account widget's panel starts with: [`account_panel`]), then
+//! The Account Summary's settings panel: the rows its accounts are listed
+//! and added with (what every account widget's panel starts with:
+//! [`account_panel`]), then
 //! Show Balances and Hide Small Balances, the square checkboxes. The pane's gear opens it for the
 //! active tab; every change is saved in the tab record at once.
 

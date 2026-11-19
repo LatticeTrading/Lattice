@@ -1,6 +1,6 @@
 //! The Trade History's session ([`TradeHistorySession`]): the trades of
-//! the account its settings name, and the rows and totals its view shows
-//! (the widget's data, described in the parent module).
+//! each account its settings name, and the rows and totals its view shows
+//! of them together (the widget's data, described in the parent module).
 
 use std::rc::Rc;
 
@@ -9,13 +9,13 @@ use nsh_core::prelude::*;
 use super::settings::TradeHistorySettings;
 use crate::{
     data::{
-        Portfolio, SessionScope,
         portfolio::{Fill, Fills, TradeSide},
+        Portfolio, SessionScope,
     },
     format,
     widgets::common::{
+        accounts::{follow_all, shown, AccountSettings, Mark, Reports, Tone, NONE},
         Shared,
-        accounts::{AccountSettings, NONE, Report, Tone, follow, shown},
     },
 };
 
@@ -29,8 +29,11 @@ const QUOTE: &str = "USDC";
 /// One trade's row, as its cells show it.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Row {
-    /// What tells the row apart: the trade's id.
+    /// What tells the row apart: the trade's id, after its account when
+    /// the widget shows several.
     pub key: Rc<str>,
+    /// Whose it is, when the widget shows several accounts.
+    pub owner: Option<Rc<Mark>>,
     /// When, in Unix milliseconds (the view writes it as the clock does).
     pub time_ms: f64,
     pub instrument: String,
@@ -68,9 +71,10 @@ fn fee_text(fill: &Fill) -> String {
 }
 
 impl Row {
-    fn of(fill: &Fill) -> Self {
+    fn of(fill: &Fill, owner: Option<&Rc<Mark>>) -> Self {
         Self {
-            key: fill.id.as_str().into(),
+            key: Mark::key(owner, &fill.id),
+            owner: owner.cloned(),
             time_ms: fill.time_ms,
             instrument: fill.instrument.clone(),
             side: fill.side,
@@ -109,9 +113,16 @@ pub(super) struct Totals {
 }
 
 impl Totals {
-    /// The totals of `fills`; dashes before a report.
+    /// The totals of one account's `fills`; dashes before a report.
+    #[cfg(test)]
     pub fn of(fills: Option<&Fills>) -> Self {
-        let Some(Fills(fills)) = fills else {
+        Self::of_all(fills.map(|fills| vec![fills]).as_deref())
+    }
+
+    /// The totals of the trades `parts` hold, the accounts' together;
+    /// dashes before a report.
+    pub fn of_all(parts: Option<&[&Fills]>) -> Self {
+        let Some(parts) = parts else {
             return Self {
                 count: 0,
                 listed: 0,
@@ -122,7 +133,8 @@ impl Totals {
                 tone: None,
             };
         };
-        let volume: f64 = fills.iter().map(Fill::value).sum();
+        let fills: Vec<&Fill> = parts.iter().flat_map(|Fills(fills)| fills).collect();
+        let volume: f64 = fills.iter().map(|fill| fill.value()).sum();
         let fees: f64 = fills
             .iter()
             .filter(|fill| fill.fee_asset.as_deref().is_none_or(|asset| asset == QUOTE))
@@ -132,10 +144,7 @@ impl Totals {
         Self {
             count: fills.len(),
             listed: fills.len().min(MAX_ROWS),
-            since_ms: fills
-                .iter()
-                .map(|fill| fill.time_ms)
-                .min_by(f64::total_cmp),
+            since_ms: fills.iter().map(|fill| fill.time_ms).min_by(f64::total_cmp),
             volume: format::usd(volume),
             fees: format::usd(fees),
             closed_pnl: format::signed_usd(closed),
@@ -144,30 +153,43 @@ impl Totals {
     }
 }
 
-/// The rows of `fills`, newest first, a trade once: the latest
-/// [`MAX_ROWS`].
+/// The rows of one account's `fills`, in the table's order.
+#[cfg(test)]
 pub(super) fn rows_of(fills: &Fills) -> Vec<Row> {
-    let mut ordered: Vec<&Fill> = fills.0.iter().collect();
-    ordered.sort_by(|a, b| b.time_ms.total_cmp(&a.time_ms));
+    rows_of_all(&[(None, fills)])
+}
+
+/// The rows of the trades `parts` hold, each account's with its mark (none
+/// when the widget shows one account), newest first whichever account each
+/// is of, a trade once: the latest [`MAX_ROWS`].
+pub(super) fn rows_of_all(parts: &[(Option<Rc<Mark>>, &Fills)]) -> Vec<Row> {
+    let mut ordered: Vec<(Option<&Rc<Mark>>, &Fill)> = parts
+        .iter()
+        .flat_map(|(mark, fills)| fills.0.iter().map(move |fill| (mark.as_ref(), fill)))
+        .collect();
+    ordered.sort_by(|(_, a), (_, b)| b.time_ms.total_cmp(&a.time_ms));
     let mut rows: Vec<Row> = Vec::with_capacity(ordered.len().min(MAX_ROWS));
-    for fill in ordered {
+    for (mark, fill) in ordered {
         if rows.len() == MAX_ROWS {
             break;
         }
-        if !rows.iter().any(|row| *row.key == *fill.id) {
-            rows.push(Row::of(fill));
+        let row = Row::of(fill, mark);
+        if !rows.iter().any(|kept| kept.key == row.key) {
+            rows.push(row);
         }
     }
     rows
 }
 
-/// A Trade History's session state: its account's trades, and what its
-/// view shows of them (its watch lives in the effect `follow` starts).
+/// A Trade History's session state: its accounts' trades, and what its
+/// view shows of them (its watches live in the effect `follow_all`
+/// starts).
 pub(crate) struct TradeHistorySession {
     /// The exchanges that report accounts, which its account's rows list.
     pub(super) portfolio: Portfolio,
-    /// The trades of the account the settings name.
-    pub(super) report: Report<Fills>,
+    /// The trades of each account the settings name, and where they stand
+    /// as one.
+    pub(super) reports: Reports<Fills>,
     /// The rows, newest first, updated while the widget is visible.
     pub(super) rows: Signal<Shared<Vec<Row>>>,
     /// What the trades come to, updated while it is visible.
@@ -181,25 +203,42 @@ impl TradeHistorySession {
         portfolio: Portfolio,
         settings: Signal<TradeHistorySettings>,
     ) -> Self {
-        let account = computed(move || settings.with(|settings| settings.account().cloned()));
-        let report = {
+        let accounts = computed(move || settings.with(|settings| settings.accounts().to_vec()));
+        let reports = {
             let portfolio = portfolio.clone();
-            follow(scope, account, move |account| portfolio.watch_fills(account))
+            follow_all(scope, accounts, move |account| {
+                portfolio.watch_fills(account)
+            })
         };
         let rows = signal(Shared::new(Vec::new()));
-        let totals = signal(Totals::of(None));
-        scope.while_visible(move || {
-            effect(move || {
-                let fills = report.data();
-                rows.set(Shared::new(
-                    fills.as_deref().map_or_else(Vec::new, rows_of),
-                ));
-                totals.set(Totals::of(fills.as_deref()));
+        let totals = signal(Totals::of_all(None));
+        {
+            let portfolio = portfolio.clone();
+            scope.while_visible(move || {
+                let portfolio = portfolio.clone();
+                effect(move || {
+                    // A trade says whose it is once there are several
+                    // accounts to be of.
+                    let several = accounts.with(|accounts| accounts.len() > 1);
+                    let arrived = reports.arrived();
+                    let parts: Vec<(Option<Rc<Mark>>, &Fills)> = arrived
+                        .iter()
+                        .flatten()
+                        .map(|(account, fills)| {
+                            (Mark::when(several, &portfolio, account), &**fills)
+                        })
+                        .collect();
+                    let all: Option<Vec<&Fills>> = arrived
+                        .as_ref()
+                        .map(|arrived| arrived.iter().map(|(_, fills)| &**fills).collect());
+                    rows.set(Shared::new(rows_of_all(&parts)));
+                    totals.set(Totals::of_all(all.as_deref()));
+                });
             });
-        });
+        }
         Self {
             portfolio,
-            report,
+            reports,
             rows,
             totals,
         }

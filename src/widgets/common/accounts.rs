@@ -1,35 +1,45 @@
-//! What the widgets that show an account share (the Positions, the Account
-//! Summary and the Account Performance), so that it exists once. They read
-//! the portfolio ([`crate::data::portfolio`]), never an exchange: which
-//! exchanges there are comes from its sources.
+//! What the widgets that show accounts share (the Positions, the Account
+//! Summary, the Trade History and the Account Performance), so that it
+//! exists once. They read the portfolio ([`crate::data::portfolio`]), never
+//! an exchange: which exchanges there are comes from its sources.
 //!
-//! - [`settings`]: the account a widget watches as its settings save it
-//!   ([`Watched`]), and how a widget's settings hold it
+//! Each shows any number of accounts together, on one exchange or on
+//! several: what they hold listed side by side, what they are worth and
+//! made added up.
+//!
+//! - [`settings`]: the accounts a widget watches as its settings save them
+//!   ([`Watched`]), and how a widget's settings hold them
 //!   ([`AccountSettings`]);
-//! - [`report`]: one report of that account kept in step with the settings
-//!   ([`follow`], a [`Report`]), and where it stands meanwhile
-//!   ([`Standing`]);
+//! - [`report`]: a report of each of those accounts kept in step with the
+//!   settings ([`follow_all`], [`Reports`]), and where they stand as one
+//!   meanwhile ([`Standing`]);
 //! - [`figures`]: how their figures are written and colored ([`shown`],
 //!   [`Tone`]);
-//! - [`form`]: the rows an account is set with ([`account_rows`]: its
-//!   exchange and its address), in a settings panel and in a widget that
-//!   has none yet;
+//! - [`form`]: the rows the accounts are set with ([`account_rows`]: a line
+//!   for each, then the exchange and the address of one to add), in a
+//!   settings panel and in a widget that has none yet;
 //! - [`frame`]: what every such widget has around its own content
-//!   ([`account_frame`]): the account's strip, what could not be read, and
+//!   ([`account_frame`]): the accounts' strip, what could not be read, and
 //!   the form while no account is set;
 //! - [`badge`]: the badges a widget floats over its plot, as the Chart's
-//!   ([`menu_badge`]), and the account's ([`account_badge`]: its
-//!   exchange's logo and its address, which opens the rows that change it);
-//! - [`panel`]: its settings panel ([`account_panel`]): the account's
+//!   ([`menu_badge`]), and the accounts' ([`account_badge`]: their
+//!   exchanges' logos and whose they are, which opens the rows that change
+//!   them);
+//! - [`mark`]: whose a row is, in a widget that lists what several accounts
+//!   hold ([`Mark`], [`mark_view`]);
+//! - [`panel`]: its settings panel ([`account_panel`]): the accounts'
 //!   rows, then the widget's own.
 //!
 //! A new account widget holds a [`Watched`] in its settings, follows the
-//! reports it shows in its session and lays its content in the frame.
+//! reports it shows in its session ([`follow_all`]), shows them together
+//! (added up as [`crate::data::portfolio`]'s `combine` adds accounts up, or
+//! listed with a [`Mark`] each) and lays its content in the frame.
 
 mod badge;
 mod figures;
 mod form;
 mod frame;
+mod mark;
 mod panel;
 mod report;
 mod settings;
@@ -41,7 +51,8 @@ pub(crate) use self::{
     figures::{NONE, Tone, shown},
     form::account_rows,
     frame::{account_frame, bare_account_frame, report_note},
+    mark::{Mark, mark_view},
     panel::account_panel,
-    report::{Report, Standing, follow},
+    report::{Reports, Standing, follow_all},
     settings::{AccountSettings, Watched},
 };

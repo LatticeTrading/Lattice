@@ -1,5 +1,5 @@
-//! The settings panel of a widget that shows an account
-//! ([`account_panel`]): the rows its account is set with
+//! The settings panel of a widget that shows accounts
+//! ([`account_panel`]): the rows its accounts are listed and added with
 //! ([`account_rows`]), then the widget's own, as the other widgets' panels
 //! are laid out (a name at the left edge, its control at the right). The
 //! pane's gear opens it for the active tab, and so does the account's strip

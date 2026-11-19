@@ -7,6 +7,13 @@
 //! a fee tier; [`IDLE`], one that never traded; and [`LIMITED`], whose
 //! every request is refused with a `429`. The tokens' prices are the same
 //! for every account.
+//!
+//! The stubbed Lighter ([`LIGHTER`]) knows one address, [`TRADER`], which
+//! holds a main account, a sub-account that began ten days ago and a pool
+//! it runs, with the standing, the positions, the assets, a history and
+//! the trades of each; any other address holds no account there, and
+//! [`LIMITED`]'s requests are refused there too. Its assets' prices are
+//! the same for every address.
 
 use std::{sync::Arc, time::SystemTime};
 
@@ -21,7 +28,10 @@ use nsh_testing::{Headless, MemoryStorage, StubNetwork, StubReply, StubResponse,
 use serde_json::{json, Value};
 
 use crate::{
-    data::{ferris::FerrisConfig, hyperliquid::HyperliquidConfig, DataConfig, DataServices},
+    data::{
+        ferris::FerrisConfig, hyperliquid::HyperliquidConfig, lighter::LighterConfig, DataConfig,
+        DataServices,
+    },
     layout,
     shell::clock::Clock as BarClock,
     storage::StoredWorkspace,
@@ -30,18 +40,41 @@ use crate::{
 
 /// A Hyperliquid no test reaches: its HTTP is the test's stub network.
 pub(crate) const HYPERLIQUID: &str = "https://hyperliquid.test";
+/// A Lighter no test reaches either.
+pub(crate) const LIGHTER: &str = "https://lighter.test";
 /// An account with positions, balances and a history.
 pub(crate) const USER: &str = "0x0123456789abcdef0123456789abcdef01234567";
 /// An account that never traded.
 pub(crate) const IDLE: &str = "0x00000000000000000000000000000000000000aa";
 /// An account worth millions, whose figures are as wide as figures get.
 pub(crate) const WHALE: &str = "0x1f250df59a777d61cb8bd043c12970f3afe4f925";
-/// An account whose requests Hyperliquid refuses.
+/// An account whose requests Hyperliquid refuses, and Lighter.
 pub(crate) const LIMITED: &str = "0x00000000000000000000000000000000000000ff";
+/// An address with two accounts and a pool on Lighter.
+pub(crate) const TRADER: &str = "0xe117d3d94b30f7e7aa4f29704d0d2f43c009b9a8";
+/// The indexes of [`TRADER`]'s main account, its sub-account and its pool.
+pub(crate) const TRADER_MAIN: u64 = 2_180;
+pub(crate) const TRADER_SUB: u64 = 281_474_976_689_919;
+const TRADER_POOL: u64 = 281_474_976_710_000;
 
 /// What settings save for `address` on Hyperliquid.
 pub(crate) fn account(address: &str) -> Value {
     json!({ "account": { "venue": "hyperliquid", "address": address } })
+}
+
+/// What settings save for `address` on Lighter.
+pub(crate) fn lighter_account(address: &str) -> Value {
+    json!({ "account": on("lighterxyz", address) })
+}
+
+/// What settings save for `address` on `venue`, as one of several.
+pub(crate) fn on(venue: &str, address: &str) -> Value {
+    json!({ "venue": venue, "address": address })
+}
+
+/// What settings save for the several accounts `listed` ([`on`]).
+pub(crate) fn accounts(listed: &[Value]) -> Value {
+    json!({ "accounts": listed })
 }
 
 /// A workspace of one `kind` widget with `saved` as its settings (none:
@@ -69,6 +102,10 @@ pub(crate) fn workspace_within(
             http_base: HYPERLIQUID.to_owned(),
             weight_per_minute,
             ..HyperliquidConfig::production()
+        },
+        lighter: LighterConfig {
+            http_base: LIGHTER.to_owned(),
+            ..LighterConfig::production()
         },
     });
     provide_context(BarClock::restore());
@@ -108,10 +145,16 @@ pub(crate) fn start_manual(root: Root) -> (Headless, Arc<StubNetwork>) {
 }
 
 fn start_on(root: Root, clock: Clock) -> (Headless, Arc<StubNetwork>) {
-    let network = Arc::new(StubNetwork::new([(
-        format!("POST {HYPERLIQUID}/info"),
-        StubRoute::Handler(Arc::new(stub_hyperliquid)),
-    )]));
+    let network = Arc::new(StubNetwork::new([
+        (
+            format!("POST {HYPERLIQUID}/info"),
+            StubRoute::Handler(Arc::new(stub_hyperliquid)),
+        ),
+        (
+            format!("GET {LIGHTER}/api/v1/*"),
+            StubRoute::Handler(Arc::new(stub_lighter)),
+        ),
+    ]));
     let mut config = EngineConfig::new(root);
     config.viewport = Size::new(px(1280.0), px(800.0));
     config.storage = Some(MemoryStorage::new([]));
@@ -133,6 +176,16 @@ pub(crate) fn asked(network: &StubNetwork) -> Vec<Value> {
             HttpBody::Bytes(bytes) => serde_json::from_slice(bytes).ok(),
             _ => None,
         })
+        .collect()
+}
+
+/// The paths and queries of the requests made of Lighter so far, in order
+/// (`/api/v1/pnl?by=index&...`).
+pub(crate) fn asked_lighter(network: &StubNetwork) -> Vec<String> {
+    network
+        .requests()
+        .into_iter()
+        .filter_map(|request| request.url.strip_prefix(LIGHTER).map(str::to_owned))
         .collect()
 }
 
@@ -417,6 +470,251 @@ fn stub_hyperliquid(request: HttpRequest, reply: StubReply) {
         }
     };
     response.status = 200;
+    response.body = serde_json::to_vec(&answer).expect("the answer is JSON");
+    reply.send(response);
+}
+
+/// One of the stubbed Lighter's accounts, as its samples say it.
+struct Sampled {
+    /// What was moved into its perpetuals, and into its spot.
+    put_in: f64,
+    spot: f64,
+    /// What its perpetuals have made by now.
+    made: f64,
+    /// What they made between two samples (below zero: lost).
+    gained: f64,
+    /// What it traded between two samples.
+    traded: f64,
+    /// How many samples ago it began: nothing is sampled before.
+    began: u64,
+}
+
+impl Sampled {
+    /// Its samples between `from` and `to` (the times a request names, in
+    /// seconds): one on every `step` seconds and one more at `to`, as
+    /// Lighter writes them.
+    fn between(&self, (from, to): (u64, u64), step: u64) -> Value {
+        let sample = |at: u64| {
+            let ago = (to - at).div_ceil(step);
+            (ago <= self.began).then(|| {
+                json!({
+                    "timestamp": at,
+                    "trade_pnl": self.made - self.gained * ago as f64,
+                    "inflow": self.put_in,
+                    "spot_inflow": self.spot,
+                    "volume": self.traded,
+                })
+            })
+        };
+        let first = from.div_ceil(step) * step;
+        let samples: Vec<Value> = (first..to)
+            .step_by(step as usize)
+            .chain([to])
+            .filter_map(sample)
+            .collect();
+        json!({ "code": 200, "pnl": samples })
+    }
+}
+
+/// [`TRADER`]'s history of the account `index`, as asked for: its main
+/// account is worth 21,500 now (500 of it in spot) and made 5 an hour and
+/// 20 a day for a hundred days, trading 1,000 each; its sub-account is
+/// worth 2,900 and lost 2 an hour and 10 a day since it began ten days
+/// ago, trading 100 each. `None` for any other account.
+fn lighter_pnl(index: u64, resolution: &str, span: (u64, u64)) -> Option<Value> {
+    let (step, hourly) = match resolution {
+        "1h" => (3_600, true),
+        "1d" => (86_400, false),
+        _ => return None,
+    };
+    let by = |an_hour: f64, a_day: f64| if hourly { an_hour } else { a_day };
+    let lasted = |days: u64| if hourly { days * 24 } else { days };
+    let account = match index {
+        TRADER_MAIN => Sampled {
+            put_in: 20_000.0,
+            spot: 500.0,
+            made: 1_000.0,
+            gained: by(5.0, 20.0),
+            traded: 1_000.0,
+            began: lasted(100),
+        },
+        TRADER_SUB => Sampled {
+            put_in: 3_000.0,
+            spot: 0.0,
+            made: -100.0,
+            gained: by(-2.0, -10.0),
+            traded: 100.0,
+            began: lasted(10),
+        },
+        _ => return None,
+    };
+    Some(account.between(span, step))
+}
+
+/// [`TRADER`]'s accounts, as Lighter lists them. Its main account is worth
+/// 21,000 with a BTC long and an isolated SOL short, and holds LIT and
+/// USDC besides; its sub-account is worth 2,900 with a BTC short; the pool
+/// it runs is not its own.
+fn lighter_accounts() -> Value {
+    json!({
+        "code": 200,
+        "total": 3,
+        "accounts": [
+            {
+                "code": 0, "account_type": 0, "index": TRADER_MAIN, "status": 1,
+                "available_balance": "19000.000000", "collateral": "19500.000000",
+                "total_asset_value": "21000.000000", "cross_asset_value": "21000.000000",
+                "cross_initial_margin_requirement": "1550.000000",
+                "cross_maintenance_margin_requirement": "900.000000",
+                "positions": [
+                    { "market_id": 1, "symbol": "BTC", "initial_margin_fraction": "5.00",
+                      "sign": 1, "position": "0.50000", "avg_entry_price": "60000.0",
+                      "position_value": "31000.000000", "unrealized_pnl": "1000.000000",
+                      "liquidation_price": "30000.5", "total_funding_paid_out": "-12.500000",
+                      "margin_mode": 0, "allocated_margin": "0.000000" },
+                    { "market_id": 14, "symbol": "POL", "initial_margin_fraction": "33.33",
+                      "sign": 1, "position": "0", "avg_entry_price": "0.000000",
+                      "position_value": "-0.000000", "unrealized_pnl": "0.000000",
+                      "liquidation_price": "0", "margin_mode": 0,
+                      "allocated_margin": "0.000000" },
+                    { "market_id": 2, "symbol": "SOL", "initial_margin_fraction": "10.00",
+                      "sign": -1, "position": "100.000", "avg_entry_price": "70.000",
+                      "position_value": "6500.000000", "unrealized_pnl": "500.000000",
+                      "liquidation_price": "120.25", "total_funding_paid_out": "2.500000",
+                      "margin_mode": 1, "allocated_margin": "650.000000" },
+                ],
+                "assets": [
+                    { "symbol": "LIT", "asset_id": 2, "balance": "100.00000000",
+                      "locked_balance": "10.00000000", "margin_mode": "disabled",
+                      "margin_balance": "0.00000000" },
+                    { "symbol": "USDC", "asset_id": 3, "balance": "250.000000",
+                      "locked_balance": "0.000000", "margin_mode": "enabled",
+                      "margin_balance": "19500.000000" },
+                    { "symbol": "ETH", "asset_id": 1, "balance": "0.00000000",
+                      "locked_balance": "0.00000000" },
+                ],
+                "shares": null,
+            },
+            {
+                "code": 0, "account_type": 1, "index": TRADER_SUB, "status": 0,
+                "available_balance": "2700.000000", "collateral": "2910.000000",
+                "total_asset_value": "2900.000000", "cross_asset_value": "2900.000000",
+                "cross_initial_margin_requirement": "31.000000",
+                "cross_maintenance_margin_requirement": "60.000000",
+                "positions": [
+                    { "market_id": 1, "symbol": "BTC", "initial_margin_fraction": "5.00",
+                      "sign": -1, "position": "0.01000", "avg_entry_price": "61000.0",
+                      "position_value": "620.000000", "unrealized_pnl": "-10.000000",
+                      "liquidation_price": "300000.0", "total_funding_paid_out": "0.250000",
+                      "margin_mode": 0, "allocated_margin": "0.000000" },
+                ],
+                "assets": [],
+            },
+            {
+                "code": 0, "account_type": 3, "index": TRADER_POOL, "status": 1,
+                "total_asset_value": "79030542.824306",
+                "positions": [
+                    { "symbol": "BTC", "sign": 1, "position": "9.0",
+                      "position_value": "560000.0" },
+                ],
+            },
+        ],
+    })
+}
+
+/// When [`TRADER`]'s latest trade was, in Unix milliseconds; the others
+/// were a minute apart before it.
+const TRADED: u64 = 1_741_900_000_000;
+
+/// The latest trades of the account `index` of [`TRADER`]'s, newest first:
+/// its main account bought BTC taking, sold ETH making (closing a long),
+/// and sold BTC to its own sub-account, whose only trade that is.
+fn lighter_trades(index: u64) -> Value {
+    let between = json!({
+        "trade_id": 9_001, "type": "trade", "market_id": 1, "market_symbol": "BTC",
+        "size": "0.01000", "price": "61000.0", "usd_amount": "610.000000",
+        "ask_account_id": TRADER_MAIN, "bid_account_id": TRADER_SUB,
+        "is_maker_ask": false, "timestamp": TRADED - 120_000,
+    });
+    let trades = match index {
+        TRADER_MAIN => vec![
+            json!({
+                "trade_id": 9_003, "type": "trade", "market_id": 1, "market_symbol": "BTC",
+                "size": "0.50000", "price": "60000.0", "usd_amount": "30000.000000",
+                "ask_account_id": 77, "bid_account_id": TRADER_MAIN,
+                "is_maker_ask": true, "timestamp": TRADED, "taker_fee": 280, "maker_fee": 20,
+            }),
+            json!({
+                "trade_id": 9_002, "type": "trade", "market_id": 0, "market_symbol": "ETH",
+                "size": "1.0000", "price": "1800.00", "usd_amount": "1800.000000",
+                "ask_account_id": TRADER_MAIN, "bid_account_id": 78,
+                "is_maker_ask": true, "timestamp": TRADED - 60_000, "taker_fee": 280,
+                "maker_fee": 20, "ask_account_pnl": "25.500000",
+            }),
+            between,
+        ],
+        TRADER_SUB => vec![between],
+        _ => Vec::new(),
+    };
+    json!({ "code": 200, "trades": trades })
+}
+
+/// What the stubbed Lighter's assets are worth.
+fn lighter_assets() -> Value {
+    json!({
+        "code": 200,
+        "asset_details": [
+            { "asset_id": 3, "symbol": "USDC", "index_price": "1.000000" },
+            { "asset_id": 2, "symbol": "LIT", "index_price": "2.500000" },
+            { "asset_id": 1, "symbol": "ETH", "index_price": "1800.000000" },
+        ],
+    })
+}
+
+/// Answers the stubbed Lighter's requests.
+fn stub_lighter(request: HttpRequest, reply: StubReply) {
+    let mut response = StubResponse::default();
+    let Ok(url) = url::Url::parse(&request.url) else {
+        response.status = 400;
+        reply.send(response);
+        return;
+    };
+    let asked = |name: &str| {
+        url.query_pairs()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.into_owned())
+            .unwrap_or_default()
+    };
+    // The times are asked for in milliseconds.
+    let seconds = |name: &str| asked(name).parse::<u64>().unwrap_or_default() / 1000;
+    let answer = match url.path() {
+        "/api/v1/account" => match asked("value").as_str() {
+            LIMITED => {
+                response.status = 429;
+                reply.send(response);
+                return;
+            }
+            TRADER => Some(lighter_accounts()),
+            _ => None,
+        },
+        "/api/v1/trades" => Some(lighter_trades(
+            asked("account_index").parse().unwrap_or_default(),
+        )),
+        "/api/v1/assetDetails" => Some(lighter_assets()),
+        "/api/v1/pnl" => lighter_pnl(
+            asked("value").parse().unwrap_or_default(),
+            &asked("resolution"),
+            (seconds("start_timestamp"), seconds("end_timestamp")),
+        ),
+        _ => None,
+    };
+    let answer = answer.unwrap_or_else(|| {
+        response.status = 400;
+        json!({ "code": 21100, "message": "account not found" })
+    });
+    if response.status != 400 {
+        response.status = 200;
+    }
     response.body = serde_json::to_vec(&answer).expect("the answer is JSON");
     reply.send(response);
 }

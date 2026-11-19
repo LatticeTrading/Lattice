@@ -1,6 +1,7 @@
-//! The Trade History's settings, saved in its tab's record: the account it
-//! watches (`account`, what every widget that shows an account saves:
-//! [`Watched`]), left out while it watches none and read leniently.
+//! The Trade History's settings, saved in its tab's record: the accounts it
+//! watches (`account` or `accounts`, what every widget that shows
+//! accounts saves: [`Watched`]), left out while it watches none and read
+//! leniently.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -10,7 +11,7 @@ use crate::widgets::common::accounts::{AccountSettings, Watched};
 /// One Trade History's settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub(crate) struct TradeHistorySettings {
-    /// The account whose trades show.
+    /// The accounts whose trades show.
     #[serde(flatten)]
     watched: Watched,
 }

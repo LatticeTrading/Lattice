@@ -1,6 +1,7 @@
-//! The Positions' settings, saved in its tab's record: the account it
-//! watches (`account`, what every widget that shows an account saves:
-//! [`Watched`]), left out while it watches none and read leniently.
+//! The Positions' settings, saved in its tab's record: the accounts it
+//! watches (`account` or `accounts`, what every widget that shows
+//! accounts saves: [`Watched`]), left out while it watches none and read
+//! leniently.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -10,7 +11,7 @@ use crate::widgets::common::accounts::{AccountSettings, Watched};
 /// One Positions widget's settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub(crate) struct PositionsSettings {
-    /// The account whose positions show.
+    /// The accounts whose positions show.
     #[serde(flatten)]
     watched: Watched,
 }

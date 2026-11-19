@@ -49,6 +49,16 @@ pub fn short_address(address: &str) -> String {
     head.iter().chain(['…'].iter()).chain(tail).collect()
 }
 
+/// `input` as an Ethereum address (what the venues that settle on it
+/// report an account by): `0x` and forty hexadecimal digits, in lower
+/// case, so one account is one request however it was typed. `None` when
+/// it is not one.
+pub fn evm_address(input: &str) -> Option<String> {
+    let address = input.trim().to_ascii_lowercase();
+    let digits = address.strip_prefix("0x")?;
+    (digits.len() == 40 && digits.bytes().all(|digit| digit.is_ascii_hexdigit())).then_some(address)
+}
+
 /// Why what was typed is not an address of a venue, in words for the
 /// person who typed it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

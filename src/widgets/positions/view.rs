@@ -1,17 +1,18 @@
-//! The Positions' view: the frame every account widget has (the account's
+//! The Positions' view: the frame every account widget has (the accounts'
 //! strip, what could not be read, the form while no account is set:
 //! [`account_frame`]) around its table.
 //!
 //! - The table is one grid, a row per open position under titles that stay
-//!   at the top while the rows scroll: the market (its instrument, which
-//!   way the position faces, green long and red short, and its leverage
-//!   setting), its size, what it is worth, its entry and mark prices, its
+//!   at the top while the rows scroll: the market (whose it is, while
+//!   several accounts show: its exchange's logo, named in its tooltip; its
+//!   instrument, which way the position faces, green long and red short,
+//!   and its leverage setting), its size, what it is worth, its entry and mark prices, its
 //!   unrealized profit and loss with its return on equity (green above
 //!   zero, red below), its liquidation price and the margin it holds.
 //! - A column is at least as wide as its figures and they share the room
 //!   left over; a pane narrower than the columns scrolls sideways, and one
 //!   shorter than the rows scrolls down under the titles.
-//! - An account with nothing open says so under the titles.
+//! - Accounts with nothing open say so under the titles.
 //!
 //! A row is made once per position and its cells follow its row's values,
 //! so a new report rewrites text and makes no view.
@@ -27,7 +28,7 @@ use crate::{
     theme,
     widgets::{
         common::{
-            accounts::{account_frame, Standing, Tone},
+            accounts::{account_frame, mark_view, Tone},
             Shared,
         },
         TabContext,
@@ -108,12 +109,9 @@ pub(super) fn positions_view(
     session: &PositionsSession,
     tab: &TabContext<PositionsSettings>,
 ) -> View {
-    let (report, rows) = (session.report, session.rows);
+    let (reports, rows) = (session.reports, session.rows);
     // Nothing open: said once a report has arrived to say it.
-    let none_open = computed(move || {
-        matches!(report.standing.get(), Standing::Ready | Standing::Stale(_))
-            && rows.with(|rows| rows.0.is_empty())
-    });
+    let none_open = computed(move || reports.shown() && rows.with(|rows| rows.0.is_empty()));
     let empty = view()
         .test_id(&format!("{ID}-empty"))
         .px(px(PADDING))
@@ -144,7 +142,7 @@ pub(super) fn positions_view(
         .on_layout(move |bounds: &Bounds<Points>| viewport.set(bounds.size))
         .child(scroll().horizontal().absolute().inset_0().child(body));
 
-    account_frame(tab, &session.portfolio, report.standing, "positions", area)
+    account_frame(tab, &session.portfolio, reports.standing, "positions", area)
 }
 
 /// The table: the titles, then a row per position.
@@ -217,14 +215,16 @@ fn cell(column: Column, row: ReadSignal<Row>) -> View {
     };
     match column {
         Column::Market => {
-            // A row keeps its instrument and direction: they are its key.
-            let direction = row.with_untracked(|row| row.direction);
+            // A row keeps its account, its instrument and its direction:
+            // they are its key.
+            let (direction, owner) = row.with_untracked(|row| (row.direction, row.owner.clone()));
             let side = match direction {
                 Direction::Long => theme::POSITIVE,
                 Direction::Short => theme::NEGATIVE,
             };
             boxed(ROW_HEIGHT, column)
                 .gap(px(8.0))
+                .children(owner.as_ref().map(mark_view))
                 .child(
                     figure()
                         .min_w(px(0.0))

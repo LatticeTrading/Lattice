@@ -1,21 +1,26 @@
-//! The badges a widget that shows an account floats over its plot (the
+//! The badges a widget that shows accounts floats over its plot (the
 //! Account Performance's): small, bordered and see-through until the
 //! pointer is over them, as the Chart's are ([`menu_badge`]), and the
-//! account's own ([`account_badge`]): its exchange's logo, then its address
-//! in short (its tooltip has the whole of it), which opens a panel below it
-//! with the rows that change the account ([`account_rows`]). The panel
-//! closes once another account is saved, and with its close button.
+//! accounts' own ([`account_badge`]): a logo for each of their exchanges,
+//! then the address in short of one account or how many several are (its
+//! tooltip has each in full), which opens a panel below it with the rows
+//! that list them, add to them and take from them ([`account_rows`]). The
+//! panel stays open while they change, until its close button.
+//!
+//! What a badge says of its accounts is what the frame's strip says too
+//! ([`super::frame`]): [`watched`], [`counted`], [`described`], [`spelled`]
+//! and [`logos`].
 
 use nsh_core::prelude::*;
 
-use super::{AccountSettings, account_rows, frame::venue_of};
+use super::{AccountSettings, account_rows, frame::venue_name};
 use crate::{
     data::{Portfolio, portfolio::Account},
     theme,
     ui::{self, Side},
     widgets::{
         TabContext,
-        common::{LogoStyle, bound_exchange_logo},
+        common::{LogoStyle, exchange_logo},
     },
 };
 
@@ -35,8 +40,10 @@ const LOGO: LogoStyle = LogoStyle {
 };
 /// Wide enough for an address in its field beside the row's name.
 const PANEL_WIDTH: Points = px(360.0);
-/// What the account's panel is titled.
-const TITLE: &str = "Account";
+/// What the accounts' panel is titled.
+const TITLE: &str = "Accounts";
+/// How far apart the logos of several exchanges are.
+const LOGO_GAP: f32 = 3.0;
 
 /// A badge as wide as what it says: a button that opens and closes what
 /// `open` says is open (its menu or panel), lit while it is. Its caller
@@ -76,28 +83,112 @@ pub(crate) fn menu_badge(open: Signal<bool>) -> View {
         .on_press(move || open.update(|open| *open = !*open))
 }
 
-/// The badge of `tab`'s account: its exchange's logo, then its address in
-/// short, which opens the panel that changes it.
+/// The accounts `tab`'s settings name (tracked), each with what its
+/// exchange is called.
+pub(super) fn watched<S: AccountSettings>(
+    tab: &TabContext<S>,
+    portfolio: &Portfolio,
+) -> Memo<Vec<(String, Account)>> {
+    let (saved, portfolio) = (tab.settings, portfolio.clone());
+    computed(move || {
+        saved.with(|settings| {
+            settings
+                .accounts()
+                .iter()
+                .map(|account| (venue_name(&portfolio, &account.venue), account.clone()))
+                .collect::<Vec<_>>()
+        })
+    })
+}
+
+/// A logo for each exchange `accounts` are on, side by side.
+pub(super) fn logos(accounts: Memo<Vec<(String, Account)>>) -> impl IntoElement {
+    let exchanges = computed(move || accounts.with(|accounts| exchanges_of(accounts)));
+    dynamic(move || {
+        let logos: Vec<View> = exchanges
+            .get()
+            .iter()
+            .map(|(id, _)| exchange_logo(id, LOGO))
+            .collect();
+        Some(
+            view()
+                .flex_none()
+                .flex_row()
+                .items_center()
+                .gap(px(LOGO_GAP))
+                .children(logos),
+        )
+    })
+}
+
+/// What the exchanges `accounts` are on are called, each once.
+pub(super) fn exchange_names(accounts: &[(String, Account)]) -> String {
+    let names: Vec<String> = exchanges_of(accounts)
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect();
+    names.join(", ")
+}
+
+/// What the badge says of `accounts`, each with what its exchange is
+/// called: the address in short of one, how many of several.
+pub(super) fn counted(accounts: &[(String, Account)]) -> String {
+    match accounts {
+        [] => String::new(),
+        [(_, account)] => account.short_address(),
+        several => format!("{} accounts", several.len()),
+    }
+}
+
+/// What the badge is named for assistive tech: what it changes, and whose.
+pub(super) fn described(accounts: &[(String, Account)]) -> String {
+    let each: Vec<String> = accounts
+        .iter()
+        .map(|(exchange, account)| format!("{exchange} {}", account.short_address()))
+        .collect();
+    let what = if accounts.len() > 1 {
+        "Change accounts"
+    } else {
+        "Change account"
+    };
+    format!("{what}: {}", each.join(", "))
+}
+
+/// What the badge's tooltip reads: the whole address of one account, and
+/// of several each on a line after its exchange.
+pub(super) fn spelled(accounts: &[(String, Account)]) -> String {
+    match accounts {
+        [(_, account)] => account.address.clone(),
+        several => several
+            .iter()
+            .map(|(exchange, account)| format!("{exchange} {}", account.address))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
+}
+
+/// The exchanges of `accounts` (each its id and what it is called), each
+/// once, in their order.
+fn exchanges_of(accounts: &[(String, Account)]) -> Vec<(String, String)> {
+    let mut exchanges: Vec<(String, String)> = Vec::new();
+    for (name, account) in accounts {
+        if !exchanges.iter().any(|(id, _)| *id == account.venue) {
+            exchanges.push((account.venue.clone(), name.clone()));
+        }
+    }
+    exchanges
+}
+
+/// The badge of `tab`'s accounts: their exchanges' logos, then the address
+/// in short of one or how many several are, which opens the panel that
+/// changes them.
 pub(crate) fn account_badge<S: AccountSettings>(
     tab: &TabContext<S>,
     portfolio: &Portfolio,
 ) -> View {
-    let saved = tab.settings;
-    let account = computed(move || saved.with(|settings| settings.account().cloned()));
-    let venue = venue_of(portfolio, account);
-    let of = move |read: fn(&Account) -> String| {
-        account.with(|account| account.as_ref().map(read).unwrap_or_default())
-    };
-    let (logo, initials) = bound_exchange_logo(
-        move || account.with(|account| account.as_ref().map(|account| account.venue.clone())),
-        LOGO,
-    );
+    let accounts = watched(tab, portfolio);
+    let names = move || accounts.with(|accounts| exchange_names(accounts));
     let open = signal(false);
-    // Another account saved: the panel has done its work.
-    effect(move || {
-        account.with(|_| ());
-        open.set(false);
-    });
     let anchor = element_ref();
     let panel = {
         let (tab, portfolio) = (tab.clone(), portfolio.clone());
@@ -122,23 +213,18 @@ pub(crate) fn account_badge<S: AccountSettings>(
         .flex_row()
         .items_center()
         .role(AccessibilityRole::Image)
-        .label(move || venue.get())
-        .tooltip(ui::hint(move || venue.get()))
-        .child(logo)
-        .child(initials);
+        .label(names)
+        .tooltip(ui::hint(names))
+        .child(logos(accounts));
     let address = menu_badge(open)
         .element_ref(&anchor)
-        .label(move || {
-            format!(
-                "Change account: {} {}",
-                venue.get(),
-                of(Account::short_address)
-            )
-        })
+        .label(move || accounts.with(|accounts| described(accounts)))
         .test_id(&format!("{}-account", S::TEST_ID))
-        .tooltip(ui::hint(move || of(|account| account.address.clone())))
+        .tooltip(ui::hint(move || {
+            accounts.with(|accounts| spelled(accounts))
+        }))
         .child(
-            text(move || of(Account::short_address))
+            text(move || accounts.with(|accounts| counted(accounts)))
                 .number_of_lines(1)
                 .tabular_nums(),
         )
@@ -150,4 +236,53 @@ pub(crate) fn account_badge<S: AccountSettings>(
         .gap(px(6.0))
         .child(exchange)
         .child(address)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_badge_says_one_account_by_its_address_and_several_by_their_number() {
+        let account = |exchange: &str, venue: &str, address: &str| {
+            (
+                exchange.to_owned(),
+                Account {
+                    venue: venue.to_owned(),
+                    address: address.to_owned(),
+                },
+            )
+        };
+        const ADDRESS: &str = "0x0123456789abcdef0123456789abcdef01234567";
+        const OTHER: &str = "0x00000000000000000000000000000000000000aa";
+        let one = [account("Hyperliquid", "hyperliquid", ADDRESS)];
+        assert_eq!(counted(&one), "0x0123…4567");
+        assert_eq!(described(&one), "Change account: Hyperliquid 0x0123…4567");
+        assert_eq!(spelled(&one), ADDRESS);
+
+        // The same address on two exchanges, and another on the first.
+        let several = [
+            one[0].clone(),
+            account("Lighter", "lighterxyz", ADDRESS),
+            account("Hyperliquid", "hyperliquid", OTHER),
+        ];
+        assert_eq!(counted(&several), "3 accounts");
+        assert_eq!(
+            described(&several),
+            "Change accounts: Hyperliquid 0x0123…4567, Lighter 0x0123…4567, \
+             Hyperliquid 0x0000…00aa"
+        );
+        assert_eq!(spelled(&several).lines().count(), 3);
+        assert!(spelled(&several).contains(&format!("Lighter {ADDRESS}")));
+        // A logo an exchange, however many accounts are on it.
+        assert_eq!(
+            exchanges_of(&several),
+            [
+                ("hyperliquid".to_owned(), "Hyperliquid".to_owned()),
+                ("lighterxyz".to_owned(), "Lighter".to_owned()),
+            ]
+        );
+        assert_eq!(exchange_names(&several), "Hyperliquid, Lighter");
+        assert_eq!(counted(&[]), "");
+    }
 }

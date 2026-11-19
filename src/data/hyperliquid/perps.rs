@@ -174,6 +174,7 @@ impl From<ClearinghouseState> for MarginAccount {
                 .cross_margin_summary
                 .and_then(|cross| number(cross.account_value)),
             funding,
+            nearest_margin_ratio: None,
             positions,
         }
     }

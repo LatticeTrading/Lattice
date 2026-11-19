@@ -3,7 +3,8 @@
 //! how near its cross positions are to liquidation; the margin they hold;
 //! its exposure long and short; its profit and loss and funding; its fee
 //! tier and rates; what it has staked and in vaults; and the assets it
-//! holds, at their prices.
+//! holds, at their prices. Or where several accounts stand together, on one
+//! exchange or on several.
 //!
 //! Data (the widget's session, [`AccountSummarySession`] in [`session`]):
 //!
@@ -17,14 +18,20 @@
 //!   account is watched before the last one is let go. A hidden widget
 //!   keeps its watches, so showing it again is instant. A report the venue
 //!   does not make reads as dashes.
+//! - Of several accounts it watches each one's reports and makes one
+//!   overview of them (described in [`session`]): what they are worth and
+//!   made added up, each one's holdings at its own exchange's prices, the
+//!   margin ratio of the one nearest liquidation, and no fee schedule when
+//!   several report theirs. A kind of report counts once every account's
+//!   has arrived or failed; with some missing, the frame says which.
 //! - While it shows, the reports make its overview (every figure, and the
 //!   fractions its bars are drawn to) and its holdings again. A hidden
 //!   widget makes none.
 //!
-//! Settings ([`AccountSummarySettings`]: the account, whether the balances
+//! Settings ([`AccountSummarySettings`]: the accounts, whether the balances
 //! show and whether small ones are hidden) are saved in its tab record; the
 //! session keeps a copy the host brings up to date. The pane's gear opens
-//! them ([`panel`]), and so does the account's strip; with no account the
+//! them ([`panel`]), and so does the accounts' strip; with no account the
 //! widget asks for one itself ([`view`]).
 //!
 //! It knows no exchange: what it shows is the portfolio's

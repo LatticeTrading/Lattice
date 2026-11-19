@@ -1,6 +1,7 @@
 //! The Positions: an account's open positions, a row each with its size,
 //! worth, entry and mark prices, unrealized profit and loss, liquidation
-//! price and margin.
+//! price and margin; or several accounts' in one table, on one exchange or
+//! on several, each row marked with whose it is.
 //!
 //! Data (the widget's session, [`PositionsSession`] in [`session`]):
 //!
@@ -11,12 +12,17 @@
 //!   account is watched before the last one is let go, and with none there
 //!   is no watch. A hidden widget keeps its watch, so showing it again is
 //!   instant.
+//! - Of several accounts it watches each one's report. Nothing is listed
+//!   until each has arrived or failed, so the table never shows with an
+//!   account still on its way; with some missing, the others' are listed
+//!   and the frame says which are not.
 //! - While it shows, each report makes the rows again: the positions worth
-//!   the most first. A hidden widget makes none.
+//!   the most first, whichever account each is of. A hidden widget makes
+//!   none.
 //!
-//! Settings ([`PositionsSettings`]: the account) are saved in its tab
+//! Settings ([`PositionsSettings`]: the accounts) are saved in its tab
 //! record; the session keeps a copy the host brings up to date. The pane's
-//! gear opens them, and so does the account's strip; with no account the
+//! gear opens them, and so does the accounts' strip; with no account the
 //! widget asks for one itself ([`view`]).
 //!
 //! It knows no exchange: what it shows is the portfolio's

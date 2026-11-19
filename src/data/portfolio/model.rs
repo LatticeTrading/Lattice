@@ -108,6 +108,10 @@ pub struct MarginAccount {
     /// together; below zero, what they have paid. `Some(0.0)` with none
     /// open.
     pub funding: Option<f64>,
+    /// Of several accounts added up ([`Self::combined`]): the highest of
+    /// their margin ratios. Each is liquidated on its own, so the ratio of
+    /// their sums would hide the one nearest it. `None` for one account.
+    pub nearest_margin_ratio: Option<f64>,
     /// The open positions, in the venue's order.
     pub positions: Vec<Position>,
 }
@@ -123,9 +127,13 @@ impl MarginAccount {
     /// How much of the cross margin the maintenance margin takes, as a
     /// fraction: the cross positions are liquidated at `1.0`. `None`
     /// without either figure, or with no cross margin to measure against.
+    /// Of several accounts added up, that of the one nearest liquidation
+    /// ([`Self::nearest_margin_ratio`]).
     pub fn margin_ratio(&self) -> Option<f64> {
-        let (maintenance, equity) = (self.maintenance_margin?, self.cross_equity?);
-        (equity > 0.0).then(|| maintenance / equity)
+        self.nearest_margin_ratio.or_else(|| {
+            let (maintenance, equity) = (self.maintenance_margin?, self.cross_equity?);
+            (equity > 0.0).then(|| maintenance / equity)
+        })
     }
 
     /// How much the cross margin can lose before the cross positions are

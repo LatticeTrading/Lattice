@@ -1,7 +1,8 @@
 //! The Account Performance's settings, saved in its tab's record:
 //!
 //! - `account`: the account it watches (what every widget that shows an
-//!   account saves: [`Watched`]);
+//!   account saves: [`Watched`]), or `accounts`: the several it plots
+//!   together, on one exchange or on several;
 //! - `period`: the stretch of history plotted (`"day"`, `"week"`,
 //!   `"allTime"`; a month while left out);
 //! - `scope`: `"perps"` for the account's perpetuals alone; the whole
@@ -168,7 +169,7 @@ fn kept<C: Choice>(choice: C) -> Option<C> {
 /// One Account Performance's settings.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub(crate) struct AccountPerformanceSettings {
-    /// The account charted.
+    /// The accounts charted, together.
     #[serde(flatten)]
     watched: Watched,
     /// `None` is a month.

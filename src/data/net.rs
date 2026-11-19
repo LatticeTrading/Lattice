@@ -54,7 +54,7 @@ pub use error::{ApiError, ErrorKind};
 pub use feed::{FeedHub, FeedHubs, FeedLease, FeedNode};
 pub use http::{ErrorDecoder, HttpClient, HttpOptions, Request};
 pub use json::{Figure, canonical_json};
-pub use query::{Queries, QuerySpec, QueryState, Watch};
+pub use query::{Queries, QuerySpec, QueryState, Watch, WeakQueries};
 pub use socket::{
     Inbound, Route, SharedSocket, SocketConfig, SocketProtocol, Subscription, TopicPhase,
     platform_transport,

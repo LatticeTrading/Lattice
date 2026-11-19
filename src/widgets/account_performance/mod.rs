@@ -1,5 +1,7 @@
 //! The Account Performance: what an account was worth, or what it made,
-//! over a day, a week, a month or all time, as a line over time. It is
+//! over a day, a week, a month or all time, as a line over time; or what
+//! several accounts were and made together, on one exchange or on several.
+//! It is
 //! drawn with the GPU plot the charts share
 //! ([`crate::widgets::common::plot`]: the scene, the shader, the viewport
 //! and the view with its axes, crosshair and pointer handling).
@@ -23,6 +25,12 @@
 //!   the settings: another account is watched before the last one is let
 //!   go, and with none there is no watch. A hidden widget keeps its watch,
 //!   so showing it again is instant.
+//! - Of several accounts it watches each one's history and plots them as
+//!   one ([`Performance::combined`](crate::data::portfolio::Performance::combined)):
+//!   added up at every time any of them was sampled, whichever exchange
+//!   each is on. Nothing is plotted until each has arrived or failed, so a
+//!   sum never shows with an account still on its way; with some missing,
+//!   the others are plotted and the frame says which are not.
 //! - While it shows, a new report or another window marks its plot, which
 //!   makes the scene its view draws at most once a frame, and at once when
 //!   the viewport moves or the plot is resized. A hidden widget does none
@@ -34,7 +42,8 @@
 //! Settings ([`AccountPerformanceSettings`]) are saved in its tab record;
 //! the session keeps a copy the host brings up to date. The pane's gear
 //! opens them ([`panel`]); the account's badge over the plot opens the
-//! rows that change the account, and the period's the menu of periods;
+//! rows that list its accounts, add to them and take from them, and the
+//! period's the menu of periods;
 //! with no account the widget asks for one itself ([`view`]).
 //!
 //! It knows no exchange: what it shows is the portfolio's

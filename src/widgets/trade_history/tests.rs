@@ -7,12 +7,18 @@ use super::{
     view::when,
 };
 use crate::{
-    data::portfolio::{Account, Fill, Fills, TradeSide},
+    data::{
+        portfolio::{Account, Fill, Fills, TradeSide},
+        Portfolio,
+    },
     shell::clock::ClockPrefs,
     widgets::{
         common::accounts::{
-            testing::{account, asked, count, start, workspace_of, IDLE, USER},
-            AccountSettings, Tone, NONE,
+            testing::{
+                account, accounts, asked, asked_lighter, count, lighter_account, on, start,
+                workspace_of, IDLE, TRADER, TRADER_MAIN, TRADER_SUB, USER,
+            },
+            AccountSettings, Mark, Tone, NONE,
         },
         WidgetKind,
     },
@@ -26,7 +32,8 @@ fn settings_save_the_account_alone_and_read_leniently() {
         venue: "hyperliquid".to_owned(),
         address: USER.to_owned(),
     };
-    let settings = defaults.clone().with_account(Some(watched.clone()));
+    let settings = defaults.clone().with_accounts([watched.clone()]);
+    assert_eq!(settings.accounts(), std::slice::from_ref(&watched));
     assert_eq!(serde_json::to_value(&settings).unwrap(), account(USER));
     assert_eq!(TradeHistorySettings::from(account(USER)), settings);
     assert_eq!(
@@ -98,6 +105,51 @@ fn rows_list_the_latest_trades_once_and_totals_count_them_all() {
     let totals = Totals::of(Some(&many));
     assert_eq!((totals.count, totals.listed), (MAX_ROWS + 50, MAX_ROWS));
 
+    // Two accounts' trades are one list, each marked with its account: a
+    // trade both were sides of is a row of each, and the totals count both.
+    let portfolio = Portfolio::new([]);
+    let mark = |venue: &str| {
+        Mark::of(
+            &portfolio,
+            &Account {
+                venue: venue.to_owned(),
+                address: USER.to_owned(),
+            },
+        )
+    };
+    let other = Fills(vec![
+        fill("3", 2_000.0, Some((0.02, "USDC")), None),
+        fill("9", 5_000.0, None, Some(1.5)),
+    ]);
+    let rows = session::rows_of_all(&[
+        (Some(mark("hyperliquid")), &fills),
+        (Some(mark("lighterxyz")), &other),
+    ]);
+    let listed: Vec<(&str, f64)> = rows
+        .iter()
+        .map(|row| (row.owner.as_ref().unwrap().named.as_str(), row.time_ms))
+        .collect();
+    assert_eq!(
+        listed,
+        [
+            ("Lighter 0x0123…4567", 5_000.0),
+            ("Hyperliquid 0x0123…4567", 3_000.0),
+            ("Hyperliquid 0x0123…4567", 2_000.0),
+            ("Lighter 0x0123…4567", 2_000.0),
+            ("Hyperliquid 0x0123…4567", 1_000.0),
+        ]
+    );
+    assert_ne!(rows[2].key, rows[3].key);
+    let totals = Totals::of_all(Some(&[&fills, &other]));
+    assert_eq!((totals.count, totals.since_ms), (6, Some(1_000.0)));
+    assert_eq!(
+        [&totals.volume, &totals.fees, &totals.closed_pnl].map(String::as_str),
+        ["$600.00", "$0.02", "+$7.50"]
+    );
+    assert!(session::rows_of(&fills)
+        .iter()
+        .all(|row| row.owner.is_none()));
+
     // A time as the clock writes it.
     assert_eq!(
         when(1_708_622_398_623.0, ClockPrefs::default()),
@@ -168,4 +220,102 @@ fn an_account_that_never_traded_says_so() {
     app.wait_for("No trades").unwrap();
     assert!(app.shows("$0.00"));
     assert!(!app.shows("0 trades"), "no count of nothing");
+}
+
+/// One watching an address with two accounts on Lighter.
+#[component]
+fn Trading() -> impl IntoElement {
+    workspace_of(WidgetKind::TradeHistory, Some(lighter_account(TRADER)))
+}
+
+#[test]
+fn a_lighter_address_lists_the_trades_of_its_accounts() {
+    let (mut app, network) = start(Root::of::<Trading>());
+    app.wait_for("$30,000.00").unwrap();
+    for shown in [
+        // Its main account bought BTC, taking, at 0.028%.
+        "Mar 13 21:06:40",
+        "BUY",
+        "Taker",
+        "60000.0",
+        "0.5",
+        "$8.4",
+        // It sold ETH, making, at 0.002%, and closed a long with it.
+        "ETH",
+        "SELL",
+        "Maker",
+        "1800.00",
+        "$1,800.00",
+        "$0.036",
+        "+$25.50",
+        // It sold BTC to its own sub-account: a trade of each.
+        "61000.0",
+        "$610.00",
+        // The totals.
+        "4 trades since Mar 13 21:04:40",
+        "$33,020.00",
+        "$8.44",
+    ] {
+        assert!(app.shows(shown), "{shown}");
+    }
+    let texts = app.screen().texts();
+    assert_eq!(texts.iter().filter(|text| **text == "$610.00").count(), 2);
+    assert!(app
+        .screen()
+        .matches("id:trade-history-closed-pnl >> text:+$25.50")
+        .unwrap());
+
+    // Its accounts once, then the latest trades of each.
+    let requests = asked_lighter(&network);
+    assert_eq!(requests.len(), 3, "{requests:?}");
+    assert!(requests[0].starts_with("/api/v1/account?by=l1_address&value=0xe117"));
+    for index in [TRADER_MAIN, TRADER_SUB] {
+        let asked = format!("/api/v1/trades?sort_by=timestamp&account_index={index}&limit=100");
+        assert!(requests.contains(&asked), "{asked}");
+    }
+    assert!(
+        asked(&network).is_empty(),
+        "nothing is asked of Hyperliquid"
+    );
+}
+
+/// One watching an account on Hyperliquid and an address on Lighter.
+#[component]
+fn Everywhere() -> impl IntoElement {
+    let saved = accounts(&[on("hyperliquid", USER), on("lighterxyz", TRADER)]);
+    workspace_of(WidgetKind::TradeHistory, Some(saved))
+}
+
+#[test]
+fn accounts_on_several_exchanges_are_one_list_of_trades() {
+    let (mut app, _network) = start(Root::of::<Everywhere>());
+    app.wait_for("$30,000.00").unwrap();
+    app.wait_for("CLOSE SHORT").unwrap();
+    // The newest first, whichever exchange each is on; the totals are of
+    // all of them.
+    let texts = app.screen().texts();
+    let at = |text: &str| texts.iter().position(|shown| *shown == text).unwrap();
+    assert!(at("$30,000.00") < at("$2,950.00"));
+    assert!(app.shows("6 trades since Feb 22 17:13:20"));
+    assert!(app
+        .screen()
+        .matches("id:trade-history-volume >> text:$36,070.04")
+        .unwrap());
+    // Each row says whose it is.
+    assert_eq!(
+        app.screen()
+            .count("id:trade-history-table >> label:Lighter 0xe117…b9a8")
+            .unwrap(),
+        4
+    );
+    assert_eq!(
+        app.screen()
+            .count("id:trade-history-table >> label:Hyperliquid 0x0123…4567")
+            .unwrap(),
+        2
+    );
+    assert!(app
+        .screen()
+        .matches("id:trade-history-account >> text:2 accounts")
+        .unwrap());
 }

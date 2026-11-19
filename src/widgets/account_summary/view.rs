@@ -1,5 +1,5 @@
 //! The Account Summary's view: the frame every account widget has (the
-//! account's strip, what could not be read, the form while no account is
+//! accounts' strip, what could not be read, the form while no account is
 //! set: [`account_frame`]) around three parts that scroll together:
 //!
 //! - the headline: what the whole account is worth and what it made in the
@@ -14,8 +14,9 @@
 //!   far its volume has gone to the next) and Staking & Vaults. Each is a
 //!   title with its headline figure, then a row per figure;
 //! - Balances, while the settings show them: what is to be said of them
-//!   (they are a report of their own), then a row per asset under titles:
-//!   how much, how much of it is free, what it is worth, what it cost and
+//!   (they are a report of their own), then a row per asset under titles
+//!   (each marked with whose it is while several accounts show, an
+//!   exchange's logo named in its tooltip): how much, how much of it is free, what it is worth, what it cost and
 //!   what it has made, the most valuable first. The columns share the
 //!   pane's width, so a narrow pane cuts a figure short rather than
 //!   scrolling sideways.
@@ -34,7 +35,7 @@ use crate::{
     ui,
     widgets::{
         common::{
-            accounts::{account_frame, report_note, Standing, Tone},
+            accounts::{account_frame, mark_view, report_note, Tone},
             Shared,
         },
         TabContext,
@@ -96,7 +97,7 @@ impl Column {
     /// What `holding`'s cell of it reads.
     fn figure(self, holding: &Holding) -> String {
         match self {
-            Self::Asset => holding.key.to_string(),
+            Self::Asset => holding.asset.clone(),
             Self::Total => holding.total.clone(),
             Self::Available => holding.available.clone(),
             Self::Value => holding.value.clone(),
@@ -229,10 +230,9 @@ pub(super) fn summary_view(
     let balances = session.balances.standing;
     let hidden = computed(move || !saved.with(AccountSummarySettings::balances));
     // Nothing held: said once a report has arrived to say it.
-    let none_held = computed(move || {
-        matches!(balances.get(), Standing::Ready | Standing::Stale(_))
-            && holdings.with(|holdings| holdings.0.is_empty())
-    });
+    let held = session.balances;
+    let none_held =
+        computed(move || held.shown() && holdings.with(|holdings| holdings.0.is_empty()));
     let empty = view()
         .test_id(&format!("{ID}-no-balances"))
         .px(px(PADDING))
@@ -614,7 +614,16 @@ fn table(holdings: Signal<Shared<Vec<Holding>>>) -> View {
                             .text_color(move || Tone::color(holding.with(|holding| holding.tone))),
                         _ => figure.select_text(),
                     };
-                    cell(column).h(px(ROW_HEIGHT)).child(figure)
+                    // A row keeps its account: it is in its key.
+                    let owner = match column {
+                        Column::Asset => holding.with_untracked(|holding| holding.owner.clone()),
+                        _ => None,
+                    };
+                    cell(column)
+                        .h(px(ROW_HEIGHT))
+                        .gap(px(6.0))
+                        .children(owner.as_ref().map(mark_view))
+                        .child(figure)
                 })
                 .collect::<Vec<_>>()
         },

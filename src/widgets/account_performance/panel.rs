@@ -1,5 +1,5 @@
-//! The Account Performance's settings panel: the rows its account is set
-//! with (what every account widget's panel starts with:
+//! The Account Performance's settings panel: the rows its accounts are
+//! listed and added with (what every account widget's panel starts with:
 //! [`account_panel`]), then its own, each a compact select but the last:
 //!
 //! - Period: the stretch of history plotted;

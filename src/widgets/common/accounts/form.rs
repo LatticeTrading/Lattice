@@ -1,40 +1,59 @@
-//! The rows a widget's account is set with ([`account_rows`]), blocks that
+//! The rows a widget's accounts are set with ([`account_rows`]), blocks that
 //! meet edge to edge as the Everything Bar's and the Settings panel's do
 //! (lines between them, no box in a box):
 //!
+//! - a line for each account the widget shows: its exchange's logo and
+//!   name, its address in short (its tooltip has the whole of it), and ×
+//!   which takes it out;
 //! - "Exchange", filling the row, then the dropdown as wide as what it
 //!   shows at its right, listing the exchanges that report accounts (the
 //!   portfolio's sources);
-//! - under them, the account's address, with the exchange's hint of what
-//!   one looks like while it is empty, then a Search button half the
+//! - under them, the address of an account to add, with the exchange's hint
+//!   of what one looks like while it is empty, then an Add button half the
 //!   dropdown's width that commits it as Enter does;
 //! - under that, why what was typed is no address, while it is not.
 //!
-//! Enter, Search, leaving the field, or another exchange commits what is
-//! typed: an address of the exchange is saved as its source writes it (so
-//! the field then shows it that way), an empty field saves no account, and
-//! anything else is left in the field with why it is no address under it.
-//! Nothing is asked of the exchange to check an address: one that holds
-//! nothing shows as an empty account.
+//! Enter or Add adds what is typed, on the exchange picked, to the accounts
+//! shown (once: one already shown stays as it is) and empties the field for
+//! the next; the address is saved as the exchange's source writes it.
+//! Anything that is no address there is left in the field with why under
+//! it. Leaving the field or picking another exchange adds nothing, and an
+//! empty field takes nothing away. Nothing is asked of the exchange to
+//! check an address: one that holds nothing shows as an empty account.
 
 use std::rc::Rc;
 
 use nsh_base::SelectItem;
 use nsh_core::{LineHeight, prelude::*};
 
-use super::AccountSettings;
-use crate::{data::Portfolio, theme, ui, widgets::TabContext};
+use super::{AccountSettings, frame::venue_name};
+use crate::{
+    data::{Portfolio, portfolio::Account},
+    theme, ui,
+    widgets::{
+        TabContext,
+        common::{LogoStyle, exchange_logo},
+    },
+};
 
 /// The narrowest the exchange's dropdown is.
 const DROPDOWN_MIN_WIDTH: f32 = 120.0;
-/// How wide the Search button after the address is: half the dropdown.
-const SEARCH_WIDTH: f32 = DROPDOWN_MIN_WIDTH / 2.0;
+/// How wide the Add button after the address is: half the dropdown.
+const ADD_WIDTH: f32 = DROPDOWN_MIN_WIDTH / 2.0;
+/// The height of an account's line.
+const LISTED_HEIGHT: f32 = 28.0;
+/// How a listed account draws its exchange's logo.
+const LOGO: LogoStyle = LogoStyle {
+    size: 14.0,
+    color: theme::TEXT,
+    initials_size: 7.0,
+    boxed: true,
+};
 
-/// The "Exchange" and "Address" rows of `tab`'s account, which save it in
-/// the tab's settings.
+/// The accounts `tab`'s widget shows, a line each, over the "Exchange" and
+/// "Address" rows that add to them, saved in the tab's settings.
 pub(crate) fn account_rows<S: AccountSettings>(tab: &TabContext<S>, portfolio: &Portfolio) -> View {
     let saved = tab.settings;
-    let account = computed(move || saved.with(|settings| settings.account().cloned()));
     let venues: Rc<[(&'static str, &'static str, &'static str)]> = portfolio
         .sources()
         .iter()
@@ -42,20 +61,9 @@ pub(crate) fn account_rows<S: AccountSettings>(tab: &TabContext<S>, portfolio: &
         .collect();
     let first = venues.first().map_or("", |(venue, ..)| *venue);
 
-    // What the rows show: the saved account, until something else is
-    // picked or typed.
-    let (venue, draft) = match account.get_untracked() {
-        Some(account) => (signal(account.venue), signal(account.address)),
-        None => (signal(first.to_owned()), signal(String::new())),
-    };
+    // The account to add: its exchange, and its address as it is typed.
+    let (venue, draft) = (signal(first.to_owned()), signal(String::new()));
     let problem = signal(None::<&'static str>);
-    effect(move || {
-        if let Some(account) = account.get() {
-            venue.set(account.venue);
-            draft.set(account.address);
-            problem.set(None);
-        }
-    });
 
     let commit: Rc<dyn Fn()> = {
         let (tab, portfolio) = (tab.clone(), portfolio.clone());
@@ -64,17 +72,16 @@ pub(crate) fn account_rows<S: AccountSettings>(tab: &TabContext<S>, portfolio: &
             let settings = saved.get_untracked();
             if typed.trim().is_empty() {
                 problem.set(None);
-                if settings.account().is_some() {
-                    tab.save(&settings.with_account(None));
-                }
                 return;
             }
             match portfolio.account(&venue.get_untracked(), &typed) {
                 Ok(account) => {
                     problem.set(None);
-                    draft.set(account.address.clone());
-                    if settings.account() != Some(&account) {
-                        tab.save(&settings.with_account(Some(account)));
+                    draft.set(String::new());
+                    if !settings.accounts().contains(&account) {
+                        let mut accounts = settings.accounts().to_vec();
+                        accounts.push(account);
+                        tab.save(&settings.with_accounts(accounts));
                     }
                 }
                 Err(error) => problem.set(Some(error.message())),
@@ -87,7 +94,7 @@ pub(crate) fn account_rows<S: AccountSettings>(tab: &TabContext<S>, portfolio: &
         move |id: &str| venues.iter().find(|(venue, ..)| *venue == id).copied()
     };
     let exchange = {
-        let (listed, named, commit) = (venues.clone(), of.clone(), commit.clone());
+        let (listed, named) = (venues.clone(), of.clone());
         let trigger = view()
             .h_full()
             .flex_row()
@@ -115,8 +122,9 @@ pub(crate) fn account_rows<S: AccountSettings>(tab: &TabContext<S>, portfolio: &
             },
             move || SharedString::from(venue.get()),
             move |picked| {
+                // What was typed may be an address there.
                 venue.set(picked.to_owned());
-                commit();
+                problem.set(None);
             },
             "Exchange",
             trigger,
@@ -143,7 +151,7 @@ pub(crate) fn account_rows<S: AccountSettings>(tab: &TabContext<S>, portfolio: &
         )
         .child(exchange);
 
-    let (submit, blur, search) = (commit.clone(), commit.clone(), commit);
+    let (submit, add) = (commit.clone(), commit);
     let field = ui::text_field(draft)
         .flex_1()
         .placeholder(move || {
@@ -153,17 +161,35 @@ pub(crate) fn account_rows<S: AccountSettings>(tab: &TabContext<S>, portfolio: &
         })
         .label("Account address")
         .test_id(&format!("{}-address", S::TEST_ID))
-        .on_submit(move |_: &str| submit())
-        .on_blur(move || blur());
-    let search = ui::button("Search", ui::Tone::Normal)
-        .w(px(SEARCH_WIDTH))
+        .on_submit(move |_: &str| submit());
+    let add = ui::button("Add", ui::Tone::Normal)
+        .w(px(ADD_WIDTH))
         .flex_none()
         .justify_center()
         .border_l_1()
         .border_color(theme::BORDER)
-        .label("Search account")
-        .test_id(&format!("{}-search", S::TEST_ID))
-        .on_press(move || search());
+        .label("Add account")
+        .test_id(&format!("{}-add", S::TEST_ID))
+        .on_press(move || add());
+    let shown = {
+        let (tab, portfolio) = (tab.clone(), portfolio.clone());
+        let accounts = computed(move || saved.with(|settings| settings.accounts().to_vec()));
+        dynamic(move || {
+            let accounts = accounts.get();
+            (!accounts.is_empty()).then(|| {
+                let lines = accounts
+                    .into_iter()
+                    .enumerate()
+                    .map(|(at, account)| listed(&tab, &portfolio, account, at));
+                view()
+                    .test_id(&format!("{}-accounts", S::TEST_ID))
+                    .w_full()
+                    .flex_col()
+                    .children(lines.collect::<Vec<_>>())
+            })
+        })
+    };
+
     let address = view()
         .h(ui::ROW_HEIGHT)
         .w_full()
@@ -171,7 +197,7 @@ pub(crate) fn account_rows<S: AccountSettings>(tab: &TabContext<S>, portfolio: &
         .border_t_1()
         .border_color(theme::BORDER)
         .child(field)
-        .child(search);
+        .child(add);
 
     let said = view()
         .px(px(10.0))
@@ -194,7 +220,64 @@ pub(crate) fn account_rows<S: AccountSettings>(tab: &TabContext<S>, portfolio: &
     view()
         .w_full()
         .flex_col()
+        .child(shown)
         .child(exchange)
         .child(address)
         .child(said)
+}
+
+/// The line of `account`, the `at`th of those `tab`'s widget shows: its
+/// exchange's logo and name, its address in short (its tooltip has the
+/// whole of it), and × which takes it out of them.
+fn listed<S: AccountSettings>(
+    tab: &TabContext<S>,
+    portfolio: &Portfolio,
+    account: Account,
+    at: usize,
+) -> View {
+    let (saved, tab) = (tab.settings, tab.clone());
+    let exchange = venue_name(portfolio, &account.venue);
+    let (short, whole) = (account.short_address(), account.address.clone());
+    let logo = exchange_logo(&account.venue, LOGO);
+    let remove = ui::button("×", ui::Tone::Quiet)
+        .flex_none()
+        .label(format!("Remove {exchange} {short}"))
+        .test_id(&format!("{}-remove-{at}", S::TEST_ID))
+        .on_press(move || {
+            let settings = saved.get_untracked();
+            let left: Vec<Account> = settings
+                .accounts()
+                .iter()
+                .filter(|kept| **kept != account)
+                .cloned()
+                .collect();
+            tab.save(&settings.with_accounts(left));
+        });
+    view()
+        .h(px(LISTED_HEIGHT))
+        .w_full()
+        .flex_row()
+        .items_center()
+        .gap(px(8.0))
+        .pl(px(10.0))
+        .border_b_1()
+        .border_color(theme::BORDER)
+        .text_size(px(11.0))
+        .child(logo)
+        .child(
+            text(exchange)
+                .flex_none()
+                .number_of_lines(1)
+                .text_color(theme::TEXT),
+        )
+        .child(
+            text(short)
+                .flex_1()
+                .min_w(px(0.0))
+                .truncate()
+                .tabular_nums()
+                .text_color(theme::TEXT_MUTED)
+                .tooltip(ui::hint(move || whole.clone())),
+        )
+        .child(remove)
 }

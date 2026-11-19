@@ -1,6 +1,7 @@
 //! The Account Performance's session ([`AccountPerformanceSession`]): the
-//! history of the account its settings name, the series it plots of it,
-//! and its plot (the widget's data, described in the parent module).
+//! histories of the accounts its settings name, as one
+//! ([`Performance::combined`]), the series it plots of it, and its plot
+//! (the widget's data, described in the parent module).
 
 use std::{cell::RefCell, rc::Rc};
 
@@ -15,7 +16,7 @@ use crate::{
     },
     format,
     widgets::common::{
-        accounts::{AccountSettings, NONE, Report, Standing, Tone, follow, shown},
+        accounts::{AccountSettings, NONE, Reports, Standing, Tone, follow_all, shown},
         plot::{Mode, Plot, Viewport},
     },
 };
@@ -116,7 +117,7 @@ pub(super) fn said(standing: &Standing, plotted: bool) -> &'static str {
         Standing::Unset => "",
         Standing::Loading => LOADING,
         Standing::Unavailable(_) | Standing::Failed(_) => UNAVAILABLE,
-        Standing::Ready | Standing::Stale(_) => EMPTY,
+        Standing::Ready | Standing::Stale(_) | Standing::Partial(_) => EMPTY,
     }
 }
 
@@ -124,21 +125,22 @@ pub(super) fn said(standing: &Standing, plotted: bool) -> &'static str {
 #[derive(Clone, PartialEq)]
 struct Fitted {
     /// What was plotted: whose, and which window and measure of it.
-    series: (Option<Account>, Period, Scope, Metric),
+    series: (Vec<Account>, Period, Scope, Metric),
     /// How many points it had.
     points: usize,
     /// How many times the user had moved the viewport.
     moves: u64,
 }
 
-/// An Account Performance's session state: its account's history, its
-/// plot, and what its view says of the window plotted (its watch lives in
-/// the effect `follow` starts).
+/// An Account Performance's session state: its accounts' histories, its
+/// plot, and what its view says of the window plotted (its watches live in
+/// the effect `follow_all` starts).
 pub(crate) struct AccountPerformanceSession {
     /// The exchanges that report accounts, which its account's rows list.
     pub(super) portfolio: Portfolio,
-    /// The history of the account the settings name.
-    pub(super) report: Report<Performance>,
+    /// The history of each account the settings name, and where they
+    /// stand as one.
+    pub(super) reports: Reports<Performance>,
     /// Its plot. Where it looks starts over, on the whole window, when
     /// another series is plotted, and follows the window as it grows until
     /// the user moves it.
@@ -156,13 +158,24 @@ impl AccountPerformanceSession {
         portfolio: Portfolio,
         settings: Signal<AccountPerformanceSettings>,
     ) -> Self {
-        let account = computed(move || settings.with(|settings| settings.account().cloned()));
-        let report = {
+        let accounts = computed(move || settings.with(|settings| settings.accounts().to_vec()));
+        let reports = {
             let portfolio = portfolio.clone();
-            follow(scope, account, move |account| {
+            follow_all(scope, accounts, move |account| {
                 portfolio.watch_performance(account)
             })
         };
+        // What is plotted: the one account's history, or the several
+        // accounts' as one, once each has arrived or failed.
+        let history = computed(move || {
+            let arrived = reports.arrived()?;
+            Some(match &arrived[..] {
+                [(_, only)] => only.clone(),
+                several => Rc::new(Performance::combined(
+                    several.iter().map(|(_, history)| &**history),
+                )),
+            })
+        });
         // The window and the measure plotted, and how.
         let picked = computed(move || {
             settings.with(|settings| {
@@ -187,9 +200,9 @@ impl AccountPerformanceSession {
                 {
                     let plot = plot.clone();
                     effect(move || {
-                        report.data();
-                        report.standing.get();
-                        account.get();
+                        history.with(|_| ());
+                        reports.standing.get();
+                        accounts.with(|_| ());
                         picked.get();
                         plot.mark();
                     });
@@ -198,7 +211,7 @@ impl AccountPerformanceSession {
                 plot.drive(move || {
                     let plot = &drawn;
                     let (period, part, metric, style) = picked.get_untracked();
-                    let (history, standing) = untracked(|| (report.data(), report.standing.get()));
+                    let (history, standing) = untracked(|| (history.get(), reports.standing.get()));
                     let window = history
                         .as_ref()
                         .and_then(|history| history.window(period, part));
@@ -206,7 +219,7 @@ impl AccountPerformanceSession {
                     // Another series starts over on the whole of it; the
                     // same one grown is followed until the user looks
                     // elsewhere.
-                    let series = (account.get_untracked(), period, part, metric);
+                    let series = (accounts.get_untracked(), period, part, metric);
                     let refit = match &*fitted.borrow() {
                         None => true,
                         Some(last) => {
@@ -236,7 +249,7 @@ impl AccountPerformanceSession {
 
         Self {
             portfolio,
-            report,
+            reports,
             plot,
             readout,
             status,

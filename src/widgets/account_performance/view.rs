@@ -5,8 +5,9 @@
 //! tiles, the axes, the newest value's tag, the status, the crosshair and
 //! the pointer's handling, all as the Chart's), with in its top left corner:
 //!
-//! - its header: the account's exchange's logo and its address, which opens
-//!   the panel that changes it ([`account_badge`]), then the period's badge,
+//! - its header: the account's exchange's logo and its address (of several
+//!   accounts: their exchanges' logos and how many they are), which opens
+//!   the panel that changes them ([`account_badge`]), then the period's badge,
 //!   which says the period plotted (`30D`) and opens the menu of them, as
 //!   the Chart's timeframe badge does;
 //! - under it, a line each: what the window plotted made (green above zero,
@@ -65,7 +66,7 @@ pub(super) fn performance_view(
     bare_account_frame(
         tab,
         &session.portfolio,
-        session.report.standing,
+        session.reports.standing,
         "account history",
         plot(session, tab),
     )

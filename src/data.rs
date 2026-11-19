@@ -12,6 +12,8 @@
 //! - [`hyperliquid`] is the second: Hyperliquid's own API, asked by the app
 //!   itself for what Ferris does not carry (accounts), within the user's
 //!   own rate limit there.
+//! - [`lighter`] is the third: Lighter's own API, asked the same way for
+//!   the same reason.
 //! - [`portfolio`] is what an account holds and has made, in one shape
 //!   whatever its exchange, and the exchanges that report accounts
 //!   ([`Portfolio`]): what the portfolio widgets read.
@@ -28,6 +30,7 @@
 pub mod ferris;
 pub mod hyperliquid;
 mod keyed;
+pub mod lighter;
 pub mod markets;
 pub mod net;
 pub mod portfolio;
@@ -50,6 +53,7 @@ use nsh_core::prelude::*;
 pub struct DataConfig {
     pub ferris: ferris::FerrisConfig,
     pub hyperliquid: hyperliquid::HyperliquidConfig,
+    pub lighter: lighter::LighterConfig,
 }
 
 /// A Ferris of one's own, with everything else as the build has it.
@@ -72,6 +76,8 @@ pub struct DataServices {
     pub ferris: ferris::Ferris,
     /// Hyperliquid's own API, which the app asks itself.
     pub hyperliquid: hyperliquid::Hyperliquid,
+    /// Lighter's own API, which the app asks itself.
+    pub lighter: lighter::Lighter,
     /// The accounts widgets watch, whichever exchange each is on.
     pub portfolio: Portfolio,
     /// Every widget's session (what a widget streams and keeps).
@@ -108,16 +114,24 @@ impl DataServices {
                 hyperliquid::Hyperliquid::new(&production, status)
                     .expect("the production Hyperliquid configuration is valid")
             });
+        let lighter = lighter::Lighter::new(&config.lighter, status).unwrap_or_else(|error| {
+            log::error!("Lattice: invalid Lighter configuration ({error}); using production");
+            lighter::Lighter::new(&lighter::LighterConfig::production(), status)
+                .expect("the production Lighter configuration is valid")
+        });
         // The exchanges that report accounts, in the order widgets offer
         // them: a new one is its integration above and its line here.
-        let portfolio =
-            Portfolio::new([Rc::new(hyperliquid.clone()) as Rc<dyn portfolio::AccountSource>]);
+        let portfolio = Portfolio::new([
+            Rc::new(hyperliquid.clone()) as Rc<dyn portfolio::AccountSource>,
+            Rc::new(lighter.clone()),
+        ]);
         let sessions = Sessions::new();
         let markets = Markets::new(ferris.clone());
         let services = Self {
             status,
             ferris,
             hyperliquid,
+            lighter,
             portfolio,
             sessions,
             markets,
@@ -129,6 +143,7 @@ impl DataServices {
             shutdown.sessions.shutdown();
             shutdown.ferris.shutdown();
             shutdown.hyperliquid.shutdown();
+            shutdown.lighter.shutdown();
         });
         services
     }
@@ -152,6 +167,7 @@ impl DataServices {
     pub fn connections(&self) -> Vec<net::SourceDetails> {
         let mut sources = self.ferris.sources();
         sources.extend(self.hyperliquid.sources());
+        sources.extend(self.lighter.sources());
         sources
     }
 }

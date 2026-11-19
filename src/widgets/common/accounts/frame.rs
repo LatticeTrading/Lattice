@@ -1,43 +1,39 @@
-//! What every widget that shows an account has around its own content
+//! What every widget that shows accounts has around its own content
 //! ([`account_frame`]), top to bottom:
 //!
-//! - the account's strip: its exchange's logo and name, and its address in
-//!   short (its tooltip has the whole of it). Pressing it opens the
-//!   widget's settings, where the account is changed. A widget that shows
-//!   the account itself ([`super::account_badge`], over its plot) has its
-//!   frame without the strip ([`bare_account_frame`]);
+//! - the accounts' strip: a logo for each of their exchanges, then one
+//!   account's exchange and its address in short, or how many several are
+//!   and the exchanges they are on (its tooltip has each in full). Pressing
+//!   it opens the widget's settings, where the accounts are listed, added
+//!   to and taken from. A widget that shows its accounts itself
+//!   ([`super::account_badge`], over its plot) has its frame without the
+//!   strip ([`bare_account_frame`]);
 //! - what is to be said of the report the widget shows ([`Standing`]): that
 //!   it is loading, in muted text; that it could not be asked for or read,
 //!   or has not been brought up to date, as a warning. The figures of a
-//!   report that is merely not up to date stay;
+//!   report that is merely not up to date stay, and so does what some of
+//!   several accounts add up to while the others are missing;
 //! - the widget's content;
-//! - instead of all three while no account is set: the rows that set one
+//! - instead of all three while no account is set: the rows that add one
 //!   ([`account_rows`]), one bordered piece in the middle.
 
 use nsh_core::{LineHeight, prelude::*};
 
-use super::{AccountSettings, Standing, account_rows};
+use super::{
+    AccountSettings, Standing, account_rows,
+    badge::{counted, described, exchange_names, logos, spelled, watched},
+};
 use crate::{
     data::{
         Portfolio,
         portfolio::{Account, Unavailable},
     },
     exchanges, theme, ui,
-    widgets::{
-        TabContext,
-        common::{LogoStyle, bound_exchange_logo},
-    },
+    widgets::TabContext,
 };
 
 /// The strip's height, with the line under it.
 const STRIP_HEIGHT: f32 = 29.0;
-/// How the strip draws its exchange's logo.
-const LOGO: LogoStyle = LogoStyle {
-    size: 14.0,
-    color: theme::TEXT,
-    initials_size: 7.0,
-    boxed: true,
-};
 /// The widest the rows are while no account is set.
 const FORM_WIDTH: f32 = 360.0;
 
@@ -67,7 +63,7 @@ pub(crate) fn bare_account_frame<S: AccountSettings>(
     frame(tab, portfolio, standing, what, body, false)
 }
 
-/// The frame, with the account's strip when `with_strip` says so.
+/// The frame, with the accounts' strip when `with_strip` says so.
 fn frame<S: AccountSettings>(
     tab: &TabContext<S>,
     portfolio: &Portfolio,
@@ -76,10 +72,8 @@ fn frame<S: AccountSettings>(
     body: View,
     with_strip: bool,
 ) -> View {
-    let saved = tab.settings;
-    let account = computed(move || saved.with(|settings| settings.account().cloned()));
-    let unset = computed(move || account.with(Option::is_none));
-    let venue = venue_of(portfolio, account);
+    let accounts = watched(tab, portfolio);
+    let unset = computed(move || accounts.with(Vec::is_empty));
     let ask = {
         let (tab, portfolio) = (tab.clone(), portfolio.clone());
         dynamic(move || unset.get().then(|| ask(&tab, &portfolio)))
@@ -95,11 +89,10 @@ fn frame<S: AccountSettings>(
         .text_color(theme::TEXT)
         .text_size(px(12.0))
         .children(
-            with_strip.then(|| {
-                strip(tab, account, venue).style_when(move || unset.get(), |s| s.hidden())
-            }),
+            with_strip
+                .then(|| strip(tab, accounts).style_when(move || unset.get(), |s| s.hidden())),
         )
-        .child(note(venue, standing, what))
+        .child(note(venue_of(accounts), standing, what))
         .child(
             view()
                 .flex_1()
@@ -112,23 +105,29 @@ fn frame<S: AccountSettings>(
         .child(ask)
 }
 
-/// What `account`'s exchange is called (tracked): its source's name, else
-/// the name Lattice knows its id by; nothing with no account.
-pub(super) fn venue_of(portfolio: &Portfolio, account: Memo<Option<Account>>) -> Memo<String> {
-    let portfolio = portfolio.clone();
+/// What the exchange `venue` is called: its source's name, else the name
+/// Lattice knows its id by.
+pub(super) fn venue_name(portfolio: &Portfolio, venue: &str) -> String {
+    portfolio.source(venue).map_or_else(
+        || exchanges::display_name(venue).to_owned(),
+        |source| source.name().to_owned(),
+    )
+}
+
+/// What the exchange of the first of `accounts` is called (tracked), which
+/// is the exchange a note names when the accounts stand as one account
+/// would: one account, or several of one exchange. Nothing with none.
+fn venue_of(accounts: Memo<Vec<(String, Account)>>) -> Memo<String> {
     computed(move || {
-        account.with(|account| {
-            account.as_ref().map_or_else(String::new, |account| {
-                portfolio.source(&account.venue).map_or_else(
-                    || exchanges::display_name(&account.venue).to_owned(),
-                    |source| source.name().to_owned(),
-                )
-            })
+        accounts.with(|accounts| {
+            accounts
+                .first()
+                .map_or_else(String::new, |(exchange, _)| exchange.clone())
         })
     })
 }
 
-/// What a widget says of a report of its tab's account besides the one its
+/// What a widget says of a report of its tab's accounts besides the one its
 /// frame speaks for (a second report it shows), as the frame would: a strip
 /// saying how `what` stands, nothing while all is well.
 pub(crate) fn report_note<S: AccountSettings>(
@@ -137,9 +136,7 @@ pub(crate) fn report_note<S: AccountSettings>(
     standing: Memo<Standing>,
     what: &'static str,
 ) -> View {
-    let saved = tab.settings;
-    let account = computed(move || saved.with(|settings| settings.account().cloned()));
-    note(venue_of(portfolio, account), standing, what)
+    note(venue_of(watched(tab, portfolio)), standing, what)
 }
 
 /// What the frame says of a report standing as `standing`, and whether it
@@ -158,22 +155,26 @@ fn said(standing: &Standing, venue: &str, what: &str) -> Option<(bool, String)> 
         }
         Standing::Failed(why) => (true, format!("Could not load {what}: {why}")),
         Standing::Stale(why) => (true, format!("Not up to date: {why}")),
+        Standing::Partial(missing) => (true, format!("Not every account is shown. {missing}")),
     })
 }
 
-/// The account's strip, which opens the widget's settings.
-fn strip<S: AccountSettings>(
-    tab: &TabContext<S>,
-    account: Memo<Option<Account>>,
-    venue: Memo<String>,
-) -> View {
-    let of = move |read: fn(&Account) -> String| {
-        account.with(|account| account.as_ref().map(read).unwrap_or_default())
+/// The accounts' strip, which opens the widget's settings.
+fn strip<S: AccountSettings>(tab: &TabContext<S>, accounts: Memo<Vec<(String, Account)>>) -> View {
+    // One account: its exchange, then its address. Several: how many, then
+    // the exchanges they are on.
+    let said = move || {
+        accounts.with(|accounts| match &accounts[..] {
+            [(exchange, _)] => exchange.clone(),
+            several => counted(several),
+        })
     };
-    let (logo, initials) = bound_exchange_logo(
-        move || account.with(|account| account.as_ref().map(|account| account.venue.clone())),
-        LOGO,
-    );
+    let detail = move || {
+        accounts.with(|accounts| match &accounts[..] {
+            [(_, account)] => account.short_address(),
+            several => exchange_names(several),
+        })
+    };
     let tab = tab.clone();
     view()
         .h(px(STRIP_HEIGHT))
@@ -187,28 +188,23 @@ fn strip<S: AccountSettings>(
         .border_color(theme::BORDER)
         .text_size(px(11.0))
         .role(AccessibilityRole::Button)
-        .label(move || {
-            format!(
-                "Change account: {} {}",
-                venue.get(),
-                of(Account::short_address)
-            )
-        })
+        .label(move || accounts.with(|accounts| described(accounts)))
         .test_id(&format!("{}-account", S::TEST_ID))
-        .tooltip(ui::hint(move || of(|account| account.address.clone())))
+        .tooltip(ui::hint(move || {
+            accounts.with(|accounts| spelled(accounts))
+        }))
         .hover(|s| s.bg(theme::PANEL))
         .active(|s| s.bg(theme::BORDER))
         .on_press(move || tab.open_settings())
-        .child(logo)
-        .child(initials)
+        .child(logos(accounts))
         .child(
-            text(move || venue.get())
+            text(said)
                 .flex_none()
                 .number_of_lines(1)
                 .text_color(theme::TEXT),
         )
         .child(
-            text(move || of(Account::short_address))
+            text(detail)
                 .min_w(px(0.0))
                 .truncate()
                 .tabular_nums()
@@ -296,6 +292,13 @@ mod tests {
         assert_eq!(
             said(Standing::Unavailable(Unavailable::NotReported)),
             Some((true, "Hyperliquid does not report positions.".to_owned()))
+        );
+        assert_eq!(
+            said(Standing::Partial("Lighter 0x0123…4567: offline".to_owned())),
+            Some((
+                true,
+                "Not every account is shown. Lighter 0x0123…4567: offline".to_owned()
+            ))
         );
         let unknown = said(Standing::Unavailable(Unavailable::UnknownVenue)).unwrap();
         assert!(unknown.0 && unknown.1.contains("not available"));

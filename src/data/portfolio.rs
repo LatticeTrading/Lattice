@@ -18,6 +18,11 @@
 //! - [`source`]: what an exchange's integration implements to report its
 //!   accounts ([`AccountSource`]): how its addresses read, and one shared
 //!   request per report;
+//! - [`combine`]: several accounts' reports as one
+//!   ([`Performance::combined`], [`MarginAccount::combined`],
+//!   [`Balances::combined`], [`Fills::combined`]), for a widget that shows
+//!   accounts together whichever venues they are on, and for a venue whose
+//!   address holds several accounts;
 //! - [`Portfolio`] (here): the sources by venue, which is all a widget
 //!   asks. It never names an exchange.
 //!
@@ -27,15 +32,17 @@
 //! from its wire shapes, and [`DataServices`](super::DataServices) lists it
 //! among the portfolio's sources. No widget changes: the venue shows up in
 //! their settings, and a report it does not make reads as not reported.
-//! Hyperliquid's ([`super::hyperliquid`]) is the first.
+//! Hyperliquid's ([`super::hyperliquid`]) is the first, Lighter's
+//! ([`super::lighter`]) the second.
 
 mod account;
+mod combine;
 mod model;
 mod source;
 
 use std::rc::Rc;
 
-pub use account::{short_address, Account, AddressError};
+pub use account::{evm_address, short_address, Account, AddressError};
 pub use model::{
     Balance, Balances, Direction, Fees, Fill, Fills, Leverage, MarginAccount, MarginMode,
     Performance, Period, Point, Position, Prices, Scope, Staking, TradeSide, VaultShare, Vaults,

@@ -1,7 +1,22 @@
 //! The Account Summary's session ([`AccountSummarySession`]): the reports
-//! of the account its settings name, and what its view shows of them (the
-//! widget's data, described in the parent module): the account's
-//! [`Overview`] and its [`Holding`]s.
+//! of each account its settings name, and what its view shows of them
+//! together (the widget's data, described in the parent module): the
+//! accounts' [`Overview`] and their [`Holding`]s.
+//!
+//! Several accounts make one overview ([`Overview::of_accounts`]):
+//!
+//! - what they are worth and made adds up: their margin as the portfolio
+//!   adds margin accounts up, their histories as it combines histories,
+//!   and what each holds, has staked and has in vaults at its own
+//!   exchange's prices;
+//! - the cross margin ratio is that of the account nearest liquidation,
+//!   since each is liquidated on its own;
+//! - what only some of them have (staking, vaults, balances) is the sum of
+//!   those that report it: an exchange that reports no staking has none to
+//!   add. Their history is all of theirs or none: what the whole was worth
+//!   and made is not said from some of it;
+//! - a fee schedule is one account's: with several reporting theirs, the
+//!   fee figures read a dash.
 //!
 //! Everything shown is made here from the reports, so the view only lays
 //! it out and the figures are tested without one.
@@ -22,7 +37,7 @@ use crate::{
     },
     format,
     widgets::common::{
-        accounts::{follow, shown, AccountSettings, Report, Tone, NONE},
+        accounts::{follow_all, shown, AccountSettings, Mark, Reports as Followed, Tone, NONE},
         Shared,
     },
 };
@@ -309,8 +324,8 @@ pub(super) struct Share {
     pub percent: String,
 }
 
-/// The reports the summary is made of, each `None` until it arrives (or
-/// when the venue does not make it).
+/// The reports of one account the summary is made of, each `None` until
+/// it arrives (or when the venue does not make it).
 #[derive(Clone, Copy, Default)]
 pub(super) struct Reports<'a> {
     pub margin: Option<&'a MarginAccount>,
@@ -373,18 +388,61 @@ fn spot_value(balances: &Balances, prices: &Prices) -> f64 {
         .sum()
 }
 
+/// `amount` of each asset `stakes` are in, the assets' together
+/// (`12 HYPE`, `12 HYPE + 5 LIT`); a dash with none.
+fn staked_amounts(stakes: &[&Staking], amount: fn(&Staking) -> f64) -> String {
+    let mut assets: Vec<(&str, f64)> = Vec::new();
+    for staking in stakes {
+        match assets.iter_mut().find(|(asset, _)| *asset == staking.asset) {
+            Some((_, sum)) => *sum += amount(staking),
+            None => assets.push((&staking.asset, amount(staking))),
+        }
+    }
+    if assets.is_empty() {
+        return NONE.to_owned();
+    }
+    let written: Vec<String> = assets
+        .iter()
+        .map(|(asset, sum)| format!("{} {asset}", format::quantity(*sum)))
+        .collect();
+    written.join(" + ")
+}
+
 impl Overview {
-    /// The overview of `reports`; a dash for every figure they do not make.
+    /// The overview of one account's `reports`; a dash for every figure
+    /// they do not make.
     pub fn of(reports: Reports<'_>) -> Self {
-        let Reports {
-            margin,
-            balances,
-            prices,
-            performance,
-            staking,
-            vaults,
-            fees,
-        } = reports;
+        Self::of_accounts(&[reports])
+    }
+
+    /// The overview of `accounts` together (each its own reports); a dash
+    /// for every figure none of them makes.
+    pub fn of_accounts(accounts: &[Reports<'_>]) -> Self {
+        // Their margin and their histories, each as one.
+        let margins: Vec<&MarginAccount> = accounts.iter().filter_map(|a| a.margin).collect();
+        let combined =
+            (!margins.is_empty()).then(|| MarginAccount::combined(margins.iter().copied()));
+        let margin = combined.as_ref();
+        let histories: Vec<&Performance> = accounts.iter().filter_map(|a| a.performance).collect();
+        // The histories say what the whole is worth and made when each
+        // account has one: a sum of some would read as the whole.
+        let history = (!histories.is_empty() && histories.len() == accounts.len())
+            .then(|| Performance::combined(histories.iter().copied()));
+        let performance = history.as_ref();
+        // A fee schedule is one account's.
+        let fees = {
+            let mut reported = accounts.iter().filter_map(|a| a.fees);
+            match (reported.next(), reported.next()) {
+                (Some(only), None) => Some(only),
+                _ => None,
+            }
+        };
+        let stakes: Vec<&Staking> = accounts.iter().filter_map(|a| a.staking).collect();
+        // What the accounts that report it have of something, together.
+        let added = |worth: fn(&Reports<'_>) -> Option<f64>| -> Option<f64> {
+            let parts: Vec<f64> = accounts.iter().filter_map(worth).collect();
+            (!parts.is_empty()).then(|| parts.iter().sum())
+        };
         let window = |period: Period| performance.and_then(|p| p.window(period, Scope::Total));
         let pnl = |period: Period| {
             window(period)
@@ -395,11 +453,14 @@ impl Overview {
 
         // What the account is worth, and of what.
         let perps = margin.and_then(|margin| margin.equity);
-        let spot = balances.zip(prices).map(|(b, p)| spot_value(b, p));
-        let staked_value = staking
-            .zip(prices)
-            .and_then(|(staking, prices)| Some(staking.total() * prices.of(&staking.asset)?));
-        let vault_equity = vaults.map(Vaults::equity);
+        // Each account's holdings at its own exchange's prices.
+        let spot = added(|a| a.balances.zip(a.prices).map(|(b, p)| spot_value(b, p)));
+        let staked_value = added(|a| {
+            let (staking, prices) = a.staking.zip(a.prices)?;
+            Some(staking.total() * prices.of(&staking.asset)?)
+        });
+        let vault_equity = added(|a| a.vaults.map(Vaults::equity));
+        let vault_count = added(|a| a.vaults.map(|vaults| vaults.0.len() as f64));
         let parts = [perps, spot, staked_value, vault_equity];
         let counted: f64 = parts.iter().flatten().sum();
         let reported = day
@@ -513,12 +574,7 @@ impl Overview {
         };
 
         // Staking, in its token.
-        let staked = |amount: fn(&Staking) -> f64| {
-            staking.map_or_else(
-                || NONE.to_owned(),
-                |staking| format!("{} {}", format::quantity(amount(staking)), staking.asset),
-            )
-        };
+        let staked = |amount: fn(&Staking) -> f64| staked_amounts(&stakes, amount);
         let usd = |figure: Option<f64>| Shown::plain(shown(figure, format::usd));
 
         let figures = Figure::ALL
@@ -588,9 +644,9 @@ impl Overview {
                 Figure::Undelegated => Shown::plain(staked(|staking| staking.undelegated)),
                 Figure::Unstaking => Shown::plain(staked(|staking| staking.pending_withdrawal)),
                 Figure::VaultEquity => usd(vault_equity),
-                Figure::VaultCount => Shown::plain(
-                    vaults.map_or_else(|| NONE.to_owned(), |vaults| vaults.0.len().to_string()),
-                ),
+                Figure::VaultCount => {
+                    Shown::plain(shown(vault_count, |count| format::grouped(count, 0)))
+                }
             })
             .collect();
         Self {
@@ -620,11 +676,16 @@ impl Overview {
     }
 }
 
-/// One asset the account holds, as its row shows it.
+/// One asset an account holds, as its row shows it.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Holding {
-    /// What tells the row apart: the asset's name.
+    /// What tells the row apart: the asset's name, after its account when
+    /// the widget shows several.
     pub key: Rc<str>,
+    /// Whose it is, when the widget shows several accounts.
+    pub owner: Option<Rc<Mark>>,
+    /// The exchange's name for the asset.
+    pub asset: String,
     pub total: String,
     /// What open orders do not hold of it.
     pub available: String,
@@ -641,7 +702,7 @@ pub(super) struct Holding {
 }
 
 impl Holding {
-    fn of(balance: &Balance, prices: Option<&Prices>) -> Self {
+    fn of(balance: &Balance, prices: Option<&Prices>, owner: Option<&Rc<Mark>>) -> Self {
         let worth = prices
             .and_then(|prices| prices.of(&balance.asset))
             .map(|price| balance.total * price);
@@ -649,7 +710,9 @@ impl Holding {
             .zip(balance.entry_value.filter(|cost| *cost > 0.0))
             .map(|(worth, cost)| worth - cost);
         Self {
-            key: balance.asset.as_str().into(),
+            key: Mark::key(owner, &balance.asset),
+            owner: owner.cloned(),
+            asset: balance.asset.clone(),
             total: format::quantity(balance.total),
             available: format::quantity(balance.available()),
             value: shown(worth, format::usd),
@@ -661,21 +724,33 @@ impl Holding {
     }
 }
 
-/// The rows of `balances` priced at `prices`, an asset once: the most
-/// valuable first, then those that are not priced, in the exchange's order.
-/// `hide_small` leaves out the priced ones worth less than [`SMALL`].
+/// The rows of one account's `balances` priced at `prices`.
+#[cfg(test)]
 pub(super) fn holdings_of(
     balances: &Balances,
     prices: Option<&Prices>,
     hide_small: bool,
 ) -> Vec<Holding> {
-    let mut holdings: Vec<Holding> = Vec::with_capacity(balances.0.len());
-    for balance in &balances.0 {
-        if !holdings
-            .iter()
-            .any(|kept| *kept.key == *balance.asset.as_str())
-        {
-            holdings.push(Holding::of(balance, prices));
+    holdings_of_all(&[(None, balances, prices)], hide_small)
+}
+
+/// One account's part of the holdings: its mark (none when the widget
+/// shows one account), what it holds, and its exchange's prices.
+pub(super) type Held<'a> = (Option<Rc<Mark>>, &'a Balances, Option<&'a Prices>);
+
+/// The rows of what `parts` hold, each account's assets priced at its own
+/// exchange's prices, an asset of an account once: the most valuable
+/// first, whichever account each is of, then those that are not priced, in
+/// the accounts' and their exchanges' order. `hide_small` leaves out the
+/// priced ones worth less than [`SMALL`].
+pub(super) fn holdings_of_all(parts: &[Held<'_>], hide_small: bool) -> Vec<Holding> {
+    let mut holdings: Vec<Holding> = Vec::new();
+    for (mark, balances, prices) in parts {
+        for balance in &balances.0 {
+            let holding = Holding::of(balance, *prices, mark.as_ref());
+            if !holdings.iter().any(|kept| kept.key == holding.key) {
+                holdings.push(holding);
+            }
         }
     }
     if hide_small {
@@ -691,28 +766,36 @@ pub(super) fn holdings_of(
     holdings
 }
 
-/// The report `each` makes of the account `account` holds, followed as it
-/// changes.
+/// The report `each` makes of each of `accounts`, followed as they change.
 fn watched<T: 'static>(
     scope: SessionScope,
     portfolio: &Portfolio,
-    account: Memo<Option<Account>>,
+    accounts: Memo<Vec<Account>>,
     each: fn(&Portfolio, &Account) -> Result<Watch<T>, Unavailable>,
-) -> Report<T> {
+) -> Followed<T> {
     let portfolio = portfolio.clone();
-    follow(scope, account, move |account| each(&portfolio, account))
+    follow_all(scope, accounts, move |account| each(&portfolio, account))
 }
 
-/// An Account Summary's session state: its account's reports, and what its
-/// view shows of them (its watches live in the effects `follow` starts).
+/// `account`'s report among those `arrived`.
+fn found<'a, T>(arrived: &'a [(Account, Rc<T>)], account: &Account) -> Option<&'a T> {
+    arrived
+        .iter()
+        .find(|(of, _)| of == account)
+        .map(|(_, report)| &**report)
+}
+
+/// An Account Summary's session state: its accounts' reports, and what its
+/// view shows of them (its watches live in the effects `follow_all`
+/// starts).
 pub(crate) struct AccountSummarySession {
-    /// The exchanges that report accounts, which its account's rows list.
+    /// The exchanges that report accounts, which its accounts' rows list.
     pub(super) portfolio: Portfolio,
-    /// The margin report of the account the settings name, which the frame
-    /// speaks for.
-    pub(super) margin: Report<MarginAccount>,
-    /// Its balances, which the balances' own note speaks for.
-    pub(super) balances: Report<Balances>,
+    /// The margin report of each account the settings name, which the
+    /// frame speaks for.
+    pub(super) margin: Followed<MarginAccount>,
+    /// Their balances, which the balances' own note speaks for.
+    pub(super) balances: Followed<Balances>,
     /// The overview, updated while the widget is visible.
     pub(super) overview: Signal<Overview>,
     /// The holdings, in the table's order, updated while it is visible.
@@ -726,40 +809,71 @@ impl AccountSummarySession {
         portfolio: Portfolio,
         settings: Signal<AccountSummarySettings>,
     ) -> Self {
-        let account = computed(move || settings.with(|settings| settings.account().cloned()));
+        let accounts = computed(move || settings.with(|settings| settings.accounts().to_vec()));
         let hide_small = computed(move || settings.with(AccountSummarySettings::small_hidden));
-        let margin = watched(scope, &portfolio, account, Portfolio::watch_margin);
-        let balances = watched(scope, &portfolio, account, Portfolio::watch_balances);
-        let prices = watched(scope, &portfolio, account, Portfolio::watch_prices);
-        let performance = watched(scope, &portfolio, account, Portfolio::watch_performance);
-        let staking = watched(scope, &portfolio, account, Portfolio::watch_staking);
-        let vaults = watched(scope, &portfolio, account, Portfolio::watch_vaults);
-        let fees = watched(scope, &portfolio, account, Portfolio::watch_fees);
+        let margin = watched(scope, &portfolio, accounts, Portfolio::watch_margin);
+        let balances = watched(scope, &portfolio, accounts, Portfolio::watch_balances);
+        let prices = watched(scope, &portfolio, accounts, Portfolio::watch_prices);
+        let performance = watched(scope, &portfolio, accounts, Portfolio::watch_performance);
+        let staking = watched(scope, &portfolio, accounts, Portfolio::watch_staking);
+        let vaults = watched(scope, &portfolio, accounts, Portfolio::watch_vaults);
+        let fees = watched(scope, &portfolio, accounts, Portfolio::watch_fees);
         let overview = signal(Overview::of(Reports::default()));
         let holdings = signal(Shared::new(Vec::new()));
-        scope.while_visible(move || {
-            effect(move || {
-                let (margin, balances, prices) = (margin.data(), balances.data(), prices.data());
-                let (performance, staking) = (performance.data(), staking.data());
-                let (vaults, fees) = (vaults.data(), fees.data());
-                overview.set(Overview::of(Reports {
-                    margin: margin.as_deref(),
-                    balances: balances.as_deref(),
-                    prices: prices.as_deref(),
-                    performance: performance.as_deref(),
-                    staking: staking.as_deref(),
-                    vaults: vaults.as_deref(),
-                    fees: fees.as_deref(),
-                }));
-            });
-            effect(move || {
-                let prices = prices.data();
-                let next = balances.data().map_or_else(Vec::new, |balances| {
-                    holdings_of(&balances, prices.as_deref(), hide_small.get())
+        {
+            let portfolio = portfolio.clone();
+            scope.while_visible(move || {
+                // Each kind of report counts once every account's has
+                // arrived or failed, so no figure adds up with an account
+                // still on its way.
+                effect(move || {
+                    let listed = accounts.get();
+                    let margin = margin.arrived().unwrap_or_default();
+                    let balances = balances.arrived().unwrap_or_default();
+                    let prices = prices.arrived().unwrap_or_default();
+                    let performance = performance.arrived().unwrap_or_default();
+                    let staking = staking.arrived().unwrap_or_default();
+                    let vaults = vaults.arrived().unwrap_or_default();
+                    let fees = fees.arrived().unwrap_or_default();
+                    let each: Vec<Reports<'_>> = listed
+                        .iter()
+                        .map(|account| Reports {
+                            margin: found(&margin, account),
+                            balances: found(&balances, account),
+                            prices: found(&prices, account),
+                            performance: found(&performance, account),
+                            staking: found(&staking, account),
+                            vaults: found(&vaults, account),
+                            fees: found(&fees, account),
+                        })
+                        .collect();
+                    overview.set(match each.is_empty() {
+                        true => Overview::of(Reports::default()),
+                        false => Overview::of_accounts(&each),
+                    });
                 });
-                holdings.set(Shared::new(next));
+                let portfolio = portfolio.clone();
+                effect(move || {
+                    let listed = accounts.get();
+                    // An asset says whose it is once there are several
+                    // accounts to be of.
+                    let several = listed.len() > 1;
+                    let prices = prices.arrived().unwrap_or_default();
+                    let balances = balances.arrived().unwrap_or_default();
+                    let parts: Vec<Held<'_>> = balances
+                        .iter()
+                        .map(|(account, held)| {
+                            (
+                                Mark::when(several, &portfolio, account),
+                                &**held,
+                                found(&prices, account),
+                            )
+                        })
+                        .collect();
+                    holdings.set(Shared::new(holdings_of_all(&parts, hide_small.get())));
+                });
             });
-        });
+        }
         Self {
             portfolio,
             margin,
