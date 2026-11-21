@@ -9,6 +9,7 @@ use nsh_core::{
     element::Root,
     platform::{Idiom, Os},
     prelude::*,
+    time::unix_ms,
 };
 use nsh_engine::{EngineConfig, HttpBody, HttpRequest};
 use nsh_testing::{
@@ -21,6 +22,7 @@ use super::{
         Anchor, Draft, Drawing, Emphasis, Grip, Ink, Item, Kind, Scale, hit, market_key, moved,
         paint,
     },
+    fast::Forming,
     indicators::{self, COLORS, Computed, Indicator},
     settings::{ChartSettings, Interval},
 };
@@ -78,6 +80,14 @@ fn settings_save_only_what_differs_and_read_leniently() {
     assert_eq!(read(json!(5)), Interval::Candles(Timeframe::M1));
     let damaged = ChartSettings::from(json!({ "market": "BTC", "showGrid": "no" }));
     assert_eq!(damaged, ChartSettings::default());
+
+    // Fast mode is off until it is turned on, which is all that is saved.
+    assert!(!ChartSettings::default().fast());
+    let fast = ChartSettings::default().with_fast(true);
+    assert_eq!(saved(&fast), json!({ "fastMode": true }));
+    assert!(ChartSettings::from(saved(&fast)).fast());
+    assert_eq!(saved(&fast.with_fast(false)), json!({}));
+    assert!(!ChartSettings::from(json!({ "fastMode": "yes" })).fast());
 }
 
 #[test]
@@ -1400,4 +1410,191 @@ fn the_timeframe_badge_charts_the_interval_picked() {
     app.wait_for("label:Timeframe 1m").unwrap();
     app.wait_until("nothing saved", WAIT, |_| saved().is_none())
         .unwrap();
+}
+
+#[test]
+fn fast_mode_makes_the_newest_candles_from_prints() {
+    let bar = |time: f64, open: f64, high: f64, low: f64, close: f64| Candle {
+        time,
+        open,
+        high,
+        low,
+        close,
+        volume: Some(5.0),
+    };
+    // What the chart shows: the venue's candles with the prints' over them.
+    let made = |forming: &Forming, venue: &[Candle]| {
+        let mut bars = venue.to_vec();
+        forming.apply(&mut bars);
+        bars
+    };
+    // One-minute candles; the clock says 200 seconds.
+    let now = 200_000.0;
+    let venue = vec![
+        bar(60.0, 10.0, 11.0, 9.0, 10.5),
+        bar(120.0, 10.5, 12.0, 10.0, 11.0),
+    ];
+    let mut forming = Forming::new(60.0);
+
+    // Without a candle of the venue's to count from, a print is not placed.
+    forming.print(130.0, 11.5, 1.0, now);
+    assert!(!forming.anchored());
+    assert_eq!(made(&forming, &venue), venue);
+    forming.feed(venue.last().copied(), now);
+    assert!(forming.anchored());
+    // Nor is one before the venue's newest candle, one that is no price,
+    // or one stamped long past the clock.
+    forming.print(119.0, 50.0, 1.0, now);
+    forming.print(130.0, 0.0, 1.0, now);
+    forming.print(130.0, f64::NAN, 1.0, now);
+    forming.print(900.0, 50.0, 1.0, now);
+    assert_eq!(made(&forming, &venue), venue);
+
+    // The candle still forming keeps the venue's open and volume; its high
+    // and low reach the prints', and it closes at the latest one, however
+    // late an earlier one arrives.
+    forming.print(130.0, 12.5, 1.0, now);
+    forming.print(150.0, 9.5, 2.0, now);
+    forming.print(140.0, 11.25, 1.0, now);
+    let bars = made(&forming, &venue);
+    assert_eq!(bars[0], venue[0]);
+    assert_eq!(bars[1..], [bar(120.0, 10.5, 12.5, 9.5, 9.5)]);
+
+    // A minute the venue has not opened yet is a candle of its prints
+    // alone, from its first to its last, and the one before keeps its
+    // close.
+    forming.print(185.0, 9.75, 3.0, now);
+    forming.print(181.0, 9.6, 1.0, now);
+    forming.print(190.0, 9.9, 0.5, now);
+    let bars = made(&forming, &venue);
+    assert_eq!(bars.len(), 3);
+    assert_eq!(bars[1], bar(120.0, 10.5, 12.5, 9.5, 9.5));
+    assert_eq!(
+        bars[2],
+        Candle {
+            volume: Some(4.5),
+            ..bar(180.0, 9.6, 9.9, 9.6, 9.9)
+        }
+    );
+
+    // Once the venue opens it, the minute before is the venue's again, and
+    // the new one is the venue's with the prints over it.
+    let venue = vec![
+        venue[0],
+        bar(120.0, 10.5, 12.0, 9.0, 9.4),
+        bar(180.0, 9.4, 9.8, 9.4, 9.8),
+    ];
+    forming.feed(venue.last().copied(), now + 500.0);
+    let bars = made(&forming, &venue);
+    assert_eq!(bars[..2], venue[..2]);
+    assert_eq!(bars[2..], [bar(180.0, 9.4, 9.9, 9.4, 9.9)]);
+
+    // The venue's candle moving long after the last print says the trades
+    // are behind: its close shows, until the next print.
+    let venue = vec![venue[0], venue[1], bar(180.0, 9.4, 9.8, 9.3, 9.35)];
+    forming.feed(venue.last().copied(), now + 3_000.0);
+    assert_eq!(made(&forming, &venue)[2], bar(180.0, 9.4, 9.9, 9.3, 9.35));
+    forming.print(200.0, 9.45, 1.0, now + 3_100.0);
+    assert_eq!(made(&forming, &venue)[2], bar(180.0, 9.4, 9.9, 9.3, 9.45));
+}
+
+/// What the stubbed print traded at: above every stubbed candle. The
+/// stubbed liquidation, a second after it, is reported higher still.
+const PRINT: &str = "1150.25";
+const LIQUIDATION: &str = "1190.75";
+
+/// Answers `fetchTrades` with one print at [`PRINT`], stamped half a minute
+/// past the clock (in the minute still forming, or the one after it), and
+/// a liquidation at [`LIQUIDATION`] after it.
+fn stub_trades(_request: HttpRequest, reply: StubReply) {
+    let at = unix_ms() + 30_000.0;
+    let trades = json!([
+        { "id": "1", "timestamp": at, "price": PRINT, "amount": 2.0, "side": "buy" },
+        {
+            "id": "2",
+            "timestamp": at + 1_000.0,
+            "price": LIQUIDATION,
+            "amount": 1.0,
+            "side": "sell",
+            "type": "LIQUIDATION",
+        },
+    ]);
+    let mut response = StubResponse::default();
+    response.status = 200;
+    response.body = serde_json::to_vec(&trades).expect("trades are JSON");
+    reply.send(response);
+}
+
+#[test]
+fn the_fast_mode_badge_makes_the_newest_candle_from_trades() {
+    let network = Arc::new(StubNetwork::new([
+        (
+            format!("POST {FERRIS}/v1/fetchOHLCV"),
+            StubRoute::Handler(Arc::new(stub_candles)),
+        ),
+        (
+            format!("POST {FERRIS}/v1/fetchTrades"),
+            StubRoute::Handler(Arc::new(stub_trades)),
+        ),
+    ]));
+    let asked = {
+        let network = network.clone();
+        move || {
+            let requests = network.requests().into_iter();
+            requests
+                .filter(|request| request.url.ends_with("/v1/fetchTrades"))
+                .count()
+        }
+    };
+    let storage = MemoryStorage::new([]);
+    let mut config = EngineConfig::new(Root::of::<Harness>());
+    config.viewport = Size::new(px(1280.0), px(800.0));
+    config.storage = Some(storage.clone());
+    config.network = Some(network);
+    config.environment.os = Os::Windows;
+    config.environment.idiom = Idiom::Desktop;
+    let mut app = Headless::start(config).unwrap();
+    // What the chart's tab saved as its fast mode.
+    let saved = move || -> Option<Value> {
+        let entries = storage.entries();
+        let workspace: Value = serde_json::from_str(entries.get("lattice.workspace.v1")?).ok()?;
+        member(&workspace, "fastMode").cloned()
+    };
+
+    // The badge is right of the indicators', and off: the candles are the
+    // venue's, whose trades are not asked for, and nothing is saved.
+    app.wait_for("BTC/USDT  ·  Bybit").unwrap();
+    app.wait_for("1108.08").unwrap();
+    app.wait_for("label:Fast mode").unwrap();
+    let indicators = placed(&app, "chart-indicators").expect("the indicators' badge");
+    let badge = placed(&app, "chart-fast").expect("the badge");
+    assert_eq!(badge.size.width.0, 66.0);
+    assert_eq!(
+        badge.origin.x.0,
+        indicators.origin.x.0 + indicators.size.width.0 + 4.0
+    );
+    assert!(!app.shows(PRINT));
+    assert_eq!((asked(), saved()), (0, None));
+
+    // A press turns it on: the newest candle reaches the print and closes
+    // at it, not at the liquidation after it, which is no print.
+    app.press("id:chart-fast").unwrap();
+    app.wait_until("fast mode saved", WAIT, |_| saved() == Some(json!(true)))
+        .unwrap();
+    app.wait_for(PRINT).unwrap();
+    assert!(!app.shows(LIQUIDATION));
+    assert_eq!(asked(), 1);
+
+    // Another turns it off: the venue's candles again, and nothing saved.
+    app.press("id:chart-fast").unwrap();
+    app.wait_until("nothing saved", WAIT, |_| saved().is_none())
+        .unwrap();
+    app.wait_for_gone(PRINT, WAIT).unwrap();
+    app.wait_for("1108.08").unwrap();
+
+    // A tick chart is its market's trades already, and has no such badge.
+    app.press("id:chart-timeframe").unwrap();
+    app.press("id:chart-timeframe-tick").unwrap();
+    app.wait_for("label:Timeframe Tick").unwrap();
+    app.wait_for_gone("label:Fast mode", WAIT).unwrap();
 }

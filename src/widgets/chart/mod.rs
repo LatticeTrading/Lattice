@@ -12,7 +12,8 @@
 //!   ([`Ferris::candles`](crate::data::ferris::Ferris::candles)), or for a
 //!   tick chart its shared trade feed
 //!   ([`Ferris::trades`](crate::data::ferris::Ferris::trades)), whose
-//!   prints it keeps as ticks. Two charts of one market and timeframe
+//!   prints it keeps as ticks; in fast mode a candle chart holds both
+//!   ([`fast`]). Two charts of one market and timeframe
 //!   share one topic and one history. A hidden chart keeps streaming, so
 //!   showing it again is instant.
 //! - Feeds tell it of each change from the socket's callback; it only
@@ -26,8 +27,8 @@
 //!
 //! Settings ([`ChartSettings`]: the market, the timeframe, the grid, the
 //! hovered bar's prices, the link color, its drawings, whether their
-//! toolbar is open, and its indicators) are saved in its tab record; the
-//! pane's gear opens its settings panel ([`panel`]).
+//! toolbar is open, its indicators, and fast mode) are saved in its tab
+//! record; the pane's gear opens its settings panel ([`panel`]).
 //!
 //! Drawings ([`drawings`]): a toolbar down the plot's left side has the
 //! tools (a trend line, a Fibonacci retracement, a measurement), and what
@@ -53,6 +54,14 @@
 //! it. The session computes them with the scene, again only when a bar or
 //! an indicator changed.
 //!
+//! Fast mode ([`fast`]): the badge right of the indicators', which says
+//! `FAST MODE`, turns it on and off. On, a candle chart leases its
+//! market's trade feed beside its candle feed and makes its newest candle
+//! from the prints, which come sooner and more often than the venue's
+//! candle does: its high, low and close follow each print, and a candle
+//! the venue has not opened yet is made of its prints alone. Older candles
+//! stay the venue's.
+//!
 //! The chart can be linked ([`crate::link`]): its pane header's link button
 //! picks a color (blue at first), and a market picked in the Everything
 //! Bar's search while the bar has that color becomes the chart's market
@@ -66,6 +75,7 @@
 
 mod badges;
 mod drawings;
+mod fast;
 mod indicators;
 mod panel;
 mod session;

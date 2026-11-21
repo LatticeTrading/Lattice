@@ -4,12 +4,13 @@
 //! whose picks the chart takes, `""` for none); and under Lattice's own:
 //! `drawings` (what was drawn on the chart, on whatever market:
 //! [`Drawing`]), `showDrawingTools` (whether the drawing toolbar is
-//! open) and `indicators` (what the chart computes from its bars and
-//! draws over them: [`Indicator`]).
+//! open), `indicators` (what the chart computes from its bars and draws
+//! over them: [`Indicator`]) and `fastMode` (whether its newest candle is
+//! made from the market's trades: [`super::fast`]).
 //!
 //! Each is left out of the saved form while it holds its default (Bybit's
 //! BTC/USDT perpetual, `1m`, all three shown, linked to blue, no drawing,
-//! no indicator) and read leniently: an unreadable market or a member of
+//! no indicator, fast mode off) and read leniently: an unreadable market or a member of
 //! the wrong type reads as its default, a timeframe under one of the old
 //! app's other spellings (`1`, `60`, `1T`) as the one it meant and an
 //! unknown one as `1m`, a link color Lattice does not know as the default
@@ -125,6 +126,10 @@ pub(crate) struct ChartSettings {
     /// order added.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     indicators: Vec<Indicator>,
+    /// `Some(true)` makes the newest candle from the market's trades;
+    /// `None` leaves it the venue's.
+    #[serde(rename = "fastMode", skip_serializing_if = "Option::is_none")]
+    fast: Option<bool>,
 }
 
 /// A link that is not the default one, as it is saved: its color's id, or
@@ -162,6 +167,12 @@ impl From<Value> for ChartSettings {
             .with_drawings(Drawing::read_all(members.get("drawings")))
             .with_tools(shown("showDrawingTools"))
             .with_indicators(Indicator::read_all(members.get("indicators")))
+            .with_fast(
+                members
+                    .get("fastMode")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            )
     }
 }
 
@@ -260,6 +271,17 @@ impl ChartSettings {
 
     pub fn with_indicators(mut self, indicators: Vec<Indicator>) -> Self {
         self.indicators = indicators;
+        self
+    }
+
+    /// Whether the newest candle is made from the market's trades (a tick
+    /// chart is its trades either way).
+    pub fn fast(&self) -> bool {
+        self.fast.unwrap_or(false)
+    }
+
+    pub fn with_fast(mut self, fast: bool) -> Self {
+        self.fast = fast.then_some(true);
         self
     }
 }

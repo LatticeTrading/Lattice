@@ -1,8 +1,10 @@
-//! The chart's session ([`ChartSession`]): the feed its settings chart and
-//! its plot, whose viewport and scene its view shows (the widget's data,
-//! described in the parent module), its indicators over that feed's bars
-//! ([`Computed`]), and when its series' slots are, which its drawings are
-//! placed by ([`ChartSession::with_times`]).
+//! The chart's session ([`ChartSession`]): the feed its settings chart
+//! (candles, candles whose newest is made from trades in fast mode,
+//! [`FastBars`], or ticks) and its plot, whose viewport and scene its view
+//! shows (the widget's data, described in the parent module), its
+//! indicators over that feed's bars ([`Computed`]), and when its series'
+//! slots are, which its drawings are placed by
+//! ([`ChartSession::with_times`]).
 
 use std::{
     cell::{Cell, RefCell},
@@ -11,7 +13,7 @@ use std::{
 
 use nsh_core::prelude::*;
 
-use super::{ChartSettings, indicators::Computed, settings::Interval};
+use super::{ChartSettings, fast::FastBars, indicators::Computed, settings::Interval};
 use crate::{
     data::{
         SessionScope,
@@ -143,23 +145,31 @@ impl Ticks {
     }
 }
 
-/// What a chart charts: a market's candles at a timeframe, or its ticks.
+/// What a chart charts: a market's candles at a timeframe, those with the
+/// newest made from its trades (fast mode), or its ticks.
 enum Source {
     Candles(CandleFeed, Timeframe),
+    Fast(Rc<FastBars>, Timeframe),
     Ticks(Rc<Ticks>),
 }
 
 impl Source {
-    /// A lease on `market`'s feed for `interval`; `on_change` hears each
-    /// change of its bars or status.
+    /// A lease on `market`'s feed for `interval`, in fast mode if `fast`
+    /// (a candle chart's); `on_change` hears each change of its bars or
+    /// status.
     fn open(
         ferris: &Ferris,
         market: &MarketSelection,
         interval: Interval,
+        fast: bool,
         on_change: Rc<dyn Fn()>,
     ) -> Self {
         match interval {
             Interval::Tick => Self::Ticks(Ticks::open(ferris, market, on_change)),
+            Interval::Candles(timeframe) if fast => Self::Fast(
+                FastBars::open(ferris, market, timeframe, on_change),
+                timeframe,
+            ),
             Interval::Candles(timeframe) => Self::Candles(
                 ferris.candles(market, timeframe, move || on_change()),
                 timeframe,
@@ -169,8 +179,18 @@ impl Source {
 
     fn mode(&self) -> Mode {
         match self {
-            Self::Candles(..) => Mode::Candles,
+            Self::Candles(..) | Self::Fast(..) => Mode::Candles,
             Self::Ticks(_) => Mode::Line,
+        }
+    }
+
+    /// Its candle feed (its history, its status and its older pages); none
+    /// for ticks.
+    fn candles(&self) -> Option<&CandleFeed> {
+        match self {
+            Self::Candles(feed, _) => Some(feed),
+            Self::Fast(fast, _) => Some(fast.candles()),
+            Self::Ticks(_) => None,
         }
     }
 
@@ -178,6 +198,7 @@ impl Source {
     fn with_bars<R>(&self, f: impl FnOnce(&[Candle]) -> R) -> R {
         match self {
             Self::Candles(feed, _) => feed.with_candles(f),
+            Self::Fast(fast, _) => fast.with_bars(f),
             Self::Ticks(ticks) => f(&ticks.bars.borrow()),
         }
     }
@@ -186,7 +207,7 @@ impl Source {
     /// come when they come.
     fn step(&self) -> Option<f64> {
         match self {
-            Self::Candles(_, timeframe) => Some(timeframe.seconds()),
+            Self::Candles(_, timeframe) | Self::Fast(_, timeframe) => Some(timeframe.seconds()),
             Self::Ticks(_) => None,
         }
     }
@@ -195,28 +216,35 @@ impl Source {
     fn appended(&self) -> u64 {
         match self {
             Self::Candles(feed, _) => feed.appended(),
+            Self::Fast(fast, _) => fast.appended(),
             Self::Ticks(ticks) => ticks.appended.get(),
         }
     }
 
     /// What the plot says, with (`empty`) or without bars.
     fn status(&self, empty: bool) -> Status {
-        match self {
-            Self::Candles(feed, _) if empty => {
-                if feed.loading() {
-                    Status::LoadingHistory
-                } else if feed.failed() {
-                    Status::Unavailable
-                } else if feed.history_failed() {
-                    Status::HistoryUnavailable
-                } else {
-                    Status::NoHistory
-                }
-            }
-            Self::Candles(feed, _) if feed.history_failed() => Status::LiveOnly,
-            Self::Ticks(ticks) if empty && ticks.failed() => Status::Unavailable,
-            Self::Ticks(_) if empty => Status::WaitingForTicks,
-            _ => Status::Ready,
+        let Some(feed) = self.candles() else {
+            return match self {
+                Self::Ticks(ticks) if empty && ticks.failed() => Status::Unavailable,
+                _ if empty => Status::WaitingForTicks,
+                _ => Status::Ready,
+            };
+        };
+        if !empty {
+            return if feed.history_failed() {
+                Status::LiveOnly
+            } else {
+                Status::Ready
+            };
+        }
+        if feed.loading() {
+            Status::LoadingHistory
+        } else if feed.failed() {
+            Status::Unavailable
+        } else if feed.history_failed() {
+            Status::HistoryUnavailable
+        } else {
+            Status::NoHistory
         }
     }
 }
@@ -265,25 +293,38 @@ impl ChartSession {
             })
         };
 
-        // The feed follows the market and interval the settings chart.
+        // The feed follows the market and interval the settings chart, and
+        // whether its newest candle is made from trades: fast mode is a
+        // candle chart's, a tick chart being its market's trades already.
         let market = computed(move || settings.with(ChartSettings::market));
         let interval = computed(move || settings.with(ChartSettings::interval));
+        let fast = computed(move || {
+            settings.with(|settings| settings.fast() && settings.interval() != Interval::Tick)
+        });
         {
             let (source, appended, plot) = (source.clone(), appended.clone(), plot.clone());
             let changed = changed.clone();
+            // What was last charted, which the plot looks at.
+            let charted: RefCell<Option<(MarketSelection, Interval)>> = RefCell::default();
             effect(move || {
-                let (market, interval) = (market.get(), interval.get());
+                let (market, interval, fast) = (market.get(), interval.get(), fast.get());
                 untracked(|| {
                     // Leased before the old one goes, so what they share
-                    // (a market's trades) keeps streaming.
-                    let next = Source::open(&ferris, &market, interval, changed.clone());
+                    // (a market's candles or trades) keeps streaming.
+                    let next = Source::open(&ferris, &market, interval, fast, changed.clone());
                     appended.set(next.appended());
                     let previous = source.borrow_mut().replace(next);
                     drop(previous);
-                    plot.viewport.set(Viewport::showing(match interval {
-                        Interval::Tick => DEFAULT_TICKS,
-                        Interval::Candles(_) => DEFAULT_CANDLES,
-                    }));
+                    // Fast mode charts the same bars: the plot stays where
+                    // it looks when only it changed.
+                    let charting = Some((market, interval));
+                    if *charted.borrow() != charting {
+                        plot.viewport.set(Viewport::showing(match interval {
+                            Interval::Tick => DEFAULT_TICKS,
+                            Interval::Candles(_) => DEFAULT_CANDLES,
+                        }));
+                        *charted.borrow_mut() = charting;
+                    }
                 });
                 changed();
             });
@@ -337,17 +378,14 @@ impl ChartSession {
                         let had = indicators.with_untracked(|shown| !shown.0.is_empty());
                         had || !computed.0.is_empty()
                     });
-                    if let Source::Candles(feed, _) = source {
+                    if let Some(feed) = source.candles() {
                         let near_oldest = next.left <= (next.right - next.left) * OLDER_WITHIN;
                         if next.bars > 0 && near_oldest && asked.get() != plot.moves() {
                             asked.set(plot.moves());
                             feed.load_older();
                         }
                     }
-                    let older = match source {
-                        Source::Candles(feed, _) => feed.loading_older(),
-                        Source::Ticks(_) => false,
-                    };
+                    let older = source.candles().is_some_and(CandleFeed::loading_older);
                     batch(|| {
                         plot.show(held, next);
                         if let Some(computed) = computed {

@@ -1,13 +1,15 @@
 //! The badges that float on the chart's plot beside its header, right of
-//! the exchange it ends with: the timeframe's ([`super::timeframe`]) and,
-//! right of it, the indicators' ([`super::indicators`]). Each says what it
-//! is for and opens a menu below it; each is small, bordered and
-//! see-through until the pointer is over it, as the badge that opens the
-//! drawing toolbar is. They are laid over the plot's view, after it, so a
-//! press on one is its own. In a pane too narrow for the header they stay
-//! inside the plot's area, over the header's end.
+//! the exchange it ends with: the timeframe's ([`super::timeframe`]),
+//! right of it the indicators' ([`super::indicators`]), and right of that
+//! fast mode's ([`super::fast`]). The first two say what they are for and
+//! open a menu below them ([`floating`]); the third turns its mode on and
+//! off ([`switch`]). Each is small, bordered and see-through until the
+//! pointer is over it, as the badge that opens the drawing toolbar is.
+//! They are laid over the plot's view, after it, so a press on one is its
+//! own. In a pane too narrow for the header they stay inside the plot's
+//! area, over the header's end.
 
-use nsh_core::prelude::*;
+use nsh_core::{Checked, prelude::*};
 
 use crate::{
     theme,
@@ -33,37 +35,38 @@ pub(super) const fn width(characters: usize, beside: f32) -> f32 {
     2.0 * PADDING + beside + characters as f32 * CHARACTER
 }
 
-/// Where the two badges start on `plot` (the chart's), in points from its
-/// view's left edge: the first, `first` points wide, beside the header
-/// saying `title` and on a whole point, the second, `second` points wide,
-/// right of it, and neither past the plot's area.
-pub(super) fn lefts(
+/// Where the badges start on `plot` (the chart's), in points from its
+/// view's left edge: the first beside the header saying `title` and on a
+/// whole point, each of the others right of the one before it, as wide as
+/// `widths` says each is, and none past the plot's area.
+pub(super) fn lefts<const N: usize>(
     plot: &Plot,
     title: Memo<String>,
-    first: impl Fn() -> f32 + 'static,
-    second: f32,
-) -> Memo<[f32; 2]> {
+    widths: impl Fn() -> [f32; N] + 'static,
+) -> Memo<[f32; N]> {
     let size = plot.size;
     let (area_left, _) = plot::AREA_ORIGIN;
     computed(move || {
         let beside = (title.with(|title| plot::header_end(title)) + GAP).ceil();
         let (width, _) = size.get();
-        let first = first();
-        let left = beside
-            .min(area_left + width - first - SPACE - second)
-            .max(area_left);
-        [left, left + first + SPACE]
+        let widths = widths();
+        let all = widths.iter().sum::<f32>() + SPACE * N.saturating_sub(1) as f32;
+        let mut left = beside.min(area_left + width - all).max(area_left);
+        widths.map(|badge| {
+            let at = left;
+            left += badge + SPACE;
+            at
+        })
     })
 }
 
 /// A badge `width` points wide, `left` points from the plot's view's left
-/// edge and level with its header: a button that opens and closes what
-/// `open` says is open (its menu), lit while it is. Its caller names it
-/// and gives it what it says.
-pub(super) fn floating(
+/// edge and level with its header: a button, in the accent while `lit`.
+/// Its caller names it, gives it what it says and what a press does.
+fn badge(
     left: impl Fn() -> f32 + 'static,
     width: impl Fn() -> f32 + 'static,
-    open: Signal<bool>,
+    lit: impl Fn() -> bool + 'static,
 ) -> View {
     let (_, top) = plot::HEADER_ORIGIN;
     view()
@@ -81,24 +84,49 @@ pub(super) fn floating(
         .text_size(px(TEXT_SIZE))
         .text_color(theme::TEXT_MUTED)
         .role(AccessibilityRole::Button)
-        .accessibility_state(move || AccessibilityState {
-            expanded: Some(open.get()),
-            has_popup: true,
-            ..Default::default()
-        })
         .hover(|s| {
             s.bg(theme::SURFACE)
                 .border_color(theme::TEXT_FAINT)
                 .text_color(theme::TEXT)
         })
         .active(|s| s.bg(theme::BORDER))
-        .style_when(
-            move || open.get(),
-            |s| {
-                s.bg(theme::SURFACE)
-                    .border_color(theme::ACCENT)
-                    .text_color(theme::ACCENT)
-            },
-        )
+        .style_when(lit, |s| {
+            s.bg(theme::SURFACE)
+                .border_color(theme::ACCENT)
+                .text_color(theme::ACCENT)
+        })
+}
+
+/// A badge (`width` points wide, `left` points from the plot's view's left
+/// edge) that opens and closes what `open` says is open (its menu), lit
+/// while it is. Its caller names it and gives it what it says.
+pub(super) fn floating(
+    left: impl Fn() -> f32 + 'static,
+    width: impl Fn() -> f32 + 'static,
+    open: Signal<bool>,
+) -> View {
+    badge(left, width, move || open.get())
+        .accessibility_state(move || AccessibilityState {
+            expanded: Some(open.get()),
+            has_popup: true,
+            ..Default::default()
+        })
         .on_press(move || open.update(|open| *open = !*open))
+}
+
+/// A badge (`width` points wide, `left` points from the plot's view's left
+/// edge) that is `on` or off, lit while it is on; `press` hears a press on
+/// it. Its caller names it and gives it what it says.
+pub(super) fn switch(
+    left: impl Fn() -> f32 + 'static,
+    width: impl Fn() -> f32 + 'static,
+    on: impl Fn() -> bool + Copy + 'static,
+    press: impl Fn() + 'static,
+) -> View {
+    badge(left, width, on)
+        .accessibility_state(move || AccessibilityState {
+            checked: Some(if on() { Checked::True } else { Checked::False }),
+            ..Default::default()
+        })
+        .on_press(press)
 }

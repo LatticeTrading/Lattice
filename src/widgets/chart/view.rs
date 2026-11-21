@@ -9,7 +9,8 @@
 //! candles is on its way. Over the plot's view, where a press is their
 //! own, float the badges beside the header ([`badges`]: the one that says
 //! the interval charted and opens the menu of them, [`timeframe::badge`],
-//! and the one that opens the indicators' menu, [`indicators::badge`]),
+//! the one that opens the indicators' menu, [`indicators::badge`], and the
+//! one that turns fast mode on and off, [`fast::badge`]),
 //! the indicators' legend under the header
 //! ([`indicators::legend`]) and, while the toolbar is closed and the plot
 //! is all of the chart, the badge that opens it
@@ -22,7 +23,7 @@ use nsh_core::prelude::*;
 use super::{
     ChartSettings, badges,
     drawings::{self, Editor},
-    indicators,
+    fast, indicators,
     session::ChartSession,
     timeframe,
 };
@@ -60,14 +61,15 @@ pub(super) fn chart_view(session: &Rc<ChartSession>, tab: &TabContext<ChartSetti
         .child(plot::header(move || title.get()).test_id("chart-header"))
         .child(loading_older(session.loading_older, legend));
     // Where the badges beside the header start: the timeframe's, as wide
-    // as the interval it says, then the indicators'.
+    // as the interval it says, then the indicators', then fast mode's.
     let interval = computed(move || saved.with(ChartSettings::interval));
-    let lefts = badges::lefts(
-        &session.plot,
-        title,
-        move || timeframe::badge_width(interval.get()),
-        indicators::BADGE_WIDTH,
-    );
+    let lefts = badges::lefts(&session.plot, title, move || {
+        [
+            timeframe::badge_width(interval.get()),
+            indicators::BADGE_WIDTH,
+            fast::BADGE_WIDTH,
+        ]
+    });
     // The plot, and laid over its view (after it, so over its surfaces)
     // the indicators' legend, the badges beside the header and the one
     // that opens the toolbar.
@@ -81,6 +83,7 @@ pub(super) fn chart_view(session: &Rc<ChartSession>, tab: &TabContext<ChartSetti
         .child(indicators::legend(session, tab))
         .child(timeframe::badge(tab, move || lefts.get()[0]))
         .child(indicators::badge(tab, move || lefts.get()[1]))
+        .child(fast::badge(tab, move || lefts.get()[2]))
         .child(drawings::toolbar_badge(tab, &session.plot));
     view()
         .flex_1()

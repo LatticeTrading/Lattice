@@ -9,8 +9,9 @@ resizable panes, tabs, themes, and versioned persistence (layout codes
 included). Market data comes from the Ferris backend through a shared data
 layer (HTTP, WebSocket, polling). Seven widgets are ported: the Chart
 (candles and ticks, with drawing tools: a trend line, a Fibonacci
-retracement and a measurement; and indicators: an EMA, a TEMA and
-Bollinger Bands), the Premium/Arb Chart (the difference between two
+retracement and a measurement; indicators: an EMA, a TEMA and Bollinger
+Bands; and a fast mode, which makes the newest candle from the market's
+live trades), the Premium/Arb Chart (the difference between two
 markets' prices, on the Chart's plot), the Order Book (one or two markets'
 depth on a price ladder) and the Depth Chart (their running depth as curves
 about the mid price), all four drawn on the GPU through NSH's WGSL shader
