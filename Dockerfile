@@ -8,7 +8,7 @@ ARG WASM_BINDGEN_VERSION=0.2.130
 ARG LATTICE_FERRIS_HTTP=
 ARG LATTICE_FERRIS_WS=
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates curl git build-essential pkg-config libgtk-4-dev \
+      ca-certificates curl git build-essential pkg-config libgtk-4-dev clang llvm \
     && rm -rf /var/lib/apt/lists/*
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:/root/.nsh/bin:$PATH
