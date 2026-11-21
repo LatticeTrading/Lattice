@@ -85,6 +85,7 @@ fn plot(session: &Rc<PremiumArbSession>, saved: Memo<PremiumArbSettings>) -> Vie
         pointer: None,
         legend: computed(|| 0.0),
         times: computed(Times::default),
+        values: crate::format::price_text,
     };
     let header = plot::header(move || {
         saved.with(|settings| {

@@ -21,6 +21,7 @@ mod registry;
 mod account_performance;
 mod account_summary;
 mod chart;
+mod defi_protocols;
 mod depth_chart;
 mod funding_rates;
 mod market_screener;
@@ -28,6 +29,7 @@ mod order_book;
 mod positions;
 mod premium_arb_chart;
 mod price_delta_monitor;
+mod protocol_tvl;
 mod trade_history;
 mod trade_stream;
 
@@ -37,6 +39,7 @@ registry::registry! {
     account_performance::AccountPerformance,
     account_summary::AccountSummary,
     chart::Chart,
+    defi_protocols::DefiProtocols,
     depth_chart::DepthChart,
     funding_rates::FundingRates,
     market_screener::MarketScreener,
@@ -44,6 +47,7 @@ registry::registry! {
     positions::Positions,
     premium_arb_chart::PremiumArbChart,
     price_delta_monitor::PriceDeltaMonitor,
+    protocol_tvl::ProtocolTvl,
     trade_history::TradeHistory,
     trade_stream::TradeStream,
 }

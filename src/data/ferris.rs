@@ -30,6 +30,11 @@
 //! - Price pairs ([`price_pair`]): two markets' mid prices sampled
 //!   together from their books, one history shared by every widget
 //!   charting the pair ([`Ferris::price_pair`]).
+//! - DefiLlama ([`defillama`]): protocols and what is locked in them
+//!   (TVL), which Ferris proxies and caches: the protocol list and one
+//!   protocol's TVL now, by chain and over time, each a shared query
+//!   ([`Ferris::defillama_protocols_query`],
+//!   [`Ferris::defillama_protocol_query`]).
 //!
 //! Ferris descends from a CCXT-compatible client, so its vocabulary
 //! (`fetchMarkets`, unified market/ticker/trade/book/candle shapes) is
@@ -38,6 +43,7 @@
 pub mod candles;
 mod capabilities;
 pub mod catalog;
+pub mod defillama;
 mod market;
 pub mod market_stats;
 pub mod order_book;

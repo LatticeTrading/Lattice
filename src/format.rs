@@ -203,6 +203,43 @@ pub fn usd(value: f64) -> String {
     }
 }
 
+/// The sizes [`compact_usd`] counts in, largest first, and their letters.
+const USD_UNITS: [(f64, &str); 4] = [(1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")];
+
+/// An amount of US dollars in a short form, four figures of it, for totals
+/// too large to read to the cent (a protocol's value locked): `$7.151B`,
+/// `$72.84M`, `$728.4K`, `$950`; `--` for one that is no number.
+pub fn compact_usd(value: f64) -> String {
+    if !value.is_finite() {
+        return "--".to_owned();
+    }
+    let size = value.abs();
+    let sign = if value < 0.0 { "-" } else { "" };
+    for (at, (unit, letter)) in USD_UNITS.iter().enumerate() {
+        if size < *unit {
+            continue;
+        }
+        let scaled = size / unit;
+        let places = match scaled {
+            scaled if scaled >= 100.0 => 1,
+            scaled if scaled >= 10.0 => 2,
+            _ => 3,
+        };
+        let figure = format!("{scaled:.places$}");
+        // `999.96K` rounds up into the next size: `1.000M`.
+        return match at.checked_sub(1).and_then(|larger| USD_UNITS.get(larger)) {
+            Some((_, larger)) if figure.starts_with("1000") => format!("{sign}$1.000{larger}"),
+            _ => format!("{sign}${figure}{letter}"),
+        };
+    }
+    let whole = format!("{size:.0}");
+    match whole.as_str() {
+        "0" => "$0".to_owned(),
+        "1000" => format!("{sign}$1.000K"),
+        _ => format!("{sign}${whole}"),
+    }
+}
+
 /// [`usd`] for what was gained or lost: a gain says so (`+$5.00`), and
 /// nothing either way is `$0.00`.
 pub fn signed_usd(value: f64) -> String {
@@ -341,6 +378,26 @@ pub fn iso_time(ms: Option<f64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn large_dollar_amounts_are_written_short_in_four_figures() {
+        assert_eq!(compact_usd(7_151_116_329.0), "$7.151B");
+        assert_eq!(compact_usd(108_117_746_518.9), "$108.1B");
+        assert_eq!(compact_usd(72_840_000.0), "$72.84M");
+        assert_eq!(compact_usd(1_234_000_000_000.0), "$1.234T");
+        assert_eq!(compact_usd(512_340.0), "$512.3K");
+        assert_eq!(compact_usd(1_000.0), "$1.000K");
+        assert_eq!(compact_usd(950.4), "$950");
+        assert_eq!(compact_usd(0.0), "$0");
+        assert_eq!(compact_usd(-0.2), "$0");
+        assert_eq!(compact_usd(-2_500_000.0), "-$2.500M");
+        // What rounds up into the next size is written in it.
+        assert_eq!(compact_usd(999_960.0), "$1.000M");
+        assert_eq!(compact_usd(999.6), "$1.000K");
+        assert_eq!(compact_usd(999_999_999_999.0), "$1.000T");
+        assert_eq!(compact_usd(f64::NAN), "--");
+        assert_eq!(compact_usd(f64::INFINITY), "--");
+    }
 
     #[test]
     fn figures_are_grouped_signed_and_rounded_as_they_show() {

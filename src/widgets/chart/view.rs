@@ -52,6 +52,7 @@ pub(super) fn chart_view(session: &Rc<ChartSession>, tab: &TabContext<ChartSetti
         pointer: Some(editor.clone()),
         legend,
         times: computed(Times::default),
+        values: crate::format::price_text,
     };
     let over = view()
         .absolute()

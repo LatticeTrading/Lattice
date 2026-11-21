@@ -21,9 +21,9 @@ use std::rc::Rc;
 
 use nsh_base::SelectItem;
 use nsh_core::{
+    Checked,
     overlay::{Align, Placement},
     prelude::*,
-    Checked,
 };
 
 use super::{
@@ -34,11 +34,11 @@ use crate::{
     data::portfolio::Period,
     theme, ui,
     widgets::{
-        common::{
-            accounts::{account_badge, bare_account_frame, menu_badge, Tone},
-            plot::{self, plot_view, PlotLook, Times},
-        },
         TabContext,
+        common::{
+            accounts::{Tone, account_badge, bare_account_frame, menu_badge},
+            plot::{self, PlotLook, Times, plot_view},
+        },
     },
 };
 
@@ -125,6 +125,7 @@ fn plot(
                 _ => Times::DayTime,
             },
         ),
+        values: crate::format::price_text,
     };
     let over = view()
         .absolute()

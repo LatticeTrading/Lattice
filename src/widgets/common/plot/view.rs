@@ -31,7 +31,6 @@ use super::{
     viewport::{Prices, Viewport},
 };
 use crate::{
-    format::price_text,
     shell::clock::{self, Clock, ClockPrefs},
     theme, ui,
     widgets::common::{CLICK_SLOP, Clicks, Shared, wheel_factor, wheel_steps},
@@ -97,6 +96,10 @@ pub(crate) struct PlotLook {
     pub legend: Memo<f32>,
     /// How its bars' times are named.
     pub times: Memo<Times>,
+    /// How a value on its price axis is written, there and beside the
+    /// crosshair: a price ([`crate::format::price_text`]) for a market's
+    /// series, something shorter for one whose values run to billions.
+    pub values: fn(f64) -> String,
 }
 
 /// What a widget does with the pointer over its plot before the plot does
@@ -141,6 +144,7 @@ pub(crate) fn plot_view(plot: &Rc<Plot>, look: PlotLook, over: View) -> View {
         pointer,
         legend,
         times,
+        values,
     } = look;
     let (scene, size) = (plot.scene, plot.size);
     let has_bars = computed(move || scene.with(|scene| scene.0.bars > 0));
@@ -153,7 +157,7 @@ pub(crate) fn plot_view(plot: &Rc<Plot>, look: PlotLook, over: View) -> View {
         let (x, y) = hover.get()?;
         let prefs = prefs();
         let times = times.get();
-        scene.with(|scene| Cross::at(&scene.0, x, y, times, prefs))
+        scene.with(|scene| Cross::at(&scene.0, x, y, times, prefs, values))
     });
 
     view()
@@ -182,9 +186,9 @@ pub(crate) fn plot_view(plot: &Rc<Plot>, look: PlotLook, over: View) -> View {
                 .bg(theme::BORDER.opacity(0.5))
                 .style_when(move || !has_bars.get(), |s| s.hidden()),
         )
-        .children(price_labels(scene, size))
+        .children(price_labels(scene, size, values))
         .children(time_labels(scene, times, prefs))
-        .children(last_price(id, scene, size))
+        .children(last_price(id, scene, size, values))
         .child(over)
         .child(messages(id, status, has_bars))
         .children(crosshair(id, cross, bar_prices, legend, size))
@@ -290,6 +294,7 @@ fn time_text(mode: Mode, times: Times, time: f64, prefs: ClockPrefs) -> String {
 fn price_labels(
     scene: Signal<Shared<Scene>>,
     size: Signal<(f32, f32)>,
+    values: fn(f64) -> String,
 ) -> impl Iterator<Item = Text> {
     let rows = GRID_ROWS as usize;
     (0..=rows).map(move |row| {
@@ -297,7 +302,7 @@ fn price_labels(
         text(move || {
             scene.with(|scene| match scene.0.bars {
                 0 => String::new(),
-                _ => price_text(scene.0.prices.price_at(f64::from(down))),
+                _ => values(scene.0.prices.price_at(f64::from(down))),
             })
         })
         .absolute()
@@ -395,14 +400,19 @@ fn price_tag(
 /// The newest price while it is on the plot, in its bar's color: a dashed
 /// line across the plot and its tag on the price axis (views, so a trade
 /// moves them without drawing a tile again).
-fn last_price(id: &str, scene: Signal<Shared<Scene>>, size: Signal<(f32, f32)>) -> [View; 2] {
+fn last_price(
+    id: &str,
+    scene: Signal<Shared<Scene>>,
+    size: Signal<(f32, f32)>,
+    values: fn(f64) -> String,
+) -> [View; 2] {
     let last = computed(move || {
         scene.with(|scene| {
             let last = scene.0.last?;
             let down = scene.0.prices.fraction(last.close);
             (0.0..=1.0)
                 .contains(&down)
-                .then(|| (down as f32, last.rising, price_text(last.close)))
+                .then(|| (down as f32, last.rising, values(last.close)))
         })
     });
     let color = move || match last.with(|last| last.as_ref().map(|last| last.1)) {
@@ -490,20 +500,27 @@ struct Cross {
 impl Cross {
     /// The crosshair for a pointer at (`x`, `y`) on `scene`'s plot; none
     /// while no bar shows.
-    fn at(scene: &Scene, x: f32, y: f32, times: Times, prefs: ClockPrefs) -> Option<Self> {
+    fn at(
+        scene: &Scene,
+        x: f32,
+        y: f32,
+        times: Times,
+        prefs: ClockPrefs,
+        values: fn(f64) -> String,
+    ) -> Option<Self> {
         let (middle, bar) = scene.bucket_near(x)?;
         let y = y.clamp(0.0, scene.height);
         Some(Self {
             x: middle,
             y,
             pointer: x,
-            price: price_text(scene.prices.price_at(f64::from(y / scene.height))),
+            price: values(scene.prices.price_at(f64::from(y / scene.height))),
             lines: [
                 format!("T {}", time_text(scene.mode, times, bar.time, prefs)),
-                format!("O {}", price_text(bar.open)),
-                format!("H {}", price_text(bar.high)),
-                format!("L {}", price_text(bar.low)),
-                format!("C {}", price_text(bar.close)),
+                format!("O {}", values(bar.open)),
+                format!("H {}", values(bar.high)),
+                format!("L {}", values(bar.low)),
+                format!("C {}", values(bar.close)),
             ],
         })
     }

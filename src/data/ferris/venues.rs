@@ -15,8 +15,8 @@
 use std::time::Duration;
 
 use super::{
-    market::{self, Derived, Requested},
     MarketType, Product, StatsFieldName,
+    market::{self, Derived, Requested},
 };
 
 /// One catalog request profile: its `category` (none for `{}`) and the
@@ -62,6 +62,12 @@ pub struct Venue {
     pub logo_family: bool,
     /// Short names its logo is also filed under (`hl`).
     pub logo_aliases: &'static [&'static str],
+    /// Its slug on DefiLlama, whose value locked is the venue's
+    /// ([`super::defillama`]): the parent protocol's where DefiLlama lists
+    /// its products apart (`hyperliquid`, not `hyperliquid-bridge`), since
+    /// a parent's total is not the sum of its children's. Checked against
+    /// `/v1/defillama/protocol/{slug}` on 2026-11-21.
+    pub defillama: Option<&'static str>,
 
     /// Its catalog's request profiles. Most list every product with `{}`;
     /// a few only list some unless asked for others by `category`.
@@ -161,6 +167,7 @@ const DEFAULT: Venue = Venue {
     logo: "",
     logo_family: false,
     logo_aliases: &[],
+    defillama: None,
     catalog_profiles: &[(None, &[Product::Spot, Product::Perp, Product::Future])],
     catalog_timeout: secs(20),
     catalog_keys_by_id: false,
@@ -235,6 +242,7 @@ pub static VENUES: &[Venue] = &[
     Venue {
         id: "bybit",
         name: "Bybit",
+        defillama: Some("bybit"),
         logo: logo!("bybit"),
         linear_inverse: true,
         futures_need_day: true,
@@ -248,6 +256,7 @@ pub static VENUES: &[Venue] = &[
     Venue {
         id: "binance",
         name: "Binance",
+        defillama: Some("binance-cex"),
         logo: logo!("binance"),
         logo_family: true,
         // `{}` is USDT-M perpetuals and futures (checked live 2026-11-13).
@@ -267,6 +276,7 @@ pub static VENUES: &[Venue] = &[
     Venue {
         id: "hyperliquid",
         name: "Hyperliquid",
+        defillama: Some("hyperliquid"),
         logo: logo!("hyperliquid"),
         logo_family: true,
         logo_aliases: &["hl"],
@@ -287,6 +297,7 @@ pub static VENUES: &[Venue] = &[
         id: "lighterxyz",
         aliases: &["lighter"],
         name: "Lighter",
+        defillama: Some("lighter"),
         logo: logo!("lighterxyz"),
         logo_family: true,
         stats_profiles: PERP_SPOT,
@@ -295,6 +306,7 @@ pub static VENUES: &[Venue] = &[
     Venue {
         id: "aster",
         name: "Aster",
+        defillama: Some("aster"),
         logo: logo!("aster"),
         // `{}` is perpetuals.
         catalog_profiles: &[(None, &[Product::Perp]), (Some("spot"), &[Product::Spot])],
@@ -305,6 +317,7 @@ pub static VENUES: &[Venue] = &[
     Venue {
         id: "extended",
         name: "Extended",
+        defillama: Some("extended"),
         logo: logo!("extended"),
         // Its routed symbol is a 400 there (checked live 2026-11-14).
         candles_by_type: true,
@@ -316,6 +329,7 @@ pub static VENUES: &[Venue] = &[
     Venue {
         id: "apex",
         name: "Apex",
+        defillama: Some("apex-protocol"),
         logo: logo!("apex"),
         repair_symbol: Some(market::apex_symbol),
         stats_profiles: PERP,
@@ -324,6 +338,7 @@ pub static VENUES: &[Venue] = &[
     Venue {
         id: "kucoin",
         name: "KuCoin",
+        defillama: Some("kucoin"),
         logo: logo!("kucoin"),
         logo_aliases: &["kucoinfutures"],
         routes_by_type: &[MarketType::Spot, MarketType::Perp, MarketType::Future],
@@ -342,6 +357,7 @@ pub static VENUES: &[Venue] = &[
     Venue {
         id: "bitfinex",
         name: "Bitfinex",
+        defillama: Some("bitfinex"),
         logo: logo!("bitfinex"),
         routes_by_type: &[MarketType::Spot, MarketType::Perp],
         rest_by_market_id: true,
@@ -353,6 +369,7 @@ pub static VENUES: &[Venue] = &[
     Venue {
         id: "nado",
         name: "Nado",
+        defillama: Some("nado"),
         logo: logo!("nado"),
         stats_profiles: PERP_SPOT,
         ..DEFAULT
@@ -360,6 +377,7 @@ pub static VENUES: &[Venue] = &[
     Venue {
         id: "variational",
         name: "Variational",
+        defillama: Some("variational"),
         logo: logo!("variational"),
         stats_profiles: PERP,
         ..DEFAULT
@@ -367,6 +385,7 @@ pub static VENUES: &[Venue] = &[
     Venue {
         id: "phoenix",
         name: "Phoenix",
+        defillama: Some("phoenix"),
         logo: logo!("phoenix"),
         unsettled_symbols: true,
         stats_profiles: UNTYPED_PERP,
@@ -375,6 +394,7 @@ pub static VENUES: &[Venue] = &[
     Venue {
         id: "perpl",
         name: "Perpl",
+        defillama: Some("perpl"),
         logo: logo!("perpl"),
         stats_profiles: UNTYPED_PERP,
         book_depth_by_limit: true,
@@ -383,6 +403,7 @@ pub static VENUES: &[Venue] = &[
     Venue {
         id: "txflow",
         name: "TxFlow",
+        defillama: Some("txflow"),
         logo: logo!("txflow"),
         // Perpetuals only; every request param but `amountUnit` is
         // refused, `type` and `levels` included (checked live 2026-11-15).

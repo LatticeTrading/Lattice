@@ -17,7 +17,12 @@ depth on a price ladder) and the Depth Chart (their running depth as curves
 about the mid price), all four drawn on the GPU through NSH's WGSL shader
 views, the Market Screener, the Trade Stream and the Funding Rates (a
 watchlist of perpetuals' funding); the others still to port have empty folders
-under `src/widgets/`. Four portfolio widgets watch accounts by their public
+under `src/widgets/`. Two widgets show DefiLlama's data, which Ferris proxies
+and caches (the app never asks DefiLlama itself): the DeFi Protocols
+(protocols ranked by total value locked, searched and filtered by category)
+and the Protocol TVL (one protocol's TVL over time, on the Chart's plot, with
+its share by chain); each credits DefiLlama and opens its page there.
+Four portfolio widgets watch accounts by their public
 addresses: the Positions, the Account Summary (total value, margin health,
 exposure, fees, staking and balances), the Trade History (the latest trades,
 fees and closed PnL) and the Account Performance (value or profit over
@@ -44,8 +49,10 @@ widgets stream and poll. On desktop the platform's normal title bar keeps minimi
 maximize/restore, and close; on web the browser owns the window chrome.
 
 Before changing code, read `docs/nsh-development.md`, the development guide
-(architecture, data layer, widgets, conventions). `docs/` is local only and
-not tracked by git.
+(architecture, data layer, widgets, conventions). Before building or
+restyling a widget's view, a panel or a menu, read `docs/design.md`, the
+visual design guide (flush blocks, dividers, menus, sizes, states, and the
+code to copy). `docs/` is local only and not tracked by git.
 
 ## NSH project
 
@@ -115,8 +122,8 @@ visual and native-caption acceptance remains a user-run check.
 - `src/storage.rs`: versioned NSH storage-service persistence.
 - `src/theme.rs`, `src/theme/roles.rs`: the theme engine and its color roles.
 - `src/assets.rs`, `assets/`: compile-time fonts and app assets (icons, exchange logos).
-- `src/data.rs`, `src/data/`: the data layer (`net/`: shared HTTP, WebSocket, polling, live-feed and rate-limit plumbing; `ferris/`: the Ferris integration, with per-exchange rules in `ferris/venues.rs`; `hyperliquid/`: Hyperliquid's own API, asked by the app itself within its rate limit; `lighter/`: Lighter's, asked the same way; `txflow/`: TxFlow's, the same again; `portfolio/`: what an account holds and has made, in one shape whatever its exchange, the trait an exchange's integration implements to report accounts, and several accounts' reports combined into one; `session.rs`: per-widget data sessions; `markets.rs`: the app's one directory of every market, which the search and the market picker read).
-- `src/widgets.rs`, `src/widgets/`: the widget registry, the widget picker, shared widget parts (`common/`: market picker, exchange logos, number field, double clicks, in `common/books/` what the widgets that draw order books share, in `common/plot/` the GPU plot the charts share, and in `common/accounts/` what the widgets that show an account share), and one folder per widget (`account_performance/`, `account_summary/`, `chart/`, `depth_chart/`, `funding_rates/`, `market_screener/`, `order_book/`, `positions/`, `premium_arb_chart/`, `price_delta_monitor/`, `trade_stream/`).
+- `src/data.rs`, `src/data/`: the data layer (`net/`: shared HTTP, WebSocket, polling, live-feed and rate-limit plumbing; `ferris/`: the Ferris integration, with per-exchange rules in `ferris/venues.rs` and the DefiLlama data it proxies in `ferris/defillama.rs`; `hyperliquid/`: Hyperliquid's own API, asked by the app itself within its rate limit; `lighter/`: Lighter's, asked the same way; `txflow/`: TxFlow's, the same again; `portfolio/`: what an account holds and has made, in one shape whatever its exchange, the trait an exchange's integration implements to report accounts, and several accounts' reports combined into one; `session.rs`: per-widget data sessions; `markets.rs`: the app's one directory of every market, which the search and the market picker read).
+- `src/widgets.rs`, `src/widgets/`: the widget registry, the widget picker, shared widget parts (`common/`: market picker, exchange logos, number field, double clicks, in `common/books/` what the widgets that draw order books share, in `common/plot/` the GPU plot the charts share, and in `common/accounts/` what the widgets that show an account share), and one folder per widget (`account_performance/`, `account_summary/`, `chart/`, `defi_protocols/`, `depth_chart/`, `funding_rates/`, `market_screener/`, `order_book/`, `positions/`, `premium_arb_chart/`, `price_delta_monitor/`, `protocol_tvl/`, `trade_stream/`).
 - `src/link.rs`: color linking (the link colors, and the Everything Bar's).
 - `src/exchanges.rs`, `src/format.rs`: exchange names and logos; number formatting.
 - `src/platform/`: future native integrations (empty).
