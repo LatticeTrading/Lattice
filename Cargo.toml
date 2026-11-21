@@ -11,8 +11,19 @@ log = "0.4"
 nsh-core = "=0.6.1"
 nsh-base = { version = "=0.6.1", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["raw_value"] }
 url = "2.5"
+# The wallet connection (`src/data/wallet/`): alloy's provider and signer over
+# the user's browser wallet (EIP-1193), typed data (EIP-712) and the recovery
+# of who signed it (`k256`). No HTTP transport: the wallet is the only node
+# asked. `async-trait` and `tower-service` are what alloy's `Signer` and
+# `Transport` are implemented with; tokio's channels carry a request from
+# alloy's transport (which must be `Send`) to the engine thread. alloy's
+# JSON-RPC payloads are serde_json's `raw_value`.
+alloy = { version = "2.6", default-features = false, features = ["std", "providers", "json-rpc", "signers", "sol-types", "dyn-abi", "eip712", "k256", "serde"] }
+async-trait = "0.1"
+tower-service = "0.3"
+tokio = { version = "1", default-features = false, features = ["macros", "sync"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 dirs = "6.0"
@@ -21,7 +32,11 @@ env_logger = "0.11"
 # stack and TLS setup nsh-core already uses for its own native sockets.
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-tokio = { version = "1", default-features = false, features = ["macros", "sync"] }
+# `net` and `io-util` are the desktop wallet bridge's loopback server
+# (`src/data/wallet/bridge.rs`); `getrandom` makes its session's secret
+# (0.2, the version alloy's k256 already brings).
+getrandom = "0.2"
+tokio = { version = "1", default-features = false, features = ["io-util", "macros", "net", "sync"] }
 tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 
 # Native TLS trusts the system's certificate store, as nsh-core does; Android
@@ -34,10 +49,17 @@ webpki-roots = "1"
 
 # The browser WebSocket transport (`src/data/net/socket/web.rs`). NSH packages
 # wasm-bindgen glue for it, which needs the matching `wasm-bindgen` CLI.
+# The browser wallet (`src/data/wallet/web.rs`) awaits the wallet's promises
+# with `wasm-bindgen-futures`, which alloy's `wasm-bindgen` feature spawns its
+# own tasks with too. alloy's k256 brings getrandom 0.2, which builds for the
+# browser only with its `js` feature; nothing here calls it.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+alloy = { version = "2.6", default-features = false, features = ["wasm-bindgen"] }
+getrandom = { version = "0.2", features = ["js"] }
 js-sys = "0.3"
 wasm-bindgen = "0.2"
-web-sys = { version = "0.3", features = ["BinaryType", "CloseEvent", "Event", "MessageEvent", "WebSocket"] }
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = ["BinaryType", "CloseEvent", "CustomEvent", "Event", "EventTarget", "MessageEvent", "WebSocket", "Window"] }
 
 # `shader` links NSH's wgpu renderer and WGSL compiler, which the chart and the
 # order book draw with (`src/widgets/chart/shader.rs`,
@@ -56,7 +78,9 @@ nsh-platform-macos = { version = "=0.6.1", default-features = false, features = 
 [target.'cfg(target_os = "linux")'.dependencies]
 nsh-platform-linux = { version = "=0.6.1", default-features = false, features = ["net", "shader", "svg", "websocket"] }
 
+# `signer-local` is the key the wallet tests' stand-in wallet signs with.
 [dev-dependencies]
+alloy = { version = "2.6", default-features = false, features = ["signer-local"] }
 nsh-engine = { version = "=0.6.1", default-features = false }
 nsh-testing = { version = "=0.6.1", default-features = false }
 

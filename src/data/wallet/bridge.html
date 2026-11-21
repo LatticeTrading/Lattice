@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<title>Lattice wallet</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 48px 16px;
+    background: #0a0a0a;
+    color: #e6e6e6;
+    font: 12px/1.5 "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+  }
+  main { width: 100%; max-width: 440px; border: 1px solid #2a2a2a; background: #141414; }
+  header { display: flex; align-items: center; height: 40px; background: #0a0a0a; border-bottom: 1px solid #2a2a2a; }
+  header b { padding: 0 16px; font-size: 14px; }
+  header span { height: 100%; display: flex; align-items: center; padding: 0 12px; border-left: 1px solid #2a2a2a; color: #8a8a8a; }
+  #status { margin: 0; padding: 10px; border-left: 3px solid #5b8def; background: rgba(91, 141, 239, 0.1); }
+  #status.done { border-left-color: #8a8a8a; background: transparent; color: #8a8a8a; }
+  #status.wait { border-left-color: #e0a030; background: rgba(224, 160, 48, 0.1); color: #e0a030; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; min-height: 30px; align-items: center; padding: 0 10px; border-top: 1px solid #2a2a2a; }
+  li span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  li span:last-child { color: #8a8a8a; padding-left: 10px; }
+  li .ok { color: #3fb950; }
+  li .no { color: #f85149; }
+  li .wait { color: #e0a030; }
+  h2 { margin: 0; padding: 6px 10px; border-top: 1px solid #2a2a2a; background: #1c1c1c; color: #8a8a8a; font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+  footer { padding: 10px; border-top: 1px solid #2a2a2a; color: #8a8a8a; font-size: 11px; }
+</style>
+</head>
+<body>
+<main>
+  <header><b>LATTICE</b><span>Wallet</span></header>
+  <p id="status" role="status">Looking for your wallet…</p>
+  <h2>Wallets in this browser</h2>
+  <ul id="wallets"><li><span>None found yet</span><span></span></li></ul>
+  <h2>Requests from Lattice</h2>
+  <ul id="requests"><li><span>None yet</span><span></span></li></ul>
+  <footer>
+    Keep this tab open while Lattice uses your wallet. Lattice asks here, and your wallet asks you:
+    nothing is signed or sent without your approval in the wallet. This page is served by the
+    Lattice app on this computer and talks only to it.
+  </footer>
+</main>
+<script>
+(() => {
+  'use strict';
+
+  // The path is the session's secret; every request goes under it.
+  const base = location.origin + location.pathname.replace(/\/+$/, '');
+  const page = (crypto.randomUUID && crypto.randomUUID()) ||
+    (Date.now().toString(36) + Math.random().toString(36).slice(2));
+  // How long wallets are given to announce themselves before the app is told.
+  const SETTLE_MS = 400;
+  // What the user approves in the wallet, in words; the rest is not listed.
+  const PROMPTS = {
+    eth_requestAccounts: 'Connect',
+    wallet_requestPermissions: 'Connect',
+    personal_sign: 'Sign a message',
+    eth_signTypedData_v4: 'Sign typed data',
+    eth_sendTransaction: 'Send a transaction',
+    wallet_switchEthereumChain: 'Switch network',
+    wallet_addEthereumChain: 'Add a network',
+  };
+
+  /** id -> { name, provider } */
+  const wallets = new Map();
+  let settled = false;
+  let over = false;
+  let waiting = 0;
+  let answered = 0;
+
+  const statusLine = document.getElementById('status');
+  const walletList = document.getElementById('wallets');
+  const requestList = document.getElementById('requests');
+
+  function say(text, kind) {
+    statusLine.textContent = text;
+    statusLine.className = kind || '';
+  }
+
+  function row(list, left, right, kind) {
+    const item = document.createElement('li');
+    const a = document.createElement('span');
+    const b = document.createElement('span');
+    a.textContent = left;
+    b.textContent = right;
+    if (kind) b.className = kind;
+    item.append(a, b);
+    list.append(item);
+    return b;
+  }
+
+  function showWallets() {
+    walletList.textContent = '';
+    if (wallets.size === 0) row(walletList, 'None found', '');
+    for (const wallet of wallets.values()) row(walletList, wallet.name, '');
+  }
+
+  function rest() {
+    if (over) return;
+    if (waiting > 0) say('Waiting for you in your wallet. If no window opened, click the wallet\'s icon in the toolbar.', 'wait');
+    else if (wallets.size === 0) say('No wallet was found in this browser. Open this page in the browser your wallet is installed in (copy its address, or "Copy link" in Lattice), or install one and reload.', 'wait');
+    else if (answered > 0) say('Done. Go back to Lattice, and keep this tab open while your wallet is connected.');
+    else say('Linked to Lattice. When Lattice asks your wallet for something, your wallet asks you here.');
+  }
+
+  function post(path, body) {
+    let text;
+    try {
+      text = JSON.stringify(body);
+    } catch (_) {
+      // An error's `data` that is no JSON goes without it.
+      if (body && body.error) delete body.error.data;
+      text = JSON.stringify(body);
+    }
+    return fetch(base + path, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: text,
+      cache: 'no-store',
+    }).catch(() => {});
+  }
+
+  function hello() {
+    showWallets();
+    const found = [...wallets].map(([id, wallet]) => ({ id, name: wallet.name }));
+    return post('/hello', { page, wallets: found });
+  }
+
+  function add(id, name, provider) {
+    if (!provider || typeof provider.request !== 'function' || wallets.has(id)) return;
+    wallets.set(id, { name, provider });
+    if (typeof provider.on === 'function') {
+      provider.on('accountsChanged', (accounts) => {
+        if (!over) post('/event', { wallet: id, name: 'accountsChanged', data: accounts });
+      });
+      provider.on('chainChanged', (chain) => {
+        if (!over) post('/event', { wallet: id, name: 'chainChanged', data: chain });
+      });
+    }
+    // One that announces itself late is news to the app.
+    if (settled && !over) hello().then(rest);
+  }
+
+  async function answer(call) {
+    const wallet = wallets.get(call.wallet);
+    const prompt = PROMPTS[call.method];
+    const mark = prompt ? row(requestList, prompt + (wallet ? ' · ' + wallet.name : ''), 'waiting', 'wait') : null;
+    if (mark && requestList.firstChild && requestList.firstChild.textContent === 'None yet') {
+      requestList.firstChild.remove();
+    }
+    let body;
+    if (!wallet) {
+      body = { id: call.id, error: { code: 4900, message: 'That wallet is not in this browser any more.' } };
+    } else {
+      if (prompt) { waiting += 1; rest(); }
+      try {
+        const result = await wallet.provider.request({ method: call.method, params: call.params });
+        body = { id: call.id, result: result === undefined ? null : result };
+        if (mark) { mark.textContent = 'done'; mark.className = 'ok'; }
+      } catch (error) {
+        const code = error && Number.isInteger(error.code) ? error.code : -32603;
+        const message = String((error && error.message) || error || 'The wallet refused.');
+        body = { id: call.id, error: { code, message, data: error && error.data } };
+        if (mark) { mark.textContent = code === 4001 ? 'rejected' : 'failed'; mark.className = 'no'; }
+      }
+      if (prompt) { waiting -= 1; answered += 1; rest(); }
+    }
+    await post('/reply', body);
+  }
+
+  function end(text) {
+    over = true;
+    say(text, 'done');
+  }
+
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  async function poll() {
+    let failures = 0;
+    while (!over) {
+      let response;
+      try {
+        response = await fetch(base + '/next?page=' + encodeURIComponent(page), { cache: 'no-store' });
+        failures = 0;
+      } catch (_) {
+        failures += 1;
+        if (failures > 3) return end('Lattice closed this connection. You can close this tab.');
+        await pause(400);
+        continue;
+      }
+      if (response.status === 204) continue;
+      if (response.status === 409) return end('This page was opened again in another tab. You can close this one.');
+      if (!response.ok) return end('Lattice closed this connection. You can close this tab.');
+      let calls;
+      try {
+        calls = await response.json();
+      } catch (_) {
+        continue;
+      }
+      for (const call of calls) answer(call);
+    }
+  }
+
+  // EIP-6963: every wallet announces itself, so two wallets are two entries
+  // instead of a fight over `window.ethereum`.
+  // A wallet is known by the name it registered (`rdns`, "io.rabby"), which
+  // is the same after a reload; its announcement's own id changes with each.
+  window.addEventListener('eip6963:announceProvider', (event) => {
+    const info = event.detail && event.detail.info;
+    const id = info && (info.rdns || info.uuid);
+    if (!id) return;
+    add(String(id), String(info.name || 'Wallet'), event.detail.provider);
+  });
+  window.dispatchEvent(new Event('eip6963:requestProvider'));
+
+  setTimeout(() => {
+    // A wallet too old to announce itself is still `window.ethereum`.
+    if (wallets.size === 0 && window.ethereum) add('injected', 'Browser wallet', window.ethereum);
+    settled = true;
+    hello().then(() => { rest(); poll(); });
+  }, SETTLE_MS);
+})();
+</script>
+</body>
+</html>

@@ -21,7 +21,7 @@ mod tests;
 use std::{collections::BTreeMap, sync::LazyLock};
 
 use nsh_core::{
-    element::{set_color_scheme, set_tokens, Tokens},
+    element::{Tokens, set_color_scheme, set_tokens},
     platform::Appearance,
     prelude::*,
 };

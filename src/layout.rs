@@ -730,8 +730,10 @@ fn pane_view(
                 .active(|s| s.bg(theme::BORDER))
                 .on_press(move || settings_open.update(|open| *open = !*open))
                 .child(
-                    svg(ImageSrc::svg_markup(include_str!("../assets/icons/settings.svg")))
-                        .size(px(12.0)),
+                    svg(ImageSrc::svg_markup(include_str!(
+                        "../assets/icons/settings.svg"
+                    )))
+                    .size(px(12.0)),
                 ),
         )
         .child(

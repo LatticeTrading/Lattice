@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 use super::*;
 use nsh_core::{
@@ -10,7 +10,12 @@ use nsh_testing::{Headless, MemoryStorage, StubNetwork, StubReply, StubResponse,
 use serde_json::{Value, json};
 
 use crate::{
-    data::{DataServices, ferris::FerrisConfig},
+    data::{
+        DataConfig, DataServices,
+        ferris::FerrisConfig,
+        hyperliquid::HyperliquidConfig,
+        wallet::{Event, Reach, WalletConfig, testing::StandIn},
+    },
     widgets::WidgetKind,
 };
 
@@ -686,4 +691,390 @@ fn the_search_lists_the_most_traded_markets_until_something_is_typed() {
     app.press_key("Escape").unwrap();
     app.wait_for_gone(RESULTS, WAIT).unwrap();
     assert_eq!(app.screen().input_text(SEARCH).unwrap(), Some(""));
+}
+
+/// A Hyperliquid no test reaches: its HTTP is the test's stub network.
+const HYPERLIQUID: &str = "https://hyperliquid.test";
+/// The wallet's cell of the bar and its panel.
+const WALLET: &str = "id:wallet";
+const WALLET_PANEL: &str = "id:wallet-panel";
+/// The account the stand-in wallets share, whole and in short.
+const ACCOUNT: &str = "0x14791697260e4c9a71f18484c9f997b308e59325";
+const ACCOUNT_SHORT: &str = "0x1479…9325";
+
+/// One wallet in the page, as the web build finds it.
+#[component]
+fn OneWallet() -> impl IntoElement {
+    wallet_bar(Reach::Page, &["Rabby Wallet"])
+}
+
+/// Two wallets in the user's browser, as the desktop build finds them.
+#[component]
+fn BrowserWallets() -> impl IntoElement {
+    wallet_bar(Reach::Browser, &["Rabby Wallet", "MetaMask"])
+}
+
+/// A browser without a wallet.
+#[component]
+fn NoWallet() -> impl IntoElement {
+    wallet_bar(Reach::Page, &[])
+}
+
+/// The bar over data services whose wallets are stand-ins and whose
+/// Hyperliquid is the stub network, with buttons under it that make the
+/// stand-ins act as a user or a wallet would.
+fn wallet_bar(reach: Reach, names: &[&str]) -> View {
+    let wallets = StandIn::new(reach, names);
+    assert_eq!(format!("{:#x}", wallets.address()), ACCOUNT);
+    DataServices::provide_with(DataConfig {
+        ferris: FerrisConfig {
+            http_base: FERRIS.to_owned(),
+            ws_url: "ws://127.0.0.1:9/v1/ws".to_owned(),
+            ..FerrisConfig::production()
+        },
+        hyperliquid: HyperliquidConfig {
+            http_base: HYPERLIQUID.to_owned(),
+            ..HyperliquidConfig::production()
+        },
+        wallet: WalletConfig {
+            connector: Some(Rc::new(wallets.clone())),
+        },
+        ..DataConfig::default()
+    });
+    let mut saved = StoredWorkspace::default();
+    layout::normalize(&mut saved);
+    let workspace = signal(saved);
+    let acts = |label: &'static str, act: Box<dyn Fn(&StandIn)>| {
+        let wallets = wallets.clone();
+        view()
+            .role(AccessibilityRole::Button)
+            .label(label)
+            .on_press(move || act(&wallets))
+            .child(text(label))
+    };
+    let says = |label: &'static str, event: Event| {
+        acts(label, Box::new(move |wallets| wallets.say(event.clone())))
+    };
+    let first = "w1".to_owned();
+    view()
+        .size_full()
+        .flex_col()
+        .child(bar(
+            workspace,
+            ActiveTheme::restore(),
+            Clock::restore(),
+            crate::widgets::picker::Picker::new(),
+        ))
+        .child(acts(
+            "the user rejects",
+            Box::new(|wallets| wallets.reject(true)),
+        ))
+        .child(acts(
+            "the user approves",
+            Box::new(|wallets| wallets.reject(false)),
+        ))
+        .child(acts(
+            "another key signs",
+            Box::new(StandIn::sign_as_another),
+        ))
+        .child(acts(
+            "what was asked",
+            Box::new(|wallets| set_clipboard(wallets.asked().join(" "))),
+        ))
+        .child(says(
+            "the wallet changes chain",
+            Event::Chain {
+                wallet: first.clone(),
+                chain: json!("0x1"),
+            },
+        ))
+        .child(says(
+            "the wallet changes account",
+            Event::Accounts {
+                wallet: first.clone(),
+                accounts: json!(["0x5e9ee1089755c3435139848e47e6635505d5a13a"]),
+            },
+        ))
+        .child(says(
+            "another wallet changes account",
+            Event::Accounts {
+                wallet: "w2".to_owned(),
+                accounts: json!([]),
+            },
+        ))
+        .child(says(
+            "the wallet disconnects",
+            Event::Accounts {
+                wallet: first,
+                accounts: json!([]),
+            },
+        ))
+        .child(says(
+            "the page closes",
+            Event::Lost("The wallet page was closed.".to_owned()),
+        ))
+}
+
+/// Answers the stubbed Hyperliquid: an account worth $1,234.50 with one
+/// position, whoever is asked about.
+fn stub_hyperliquid(request: HttpRequest, reply: StubReply) {
+    let body: Value = match &request.body {
+        HttpBody::Bytes(bytes) => serde_json::from_slice(bytes).unwrap_or_default(),
+        _ => Value::Null,
+    };
+    let mut response = StubResponse::default();
+    if body["type"] == "clearinghouseState" && body["user"] == ACCOUNT {
+        let state = json!({
+            "assetPositions": [{
+                "position": { "coin": "ETH", "szi": "0.5", "positionValue": "1500.0" },
+                "type": "oneWay",
+            }],
+            "crossMaintenanceMarginUsed": "7.5",
+            "crossMarginSummary": { "accountValue": "1234.5" },
+            "marginSummary": {
+                "accountValue": "1234.5",
+                "totalMarginUsed": "75.0",
+                "totalNtlPos": "1500.0",
+            },
+            "time": 1_700_000_000_000_u64,
+            "withdrawable": "1159.5",
+        });
+        response.status = 200;
+        response.body = serde_json::to_vec(&state).expect("the state is JSON");
+    } else {
+        response.status = 422;
+        response.body = b"Failed to deserialize the JSON body into the target type".to_vec();
+    }
+    reply.send(response);
+}
+
+fn start_wallet(root: Root, os: Os) -> Headless {
+    start_wallet_in(root, os, 1280.0)
+}
+
+/// [`start_wallet`] in a window `width` wide.
+fn start_wallet_in(root: Root, os: Os, width: f32) -> Headless {
+    let network = Arc::new(StubNetwork::new([(
+        format!("POST {HYPERLIQUID}/info"),
+        StubRoute::Handler(Arc::new(stub_hyperliquid)),
+    )]));
+    let mut config = EngineConfig::new(root);
+    config.viewport = Size::new(px(width), px(800.0));
+    config.storage = Some(MemoryStorage::new([]));
+    config.network = Some(network);
+    config.environment.os = os;
+    config.environment.idiom = Idiom::Desktop;
+    let mut app = Headless::start(config).unwrap();
+    app.wait_for(WALLET).unwrap();
+    app
+}
+
+/// Whether the bar's cell says no wallet is connected.
+fn disconnected(app: &Headless) -> bool {
+    app.screen().matches("label:Wallet: not connected").unwrap()
+}
+
+/// Opens the wallet's panel.
+fn open_wallet(app: &mut Headless) {
+    app.press(WALLET).unwrap();
+    app.wait_for(WALLET_PANEL).unwrap();
+}
+
+/// Connects the one wallet there is, from the bar.
+fn connect_wallet(app: &mut Headless) {
+    open_wallet(app);
+    app.press("Connect wallet").unwrap();
+    app.wait_for("Rabby Wallet").unwrap();
+    app.wait_for(ACCOUNT_SHORT).unwrap();
+}
+
+/// What the stand-in wallets were asked, in order.
+fn asked(app: &mut Headless) -> String {
+    app.press("what was asked").unwrap();
+    app.screen().clipboard().unwrap_or_default().to_owned()
+}
+
+/// Where layout put the view whose test id is `id`.
+fn placed(app: &Headless, id: &str) -> Bounds<Points> {
+    let nodes = app.screen().layout_nodes().into_iter();
+    nodes
+        .filter(|node| node.test_id.as_deref() == Some(id))
+        .map(|node| node.bounds)
+        .next()
+        .unwrap_or_else(|| panic!("{id} is not on screen"))
+}
+
+#[test]
+fn the_wallet_stands_between_the_wordmark_and_the_layout_button() {
+    for os in [Os::Windows, Os::Web] {
+        let app = start_wallet(Root::of::<OneWallet>(), os);
+        let [wordmark, wallet, layout] =
+            ["wordmark", "wallet", "layout-button"].map(|id| placed(&app, id));
+        let right = |cell: Bounds<Points>| cell.origin.x.0 + cell.size.width.0;
+        // Each cell begins where the one before it ends, and is as high
+        // as the bar inside its border.
+        assert!((right(wordmark) - wallet.origin.x.0).abs() < 0.5, "{os:?}");
+        assert!((right(wallet) - layout.origin.x.0).abs() < 0.5, "{os:?}");
+        assert_eq!(wallet.size.height, layout.size.height, "{os:?}");
+        assert_eq!(wallet.size.height, wordmark.size.height, "{os:?}");
+        assert!(disconnected(&app));
+        // With two pages the group leaves the middle of the bar (the link
+        // button, the search and New Widget) in the middle of the bar.
+        let [bar, link, new_widget] =
+            ["everything-bar", "bar-link", "new-widget"].map(|id| placed(&app, id));
+        let middle = (link.origin.x.0 + right(new_widget)) / 2.0;
+        let bar_middle = bar.origin.x.0 + bar.size.width.0 / 2.0;
+        assert!((middle - bar_middle).abs() < 1.0, "{os:?}");
+        assert!(app.shows("Connect"));
+    }
+    // A wide window has room to say it in full.
+    let app = start_wallet_in(Root::of::<OneWallet>(), Os::Web, 1440.0);
+    assert!(app.shows("Connect Wallet"));
+}
+
+#[test]
+fn the_one_wallet_there_is_connects_and_passes_the_hyperliquid_test() {
+    let mut app = start_wallet(Root::of::<OneWallet>(), Os::Web);
+    connect_wallet(&mut app);
+    // The bar's cell is the account now, and the panel says what is
+    // connected.
+    assert!(!disconnected(&app));
+    assert!(
+        app.screen()
+            .matches(&format!("label:Wallet: {ACCOUNT}"))
+            .unwrap()
+    );
+    assert!(app.shows("Arbitrum One (42161)"));
+    assert_eq!(asked(&mut app), "eth_requestAccounts eth_chainId");
+    app.press("Copy the account's address").unwrap();
+    assert_eq!(app.screen().clipboard(), Some(ACCOUNT));
+
+    // Hyperliquid knows the account, and the wallet signs for it.
+    app.press("Test Hyperliquid").unwrap();
+    app.wait_for("Hyperliquid: $1,234.50 in perpetuals, 1 open position.")
+        .unwrap();
+    app.wait_for("Signature: Signed by this account.").unwrap();
+    assert_eq!(
+        asked(&mut app),
+        "eth_requestAccounts eth_chainId eth_signTypedData_v4"
+    );
+
+    // Closing the panel changes nothing of the connection; Disconnect ends
+    // it.
+    app.press("Close Wallet").unwrap();
+    app.wait_for_gone(WALLET_PANEL, WAIT).unwrap();
+    assert!(app.shows(ACCOUNT_SHORT));
+    open_wallet(&mut app);
+    app.press("Disconnect").unwrap();
+    app.wait_for("label:Wallet: not connected").unwrap();
+    assert!(app.shows("Connect wallet"));
+    assert!(!app.shows("Signature: Signed by this account."));
+}
+
+#[test]
+fn what_the_user_turns_down_is_said_and_can_be_tried_again() {
+    let mut app = start_wallet(Root::of::<OneWallet>(), Os::Web);
+    app.press("the user rejects").unwrap();
+    open_wallet(&mut app);
+    app.press("Connect wallet").unwrap();
+    // Not connected: the wallet is offered again, with why.
+    app.wait_for("Rejected in the wallet.").unwrap();
+    assert!(app.shows("Connecting…"));
+    app.press("the user approves").unwrap();
+    app.press("Connect Rabby Wallet").unwrap();
+    app.wait_for(ACCOUNT_SHORT).unwrap();
+
+    // A signature turned down fails that check alone.
+    app.press("the user rejects").unwrap();
+    app.press("Test Hyperliquid").unwrap();
+    app.wait_for("Signature: Rejected in the wallet.").unwrap();
+    assert!(app.shows("Hyperliquid: $1,234.50 in perpetuals, 1 open position."));
+    assert!(app.shows(ACCOUNT_SHORT));
+
+    // And one made by another key is not this account's.
+    app.press("the user approves").unwrap();
+    app.press("another key signs").unwrap();
+    app.press("Test Hyperliquid").unwrap();
+    app.wait_until("the other signer being named", WAIT, |screen| {
+        screen.texts().iter().any(|text| {
+            text.starts_with("Signature: Signed by 0x") && text.contains("not by this account")
+        })
+    })
+    .unwrap();
+}
+
+#[test]
+fn the_wallets_of_the_browser_are_chosen_from_on_desktop() {
+    let mut app = start_wallet(Root::of::<BrowserWallets>(), Os::Windows);
+    open_wallet(&mut app);
+    assert!(app.shows(
+        "A page opens in your browser, where your wallet is. Keep it open while connected."
+    ));
+    app.press("Connect wallet in browser").unwrap();
+    // The page was opened in the browser, and both wallets it found are
+    // offered.
+    app.wait_for("Connect MetaMask").unwrap();
+    assert_eq!(
+        app.screen().opened_urls(),
+        ["http://127.0.0.1:47821/secret"]
+    );
+    assert!(app.shows("Connecting…"));
+    assert_eq!(asked(&mut app), "");
+
+    app.press("Connect MetaMask").unwrap();
+    app.wait_for(ACCOUNT_SHORT).unwrap();
+    assert!(app.shows("MetaMask"));
+    // What another wallet says is not this connection's.
+    app.press("the wallet changes chain").unwrap();
+    app.press("the wallet changes account").unwrap();
+    app.press("the wallet disconnects").unwrap();
+    assert!(app.shows(ACCOUNT_SHORT));
+    assert!(app.shows("Arbitrum One (42161)"));
+
+    // The page closing ends it, and says so.
+    app.press("the page closes").unwrap();
+    app.wait_for("The wallet page was closed.").unwrap();
+    assert!(disconnected(&app));
+}
+
+#[test]
+fn the_wallet_keeps_the_connection_current() {
+    let mut app = start_wallet(Root::of::<OneWallet>(), Os::Web);
+    connect_wallet(&mut app);
+    app.press("Test Hyperliquid").unwrap();
+    app.wait_for("Signature: Signed by this account.").unwrap();
+
+    app.press("the wallet changes chain").unwrap();
+    app.wait_for("Ethereum (1)").unwrap();
+    assert!(app.shows("Signature: Signed by this account."));
+    // Another wallet's news changes nothing.
+    app.press("another wallet changes account").unwrap();
+    assert!(app.shows(ACCOUNT_SHORT));
+
+    // Another account is another connection to test.
+    app.press("the wallet changes account").unwrap();
+    app.wait_for("0x5e9e…a13a").unwrap();
+    assert!(!app.shows("Signature: Signed by this account."));
+
+    // The site disconnected in the wallet is the end of it.
+    app.press("the wallet disconnects").unwrap();
+    app.wait_for("Rabby Wallet disconnected Lattice.").unwrap();
+    assert!(disconnected(&app));
+}
+
+#[test]
+fn a_browser_without_a_wallet_says_so() {
+    let mut app = start_wallet(Root::of::<NoWallet>(), Os::Web);
+    open_wallet(&mut app);
+    app.press("Connect wallet").unwrap();
+    app.wait_until("the missing wallet being said", WAIT, |screen| {
+        screen
+            .texts()
+            .iter()
+            .any(|text| text.starts_with("No wallet was found in this browser."))
+    })
+    .unwrap();
+    app.press("Cancel").unwrap();
+    app.wait_for("Connect wallet").unwrap();
+    assert!(disconnected(&app));
 }

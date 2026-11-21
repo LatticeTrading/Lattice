@@ -7,19 +7,19 @@ use serde_json::json;
 use super::{session, settings::PositionsSettings};
 use crate::{
     data::{
-        portfolio::{Account, Direction, Leverage, MarginMode, Position},
         Portfolio,
+        portfolio::{Account, Direction, Leverage, MarginMode, Position},
     },
     widgets::{
-        common::accounts::{
-            testing::{
-                account, accounts, asked, asked_lighter, asked_txflow, count, lighter_account, on,
-                start, start_manual, txflow_account, workspace_of, workspace_within, IDLE, LIMITED,
-                SLOW, SLOW_FOR, TRADER, USER,
-            },
-            AccountSettings, Mark, Tone, NONE,
-        },
         WidgetKind,
+        common::accounts::{
+            AccountSettings, Mark, NONE, Tone,
+            testing::{
+                IDLE, LIMITED, SLOW, SLOW_FOR, TRADER, USER, account, accounts, asked,
+                asked_lighter, asked_txflow, count, lighter_account, on, start, start_manual,
+                txflow_account, workspace_of, workspace_within,
+            },
+        },
     },
 };
 
@@ -231,10 +231,11 @@ fn the_table_shows_the_account_s_positions_and_follows_its_settings() {
     .unwrap();
     app.wait_for("$6,100.00").unwrap();
     assert!(!app.screen().matches("id:positions-no-account").unwrap());
-    assert!(app
-        .screen()
-        .matches("label:Change account: Hyperliquid 0x0123…4567")
-        .unwrap());
+    assert!(
+        app.screen()
+            .matches("label:Change account: Hyperliquid 0x0123…4567")
+            .unwrap()
+    );
     // (Titles and directions are drawn in capitals.)
     for shown in [
         "MARKET",
@@ -262,10 +263,11 @@ fn the_table_shows_the_account_s_positions_and_follows_its_settings() {
     let texts = app.screen().texts();
     let at = |text: &str| texts.iter().position(|shown| *shown == text).unwrap();
     assert!(at("BTC") < at("ETH"), "the position worth more is first");
-    assert!(app
-        .screen()
-        .in_selectable_view("id:positions-table")
-        .unwrap());
+    assert!(
+        app.screen()
+            .in_selectable_view("id:positions-table")
+            .unwrap()
+    );
     assert!(!app.shows("No open positions"));
 
     // The account's perpetuals alone are asked for, by its address in
@@ -280,10 +282,11 @@ fn the_table_shows_the_account_s_positions_and_follows_its_settings() {
     app.press("id:positions-account").unwrap();
     app.wait_for("id:positions-settings").unwrap();
     const FIELD: &str = "id:positions-settings >> id:positions-address";
-    assert!(app
-        .screen()
-        .matches("id:positions-settings >> id:positions-accounts >> text:0x0123…4567")
-        .unwrap());
+    assert!(
+        app.screen()
+            .matches("id:positions-settings >> id:positions-accounts >> text:0x0123…4567")
+            .unwrap()
+    );
     assert_eq!(app.screen().input_text(FIELD).unwrap(), Some(""));
     app.press("id:positions-settings >> id:positions-remove-0")
         .unwrap();
@@ -311,10 +314,11 @@ fn a_request_hyperliquid_refuses_is_said_and_not_shown_as_an_empty_account() {
     )
     .unwrap();
     assert!(!app.shows("No open positions"));
-    assert!(app
-        .screen()
-        .matches("label:Change account: Hyperliquid 0x0000…00ff")
-        .unwrap());
+    assert!(
+        app.screen()
+            .matches("label:Change account: Hyperliquid 0x0000…00ff")
+            .unwrap()
+    );
 }
 
 /// A workspace of one Positions widget watching the stubbed account, with
@@ -341,11 +345,12 @@ fn the_account_is_asked_for_every_five_minutes_within_a_small_budget() {
     app.run_for(Duration::from_secs(2 * 60)).unwrap();
     assert_eq!(polls(), 2);
     assert!(app.shows("$6,100.00"));
-    assert!(!app
-        .screen()
-        .texts()
-        .iter()
-        .any(|text| text.starts_with("Not up to date") || text.starts_with("Could not load")));
+    assert!(
+        !app.screen()
+            .texts()
+            .iter()
+            .any(|text| text.starts_with("Not up to date") || text.starts_with("Could not load"))
+    );
 }
 
 /// One watching an address with two accounts on Lighter.
@@ -358,10 +363,11 @@ fn Trading() -> impl IntoElement {
 fn a_lighter_address_lists_the_positions_of_its_accounts() {
     let (mut app, network) = start(Root::of::<Trading>());
     app.wait_for("$31,000.00").unwrap();
-    assert!(app
-        .screen()
-        .matches("label:Change account: Lighter 0xe117…b9a8")
-        .unwrap());
+    assert!(
+        app.screen()
+            .matches("label:Change account: Lighter 0xe117…b9a8")
+            .unwrap()
+    );
     for shown in [
         // Its main account's BTC long, at 5% of its worth: 20x.
         "20x Cross",
@@ -413,10 +419,11 @@ fn Flowing() -> impl IntoElement {
 fn a_txflow_address_lists_its_perpetuals_positions() {
     let (mut app, network) = start(Root::of::<Flowing>());
     app.wait_for("$31,000.00").unwrap();
-    assert!(app
-        .screen()
-        .matches("label:Change account: TxFlow 0x0123…4567")
-        .unwrap());
+    assert!(
+        app.screen()
+            .matches("label:Change account: TxFlow 0x0123…4567")
+            .unwrap()
+    );
     // Its isolated BTC long at TxFlow's own mark price, its return read
     // from TxFlow's percent.
     for shown in [
@@ -469,14 +476,16 @@ fn accounts_on_several_exchanges_are_one_table() {
     assert!(at("$6,100.00") < at("$620.00") && at("$620.00") < at("$100.03"));
 
     // The strip counts the accounts, and each row says whose it is.
-    assert!(app
-        .screen()
-        .matches("label:Change accounts: Hyperliquid 0x0123…4567, Lighter 0xe117…b9a8")
-        .unwrap());
-    assert!(app
-        .screen()
-        .matches("id:positions-account >> text:2 accounts")
-        .unwrap());
+    assert!(
+        app.screen()
+            .matches("label:Change accounts: Hyperliquid 0x0123…4567, Lighter 0xe117…b9a8")
+            .unwrap()
+    );
+    assert!(
+        app.screen()
+            .matches("id:positions-account >> text:2 accounts")
+            .unwrap()
+    );
     assert_eq!(
         app.screen()
             .count("id:positions-table >> label:Lighter 0xe117…b9a8")

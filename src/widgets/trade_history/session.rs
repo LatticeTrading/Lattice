@@ -9,13 +9,13 @@ use nsh_core::prelude::*;
 use super::settings::TradeHistorySettings;
 use crate::{
     data::{
-        portfolio::{Fill, Fills, TradeSide},
         Portfolio, SessionScope,
+        portfolio::{Fill, Fills, TradeSide},
     },
     format,
     widgets::common::{
-        accounts::{follow_all, shown, AccountSettings, Mark, Reports, Tone, NONE},
         Shared,
+        accounts::{AccountSettings, Mark, NONE, Reports, Tone, follow_all, shown},
     },
 };
 

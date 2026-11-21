@@ -64,7 +64,7 @@ use nsh_core::prelude::*;
 use self::{session::AccountPerformanceSession, settings::AccountPerformanceSettings};
 use crate::{
     data::{DataServices, SessionScope},
-    widgets::{host::Widget, Category, TabContext},
+    widgets::{Category, TabContext, host::Widget},
 };
 
 /// The Account Performance, as the registry lists it.

@@ -20,6 +20,7 @@
 use std::time::Duration;
 
 use super::{
+    Hyperliquid, Info,
     fees::UserFees,
     fills::UserFills,
     performance::PortfolioReply,
@@ -27,13 +28,12 @@ use super::{
     prices::SpotMetaAndAssetCtxs,
     spot::SpotClearinghouseState,
     staking::{DelegatorSummary, UserVaultEquities},
-    Hyperliquid, Info,
 };
 use crate::data::{
     net::{Queries, QuerySpec, Subject},
     portfolio::{
-        evm_address, short_address, AccountSource, AddressError, Balances, Fees, Fills,
-        MarginAccount, Performance, Prices, Staking, Vaults,
+        AccountSource, AddressError, Balances, Fees, Fills, MarginAccount, Performance, Prices,
+        Staking, Vaults, evm_address, short_address,
     },
 };
 

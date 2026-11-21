@@ -43,7 +43,7 @@ mod source;
 
 use std::rc::Rc;
 
-pub use account::{evm_address, short_address, Account, AddressError};
+pub use account::{Account, AddressError, evm_address, short_address};
 pub use model::{
     Balance, Balances, Direction, Fees, Fill, Fills, Leverage, MarginAccount, MarginMode,
     Performance, Period, Point, Position, Prices, Scope, Staking, TradeSide, VaultShare, Vaults,

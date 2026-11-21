@@ -50,6 +50,7 @@ mod task;
 
 pub use budget::RateBudget;
 pub use consumer::{Consumer, Held};
+pub(crate) use error::sanitize;
 pub use error::{ApiError, ErrorKind};
 pub use feed::{FeedHub, FeedHubs, FeedLease, FeedNode};
 pub use http::{ErrorDecoder, HttpClient, HttpOptions, Request};
@@ -63,4 +64,6 @@ pub use status::{
     Alias, Failure, Feed, FeedState, Health, Link, LinkState, SourceDetails, SourceStatus,
     StatusBoard, Subject, Transport, Unrouted,
 };
-pub(crate) use task::TaskHandle;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use task::deadline;
+pub(crate) use task::{TaskHandle, TaskSet};

@@ -29,22 +29,22 @@ use nsh_core::{
     element::Root,
     platform::{Idiom, Os},
     prelude::*,
-    time::{unix_ms, Clock},
+    time::{Clock, unix_ms},
 };
 use nsh_engine::{EngineConfig, HttpBody, HttpRequest};
 use nsh_testing::{Headless, MemoryStorage, StubNetwork, StubReply, StubResponse, StubRoute};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::AddressGroups;
 use crate::{
     data::{
-        ferris::FerrisConfig, hyperliquid::HyperliquidConfig, lighter::LighterConfig,
-        txflow::TxFlowConfig, DataConfig, DataServices,
+        DataConfig, DataServices, ferris::FerrisConfig, hyperliquid::HyperliquidConfig,
+        lighter::LighterConfig, txflow::TxFlowConfig,
     },
     layout,
     shell::clock::Clock as BarClock,
     storage::StoredWorkspace,
-    widgets::{picker::Picker, WidgetKind, WidgetSettings},
+    widgets::{WidgetKind, WidgetSettings, picker::Picker},
 };
 
 /// A Hyperliquid no test reaches: its HTTP is the test's stub network.
@@ -132,6 +132,7 @@ pub(crate) fn workspace_within(
             http_base: TXFLOW.to_owned(),
             ..TxFlowConfig::production()
         },
+        ..DataConfig::default()
     });
     provide_context(BarClock::restore());
     AddressGroups::provide();

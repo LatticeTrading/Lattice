@@ -31,11 +31,11 @@ use crate::{
     shell::clock::{self, Clock, ClockPrefs},
     theme,
     widgets::{
-        common::{
-            accounts::{account_frame, mark_view, Tone},
-            Shared,
-        },
         TabContext,
+        common::{
+            Shared,
+            accounts::{Tone, account_frame, mark_view},
+        },
     },
 };
 

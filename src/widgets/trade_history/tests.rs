@@ -2,25 +2,26 @@ use nsh_core::{element::Root, prelude::*};
 use serde_json::json;
 
 use super::{
-    session::{self, Totals, MAX_ROWS},
+    session::{self, MAX_ROWS, Totals},
     settings::TradeHistorySettings,
     view::when,
 };
 use crate::{
     data::{
-        portfolio::{Account, Fill, Fills, TradeSide},
         Portfolio,
+        portfolio::{Account, Fill, Fills, TradeSide},
     },
     shell::clock::ClockPrefs,
     widgets::{
-        common::accounts::{
-            testing::{
-                account, accounts, asked, asked_lighter, asked_txflow, count, lighter_account, on,
-                start, txflow_account, workspace_of, IDLE, TRADER, TRADER_MAIN, TRADER_SUB, USER,
-            },
-            AccountSettings, Mark, Tone, NONE,
-        },
         WidgetKind,
+        common::accounts::{
+            AccountSettings, Mark, NONE, Tone,
+            testing::{
+                IDLE, TRADER, TRADER_MAIN, TRADER_SUB, USER, account, accounts, asked,
+                asked_lighter, asked_txflow, count, lighter_account, on, start, txflow_account,
+                workspace_of,
+            },
+        },
     },
 };
 
@@ -146,9 +147,11 @@ fn rows_list_the_latest_trades_once_and_totals_count_them_all() {
         [&totals.volume, &totals.fees, &totals.closed_pnl].map(String::as_str),
         ["$600.00", "$0.02", "+$7.50"]
     );
-    assert!(session::rows_of(&fills)
-        .iter()
-        .all(|row| row.owner.is_none()));
+    assert!(
+        session::rows_of(&fills)
+            .iter()
+            .all(|row| row.owner.is_none())
+    );
 
     // A time as the clock writes it.
     assert_eq!(
@@ -260,10 +263,11 @@ fn a_lighter_address_lists_the_trades_of_its_accounts() {
     }
     let texts = app.screen().texts();
     assert_eq!(texts.iter().filter(|text| **text == "$610.00").count(), 2);
-    assert!(app
-        .screen()
-        .matches("id:trade-history-closed-pnl >> text:+$25.50")
-        .unwrap());
+    assert!(
+        app.screen()
+            .matches("id:trade-history-closed-pnl >> text:+$25.50")
+            .unwrap()
+    );
 
     // Its accounts once, then the latest trades of each.
     let requests = asked_lighter(&network);
@@ -297,10 +301,11 @@ fn accounts_on_several_exchanges_are_one_list_of_trades() {
     let at = |text: &str| texts.iter().position(|shown| *shown == text).unwrap();
     assert!(at("$30,000.00") < at("$2,950.00"));
     assert!(app.shows("6 trades since Feb 22 17:13:20"));
-    assert!(app
-        .screen()
-        .matches("id:trade-history-volume >> text:$36,070.04")
-        .unwrap());
+    assert!(
+        app.screen()
+            .matches("id:trade-history-volume >> text:$36,070.04")
+            .unwrap()
+    );
     // Each row says whose it is.
     assert_eq!(
         app.screen()
@@ -314,10 +319,11 @@ fn accounts_on_several_exchanges_are_one_list_of_trades() {
             .unwrap(),
         2
     );
-    assert!(app
-        .screen()
-        .matches("id:trade-history-account >> text:2 accounts")
-        .unwrap());
+    assert!(
+        app.screen()
+            .matches("id:trade-history-account >> text:2 accounts")
+            .unwrap()
+    );
 }
 
 /// One watching an address on TxFlow.
@@ -330,10 +336,11 @@ fn Flowing() -> impl IntoElement {
 fn a_txflow_address_lists_its_trades_with_what_each_did() {
     let (mut app, network) = start(Root::of::<Flowing>());
     app.wait_for("$30,000.00").unwrap();
-    assert!(app
-        .screen()
-        .matches("label:Change account: TxFlow 0x0123…4567")
-        .unwrap());
+    assert!(
+        app.screen()
+            .matches("label:Change account: TxFlow 0x0123…4567")
+            .unwrap()
+    );
     for shown in [
         // TxFlow says only the side: what each did is read from the
         // position it started from.

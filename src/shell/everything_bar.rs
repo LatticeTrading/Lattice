@@ -5,8 +5,9 @@
 //! buttons ([`window_button`]). macOS and Linux keep the system's title bar,
 //! and the web build gets none because the browser owns that chrome.
 //!
-//! Left to right: the wordmark, the Layout Manager's button (its panel
-//! also leads to the default layouts, [`layouts`]) and the pages;
+//! Left to right: the wordmark, the wallet ([`wallet`]), the Layout
+//! Manager's button (its panel also leads to the default layouts,
+//! [`layouts`]) and the pages;
 //! in the middle the link button, the symbol search ([`search`]) and New
 //! Widget; then the clock, the connection status ([`connections`]),
 //! Settings and, on Windows, minimize, maximize/restore and close.
@@ -38,6 +39,7 @@ mod layouts;
 mod search;
 #[cfg(test)]
 mod tests;
+mod wallet;
 
 pub const BAR_HEIGHT: Points = px(40.0);
 
@@ -211,12 +213,10 @@ pub fn bar(
         })
     });
 
-    let left = dynamic(move || {
-        let (ids, active) = pages.get();
+    let wordmark = dynamic(move || {
         let compact = compact.get();
-        let page_width = if compact { 28.0 } else { 32.0 };
-
-        let wordmark = view()
+        view()
+            .test_id("wordmark")
             .h_full()
             .flex()
             .items_center()
@@ -224,9 +224,23 @@ pub fn bar(
             .px(px(if compact { 12.0 } else { 16.0 }))
             .text_size(px(if compact { 12.0 } else { 14.0 }))
             .font_weight(FontWeight::BOLD)
-            .child(text("LATTICE"));
+            .child(text("LATTICE"))
+    });
+
+    // Made once, outside every `dynamic`: its panel hangs from it. None for
+    // a bar rendered on its own, which has no wallet to show.
+    let wallet = services
+        .as_ref()
+        .map(|services| wallet::WalletCell::new(services.wallet.clone()));
+    let wallet_button = wallet.as_ref().map(wallet::WalletCell::button);
+
+    let layouts = dynamic(move || {
+        let (ids, active) = pages.get();
+        let compact = compact.get();
+        let page_width = if compact { 28.0 } else { 32.0 };
 
         let layout_button = fitted_segment("Layout")
+            .test_id("layout-button")
             .label("Layout manager")
             .on_press(move || manager.toggle());
 
@@ -274,11 +288,18 @@ pub fn bar(
             .flex()
             .items_center()
             .flex_shrink_0()
-            .child(wordmark)
             .child(layout_button)
             .children(pages)
             .child(add_page)
     });
+    let left = view()
+        .h_full()
+        .flex()
+        .items_center()
+        .flex_shrink_0()
+        .child(wordmark)
+        .children(wallet_button)
+        .child(layouts);
 
     let new_widget = dynamic(move || {
         view()
@@ -476,6 +497,12 @@ pub fn bar(
             } else {
                 layout_manager(workspace, manager, &bar_ref)
             })
+        }))
+        .child(dynamic(move || {
+            wallet
+                .as_ref()
+                .filter(|wallet| wallet.is_open())
+                .map(wallet::WalletCell::panel)
         }))
         .child(dynamic(move || {
             settings_open.get().then(|| {

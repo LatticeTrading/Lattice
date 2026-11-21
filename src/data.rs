@@ -22,6 +22,8 @@
 //!   as the widget is in the workspace, whether or not it is on screen.
 //! - [`markets`] is the app's one directory of every market Ferris lists,
 //!   which the Everything Bar's search and the market picker both read.
+//! - [`wallet`] is the user's browser wallet: the account it shares and
+//!   what it signs, asked through alloy on both builds.
 //!
 //! The shell makes one [`DataServices`] and provides it as context; a
 //! widget reaches it with [`DataServices::get`]. Nothing connects until
@@ -38,12 +40,14 @@ pub mod portfolio;
 pub mod session;
 mod shared;
 pub mod txflow;
+pub mod wallet;
 
 pub(crate) use keyed::Keyed;
 pub use markets::Markets;
 pub use portfolio::Portfolio;
 pub use session::{SessionScope, Sessions, WidgetId, WidgetView};
 pub use shared::Shared;
+pub use wallet::Wallet;
 
 use std::rc::Rc;
 
@@ -57,6 +61,7 @@ pub struct DataConfig {
     pub hyperliquid: hyperliquid::HyperliquidConfig,
     pub lighter: lighter::LighterConfig,
     pub txflow: txflow::TxFlowConfig,
+    pub wallet: wallet::WalletConfig,
 }
 
 /// A Ferris of one's own, with everything else as the build has it.
@@ -89,6 +94,8 @@ pub struct DataServices {
     pub sessions: Sessions,
     /// Every market Ferris lists, shared by whatever offers or ranks them.
     pub markets: Markets,
+    /// The user's wallet, once they connect one.
+    pub wallet: Wallet,
 }
 
 impl DataServices {
@@ -138,6 +145,7 @@ impl DataServices {
         ]);
         let sessions = Sessions::new();
         let markets = Markets::new(ferris.clone());
+        let wallet = Wallet::new(config.wallet, hyperliquid.clone());
         let services = Self {
             status,
             ferris,
@@ -147,12 +155,14 @@ impl DataServices {
             portfolio,
             sessions,
             markets,
+            wallet,
         };
         provide_context(services.clone());
         let shutdown = services.clone();
         cleanup(move || {
             // Sessions first: they hold the subscriptions and watches.
             shutdown.sessions.shutdown();
+            shutdown.wallet.shutdown();
             shutdown.ferris.shutdown();
             shutdown.hyperliquid.shutdown();
             shutdown.lighter.shutdown();

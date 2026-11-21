@@ -45,7 +45,14 @@ Everything Bar's symbol search finds any
 market and sends it to the widgets linked to the bar's link color (the
 Chart, from its pane header's link button); its connection indicator shows
 the health of the app's data sources and opens a panel of everything the
-widgets stream and poll. On desktop the platform's normal title bar keeps minimize,
+widgets stream and poll. Next to the wordmark the bar connects the user's
+browser wallet (Rabby, MetaMask, any EIP-1193 wallet) through
+[alloy](https://alloy.rs): the web build asks the wallets of its own page,
+and the desktop build opens a page it serves on this machine in the user's
+browser, which carries its requests to the wallet there. No key is ever in
+the app; the first use is a Hyperliquid test of the connected account (its
+account is looked up and the wallet signs a test message that authorizes
+nothing). On desktop the platform's normal title bar keeps minimize,
 maximize/restore, and close; on web the browser owns the window chrome.
 
 Before changing code, read `docs/nsh-development.md`, the development guide
@@ -113,16 +120,17 @@ visual and native-caption acceptance remains a user-run check.
 ## Source map
 
 - `nsh.json`: NSH app identity, Rust root, and appearance.
+- `rustfmt.toml`: the 2024 edition and style, so a file formatted by itself matches `cargo fmt`.
 - `themes/`: one JSON file per theme.
 - `src/lib.rs`: the registered NSH UI set and shared `App` root.
 - `src/main.rs`, `src/app.rs`: optional direct Cargo desktop launcher.
-- `src/shell.rs`, `src/shell/`: the shell, Everything Bar (with its symbol search and link button), Settings panel, and clock.
+- `src/shell.rs`, `src/shell/`: the shell, Everything Bar (with its symbol search, link button and wallet), Settings panel, and clock.
 - `src/ui.rs`, `src/ui/`: shared controls (text field, button, tooltip hint, settings rows, floating panels, the link button, list scrolling).
 - `src/layout.rs`, `src/layout/grid.rs`: workspace pages, tabs, panes, and responsive geometry.
 - `src/storage.rs`: versioned NSH storage-service persistence.
 - `src/theme.rs`, `src/theme/roles.rs`: the theme engine and its color roles.
 - `src/assets.rs`, `assets/`: compile-time fonts and app assets (icons, exchange logos).
-- `src/data.rs`, `src/data/`: the data layer (`net/`: shared HTTP, WebSocket, polling, live-feed and rate-limit plumbing; `ferris/`: the Ferris integration, with per-exchange rules in `ferris/venues.rs` and the DefiLlama data it proxies in `ferris/defillama.rs`; `hyperliquid/`: Hyperliquid's own API, asked by the app itself within its rate limit; `lighter/`: Lighter's, asked the same way; `txflow/`: TxFlow's, the same again; `portfolio/`: what an account holds and has made, in one shape whatever its exchange, the trait an exchange's integration implements to report accounts, and several accounts' reports combined into one; `session.rs`: per-widget data sessions; `markets.rs`: the app's one directory of every market, which the search and the market picker read).
+- `src/data.rs`, `src/data/`: the data layer (`net/`: shared HTTP, WebSocket, polling, live-feed and rate-limit plumbing; `ferris/`: the Ferris integration, with per-exchange rules in `ferris/venues.rs` and the DefiLlama data it proxies in `ferris/defillama.rs`; `hyperliquid/`: Hyperliquid's own API, asked by the app itself within its rate limit; `lighter/`: Lighter's, asked the same way; `txflow/`: TxFlow's, the same again; `portfolio/`: what an account holds and has made, in one shape whatever its exchange, the trait an exchange's integration implements to report accounts, and several accounts' reports combined into one; `session.rs`: per-widget data sessions; `markets.rs`: the app's one directory of every market, which the search and the market picker read; `wallet.rs`, `wallet/`: the user's browser wallet through alloy, `web.rs` for the page's own wallets and `bridge.rs` with `bridge.html` for the desktop's page in the user's browser).
 - `src/widgets.rs`, `src/widgets/`: the widget registry, the widget picker, shared widget parts (`common/`: market picker, exchange logos, number field, double clicks, in `common/books/` what the widgets that draw order books share, in `common/plot/` the GPU plot the charts share, and in `common/accounts/` what the widgets that show an account share), and one folder per widget (`account_performance/`, `account_summary/`, `chart/`, `defi_protocols/`, `depth_chart/`, `funding_rates/`, `market_screener/`, `order_book/`, `positions/`, `premium_arb_chart/`, `price_delta_monitor/`, `protocol_tvl/`, `trade_stream/`).
 - `src/link.rs`: color linking (the link colors, and the Everything Bar's).
 - `src/exchanges.rs`, `src/format.rs`: exchange names and logos; number formatting.

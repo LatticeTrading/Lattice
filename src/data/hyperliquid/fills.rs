@@ -47,7 +47,10 @@ impl UserFill {
             "A" => TradeSide::Sell,
             _ => return None,
         };
-        let opens = self.dir.as_deref().is_some_and(|dir| dir.starts_with("Open"));
+        let opens = self
+            .dir
+            .as_deref()
+            .is_some_and(|dir| dir.starts_with("Open"));
         Some(Fill {
             id: self.tid.map_or_else(
                 || format!("{}@{time_ms}", self.hash.unwrap_or_default()),
@@ -61,10 +64,7 @@ impl UserFill {
             size,
             fee: self.fee.map(|Figure(fee)| fee),
             fee_asset: self.fee_token,
-            closed_pnl: self
-                .closed_pnl
-                .map(|Figure(pnl)| pnl)
-                .filter(|_| !opens),
+            closed_pnl: self.closed_pnl.map(|Figure(pnl)| pnl).filter(|_| !opens),
             taker: self.crossed,
         })
     }

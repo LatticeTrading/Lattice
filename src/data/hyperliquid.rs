@@ -7,6 +7,11 @@
 //! read is public: an address is all Hyperliquid reports an account by, and
 //! no key or signature is held or sent.
 //!
+//! What a connected wallet signs for Hyperliquid is made in [`signing`]:
+//! the typed data of its user-signed actions, of which only the connection
+//! test is used today (the wallet, `data::wallet`, signs it and nothing is
+//! sent).
+//!
 //! - One endpoint: a JSON `POST /info` whose body's `type` names what is
 //!   asked ([`Info`], in [`info`], with what each request weighs).
 //! - The rate limit: Hyperliquid allows an address [`WEIGHT_LIMIT`] of
@@ -36,12 +41,14 @@ mod info;
 mod performance;
 mod perps;
 mod prices;
+pub mod signing;
 mod spot;
 mod staking;
 
 use std::time::Duration;
 
 pub use info::Info;
+pub use signing::Network;
 
 use super::net::{
     ApiError, HttpClient, HttpOptions, Queries, RateBudget, SourceDetails, StatusBoard,
@@ -104,6 +111,7 @@ impl Default for HyperliquidConfig {
 pub struct Hyperliquid {
     api: Api,
     queries: Queries,
+    network: Network,
 }
 
 /// What sends the requests: the HTTP client, and the budget each spends
@@ -134,7 +142,13 @@ impl Hyperliquid {
                 budget: RateBudget::new(config.weight_per_minute, WEIGHT_WINDOW),
             },
             queries: Queries::new(status, "hyperliquid.queries", "Hyperliquid requests"),
+            network: Network::of(&config.http_base),
         })
+    }
+
+    /// Which Hyperliquid the API is: what a message signed for it names.
+    pub fn network(&self) -> Network {
+        self.network
     }
 
     /// The shared query hub, which every request made here is watched in.

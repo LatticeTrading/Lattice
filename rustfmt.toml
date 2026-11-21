@@ -1,0 +1,6 @@
+# The crate's edition and its style, said here too, so that `rustfmt` run on
+# one file by itself (an editor's or a tool's format on save) formats as
+# `cargo fmt` does. Without it such a run takes the 2015 style, and CI's
+# `cargo fmt --all -- --check` fails on every file it touched.
+edition = "2024"
+style_edition = "2024"

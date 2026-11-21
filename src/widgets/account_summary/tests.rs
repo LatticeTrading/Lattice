@@ -10,22 +10,22 @@ use super::{
 };
 use crate::{
     data::{
+        Portfolio,
         portfolio::{
             Account, Balance, Balances, Direction, Fees, Leverage, MarginAccount, MarginMode,
             Performance, Period, Point, Position, Prices, Scope, Staking, VaultShare, Vaults,
             Window,
         },
-        Portfolio,
     },
     widgets::{
-        common::accounts::{
-            testing::{
-                account, accounts, asked, asked_lighter, asked_txflow, count, lighter_account, on,
-                start, txflow_account, workspace_of, IDLE, TRADER, USER, WHALE,
-            },
-            AccountSettings, Mark, Tone, NONE,
-        },
         WidgetKind,
+        common::accounts::{
+            AccountSettings, Mark, NONE, Tone,
+            testing::{
+                IDLE, TRADER, USER, WHALE, account, accounts, asked, asked_lighter, asked_txflow,
+                count, lighter_account, on, start, txflow_account, workspace_of,
+            },
+        },
     },
 };
 
@@ -254,9 +254,11 @@ fn the_overview_reads_every_report_and_dashes_what_is_not_reported() {
 
     // No reports: every figure a dash, no bar.
     let waiting = Overview::of(Reports::default());
-    assert!(Figure::ALL
-        .iter()
-        .all(|figure| waiting.figure(*figure).text == NONE));
+    assert!(
+        Figure::ALL
+            .iter()
+            .all(|figure| waiting.figure(*figure).text == NONE)
+    );
     assert_eq!(
         (waiting.margin_ratio, waiting.sides, waiting.tier_progress),
         (None, None, None)
@@ -658,9 +660,11 @@ fn the_summary_shows_the_account_s_standing_and_its_balances() {
     ] {
         assert!(count(&requests, kind, USER) >= 1, "{kind}");
     }
-    assert!(requests
-        .iter()
-        .any(|body| body["type"] == "spotMetaAndAssetCtxs"));
+    assert!(
+        requests
+            .iter()
+            .any(|body| body["type"] == "spotMetaAndAssetCtxs")
+    );
 
     // Show Balances takes them away, and brings them back.
     app.press("Widget settings").unwrap();
@@ -901,9 +905,11 @@ fn a_txflow_address_is_summed_up_from_what_txflow_reports() {
     assert_eq!(kinds("uservaultequities"), 1);
     assert_eq!(kinds("userOverview"), 6);
     assert_eq!(requests.len(), 9, "{requests:?}");
-    assert!(requests
-        .iter()
-        .any(|body| body["account_type"] == json!(["perps", "outcome"])));
+    assert!(
+        requests
+            .iter()
+            .any(|body| body["account_type"] == json!(["perps", "outcome"]))
+    );
     assert!(asked(&network).is_empty() && asked_lighter(&network).is_empty());
 }
 
@@ -946,10 +952,11 @@ fn accounts_on_several_exchanges_are_one_summary() {
         assert!(reads(&app, id, read), "{id}: {read}");
     }
     // The strip counts them, and each balance says whose it is.
-    assert!(app
-        .screen()
-        .matches("id:account-summary-account >> text:2 accounts")
-        .unwrap());
+    assert!(
+        app.screen()
+            .matches("id:account-summary-account >> text:2 accounts")
+            .unwrap()
+    );
     assert_eq!(
         app.screen()
             .count("id:account-summary-holdings >> label:Lighter 0xe117…b9a8")

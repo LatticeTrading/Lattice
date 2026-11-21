@@ -28,17 +28,17 @@ use nsh_core::prelude::*;
 use super::settings::AccountSummarySettings;
 use crate::{
     data::{
+        Portfolio, SessionScope,
         net::Watch,
         portfolio::{
             Account, Balance, Balances, Direction, Fees, MarginAccount, MarginMode, Performance,
             Period, Position, Prices, Scope, Staking, Unavailable, Vaults,
         },
-        Portfolio, SessionScope,
     },
     format,
     widgets::common::{
-        accounts::{follow_all, shown, AccountSettings, Mark, Reports as Followed, Tone, NONE},
         Shared,
+        accounts::{AccountSettings, Mark, NONE, Reports as Followed, Tone, follow_all, shown},
     },
 };
 

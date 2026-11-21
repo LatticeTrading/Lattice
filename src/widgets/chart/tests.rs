@@ -1503,11 +1503,15 @@ fn fast_mode_makes_the_newest_candles_from_prints() {
 const PRINT: &str = "1150.25";
 const LIQUIDATION: &str = "1190.75";
 
-/// Answers `fetchTrades` with one print at [`PRINT`], stamped half a minute
-/// past the clock (in the minute still forming, or the one after it), and
-/// a liquidation at [`LIQUIDATION`] after it.
+/// Answers `fetchTrades` with one print at [`PRINT`] and a liquidation at
+/// [`LIQUIDATION`] after it. The print is stamped at the start of the next
+/// minute, which is the stubbed venue's newest candle whatever second the
+/// test runs at: the chart asks for candles a bar past the clock and
+/// [`stub_candles`] answers the whole range. (Stamped half a minute past
+/// the clock, it fell before that candle and so was not placed, in the
+/// first half of every minute.)
 fn stub_trades(_request: HttpRequest, reply: StubReply) {
-    let at = unix_ms() + 30_000.0;
+    let at = (unix_ms() / 60_000.0).floor() * 60_000.0 + 60_000.0;
     let trades = json!([
         { "id": "1", "timestamp": at, "price": PRINT, "amount": 2.0, "side": "buy" },
         {

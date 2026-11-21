@@ -34,11 +34,11 @@ use crate::{
     theme::{self, Role},
     ui,
     widgets::{
-        common::{
-            accounts::{account_frame, mark_view, report_note, Tone},
-            Shared,
-        },
         TabContext,
+        common::{
+            Shared,
+            accounts::{Tone, account_frame, mark_view, report_note},
+        },
     },
 };
 
