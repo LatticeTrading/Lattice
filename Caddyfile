@@ -1,0 +1,16 @@
+:80 {
+	root * /srv
+
+	header Content-Security-Policy "script-src 'self' 'wasm-unsafe-eval'; img-src 'self' blob: data:"
+	header X-Content-Type-Options nosniff
+
+	# Files named by their content never change; index.html must be re-checked.
+	@hashed path_regexp \.[0-9a-f]{10}(\.|/)
+	header @hashed Cache-Control "public, max-age=31536000, immutable"
+	@page path / /index.html /manifest.webmanifest
+	header @page Cache-Control "no-cache"
+
+	file_server {
+		precompressed br gzip
+	}
+}
