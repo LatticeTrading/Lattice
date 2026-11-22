@@ -48,6 +48,11 @@ hiding one from its row of the legend, whose settings and removing use
 drawn in `currentColor`; `src/widgets/chart/indicators/menu.rs` and
 `src/widgets/chart/indicators/legend.rs` inline them.
 
+`icons/bell.svg` is the notifications' bell in the Everything Bar:
+Lattice's own, paths only, in the 24pt box and stroke of
+`icons/settings.svg`, drawn in `currentColor`;
+`src/shell/everything_bar/bell.rs` inlines it.
+
 `icons/window-minimize.svg`, `icons/window-maximize.svg` and
 `icons/window-close.svg` are the old Everything Bar's window buttons
 (`lattice-pro/src/components/layout/EverythingBar.tsx`, its

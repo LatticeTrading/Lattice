@@ -148,7 +148,8 @@ visual and native-caption acceptance remains a user-run check.
 - `themes/`: one JSON file per theme.
 - `src/lib.rs`: the registered NSH UI set and shared `App` root.
 - `src/main.rs`, `src/app.rs`: optional direct Cargo desktop launcher.
-- `src/shell.rs`, `src/shell/`: the shell, Everything Bar (with its symbol search, link button and wallet), Settings panel, and clock.
+- `src/shell.rs`, `src/shell/`: the shell, Everything Bar (with its symbol search, link button, wallet and notifications' bell), Settings panel, clock, and the notification popups.
+- `src/notify.rs`, `src/notify/`: the notifications' center, which anything posts to, and how the user has them pop up.
 - `src/ui.rs`, `src/ui/`: shared controls (text field, button, tooltip hint, settings rows, floating panels, the link button, list scrolling).
 - `src/layout.rs`, `src/layout/grid.rs`: workspace pages, tabs, panes, and responsive geometry.
 - `src/storage.rs`: versioned NSH storage-service persistence.

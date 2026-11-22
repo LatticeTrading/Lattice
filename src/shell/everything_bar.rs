@@ -9,8 +9,9 @@
 //! Manager's button (its panel also leads to the default layouts,
 //! [`layouts`]) and the pages;
 //! in the middle the link button, the symbol search ([`search`]) and New
-//! Widget; then the clock, the connection status ([`connections`]),
-//! Settings and, on Windows, minimize, maximize/restore and close.
+//! Widget; then the clock, the connection status ([`connections`]), the
+//! notifications' bell ([`bell`]), Settings and, on Windows, minimize,
+//! maximize/restore and close.
 
 use nsh_base::tooltip;
 use nsh_core::{
@@ -27,13 +28,16 @@ use super::{
 };
 use crate::{
     data::DataServices,
-    layout, storage,
+    layout,
+    notify::Notifications,
+    storage,
     storage::StoredWorkspace,
     theme::{self, ActiveTheme},
     ui::{self, Side, Tone},
     widgets::picker::{Picker, Target},
 };
 
+mod bell;
 mod connections;
 mod layouts;
 mod search;
@@ -175,6 +179,10 @@ pub fn bar(
     let services = DataServices::try_get();
     let status = services.as_ref().map(|services| services.status);
     let connections = Connections::new();
+    // None for a bar rendered on its own: there is then nothing to be told,
+    // so no bell, and Settings has no popups to place.
+    let notifications = Notifications::try_get();
+    let bell = notifications.map(bell::Bell::new);
     let bar_ref = element_ref();
     // On Windows the bar is the title bar: the window drops the system's
     // frame (it keeps its resize borders, shadow and snapping) and the bar
@@ -381,6 +389,7 @@ pub fn bar(
             .child(text(move || clock::format_time(now.get(), clock.get())));
 
         let connection = connections.indicator(control_width, status);
+        let bell = bell.map(|bell| bell.button(control_width));
         let settings = icon_segment(control_width)
             .label("Application settings")
             .on_press(move || settings_open.update(|open| *open = !*open))
@@ -398,6 +407,7 @@ pub fn bar(
             .items_center()
             .child(time)
             .child(connection)
+            .children(bell)
             .child(settings)
     });
 
@@ -505,8 +515,12 @@ pub fn bar(
                 .map(wallet::WalletCell::panel)
         }))
         .child(dynamic(move || {
+            bell.filter(|bell| bell.is_open())
+                .map(|bell| bell.panel(clock))
+        }))
+        .child(dynamic(move || {
             settings_open.get().then(|| {
-                settings::panel(active_theme, clock, &bar_ref, move || {
+                settings::panel(active_theme, clock, notifications, &bar_ref, move || {
                     settings_open.set(false)
                 })
             })

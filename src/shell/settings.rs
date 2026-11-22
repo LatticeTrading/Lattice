@@ -1,38 +1,40 @@
 //! The Settings panel, which the Everything Bar's gear opens: the user's
-//! preferences, which are the theme and how the bar's clock reads.
+//! preferences, which are the theme, how the bar's clock reads, and
+//! whether and where notifications pop up.
 
 use nsh_base::SelectItem;
 use nsh_core::prelude::*;
 
 use super::clock::{self, Clock};
 use crate::{
+    notify::{Corner, Notifications},
     theme::{self, ActiveTheme},
     ui::{self, Side, Tone},
 };
 
 const PANEL_WIDTH: Points = px(300.0);
 
-/// The Settings panel, below the right end of `anchor`.
+/// The Settings panel, below the right end of `anchor`. The popups' rows
+/// show where there are `notifications` to pop up (under the shell).
 pub(super) fn panel(
     active: ActiveTheme,
     clock: Clock,
+    notifications: Option<Notifications>,
     anchor: &ElementRef,
     on_close: impl Fn() + Clone + 'static,
 ) -> Overlay {
+    let rows = [hour_cycle_row(clock), time_zone_row(clock)]
+        .into_iter()
+        .chain(
+            notifications
+                .into_iter()
+                .flat_map(|center| [popups_row(center), corner_row(center)]),
+        );
     let body = view()
         .test_id("settings")
         .flex_col()
         .child(theme_row(active))
-        .child(
-            hour_cycle_row(clock)
-                .border_t_1()
-                .border_color(theme::BORDER),
-        )
-        .child(
-            time_zone_row(clock)
-                .border_t_1()
-                .border_color(theme::BORDER),
-        );
+        .children(rows.map(|row| row.border_t_1().border_color(theme::BORDER)));
     ui::floating_panel(anchor, Side::Right, PANEL_WIDTH, "Settings", on_close, body)
 }
 
@@ -57,36 +59,88 @@ fn theme_row(active: ActiveTheme) -> View {
         .child(step(active, 1, "›", "Next theme"))
 }
 
+/// One of the equal halves of a row that chooses between two: `says`,
+/// called `label`, in the accent color while `selected`.
+fn half(
+    says: &'static str,
+    label: &'static str,
+    selected: impl Fn() -> bool + Copy + 'static,
+    on_press: impl Fn() + 'static,
+) -> View {
+    ui::button(says, Tone::Normal)
+        .flex_1()
+        .justify_center()
+        .border_l_1()
+        .border_color(theme::BORDER)
+        .label(label)
+        .accessibility_state(move || AccessibilityState {
+            selected: selected(),
+            ..Default::default()
+        })
+        .text_color(move || {
+            if selected() {
+                theme::ACCENT.get()
+            } else {
+                theme::TEXT_MUTED.get()
+            }
+        })
+        .on_press(on_press)
+}
+
 /// "Clock", then a choice of 24- or 12-hour time.
 fn hour_cycle_row(clock: Clock) -> View {
-    let choice = |label: &'static str, hour12: bool| {
-        let selected = move || clock.get().hour12 == hour12;
-        ui::button(label, Tone::Normal)
-            .flex_1()
-            .justify_center()
-            .border_l_1()
-            .border_color(theme::BORDER)
-            .label(if hour12 {
-                "12-hour clock"
-            } else {
-                "24-hour clock"
-            })
-            .accessibility_state(move || AccessibilityState {
-                selected: selected(),
-                ..Default::default()
-            })
-            .text_color(move || {
-                if selected() {
-                    theme::ACCENT.get()
-                } else {
-                    theme::TEXT_MUTED.get()
-                }
-            })
-            .on_press(move || clock.update(|prefs| prefs.hour12 = hour12))
+    let choice = |says: &'static str, label: &'static str, hour12: bool| {
+        half(
+            says,
+            label,
+            move || clock.get().hour12 == hour12,
+            move || clock.update(|prefs| prefs.hour12 = hour12),
+        )
     };
     ui::label_column_row("Clock")
-        .child(choice("24h", false))
-        .child(choice("12h", true))
+        .child(choice("24h", "24-hour clock", false))
+        .child(choice("12h", "12-hour clock", true))
+}
+
+/// "Popups", then whether a notification pops up as it arrives. Turned
+/// on, one shows where they will.
+fn popups_row(center: Notifications) -> View {
+    let choice = |says: &'static str, label: &'static str, popups: bool| {
+        half(
+            says,
+            label,
+            move || center.prefs().popups == popups,
+            move || {
+                center.update(|prefs| prefs.popups = popups);
+                center.preview();
+            },
+        )
+    };
+    ui::label_column_row("Popups")
+        .child(choice("On", "Notification popups on", true))
+        .child(choice("Off", "Notification popups off", false))
+}
+
+/// "Popups at", then a dropdown of the window's corners. A pick shows one
+/// there.
+fn corner_row(center: Notifications) -> View {
+    let items: Vec<SelectItem> = Corner::ALL
+        .into_iter()
+        .map(|corner| SelectItem::new(corner.id(), corner.label()))
+        .collect();
+    let picker = ui::dropdown(
+        move || items.clone(),
+        move || SharedString::from(center.prefs().corner.id()),
+        move || center.prefs().corner.label().to_owned(),
+        move |id| {
+            if let Some(corner) = Corner::from_id(id) {
+                center.update(|prefs| prefs.corner = corner);
+                center.preview();
+            }
+        },
+        "Popup corner",
+    );
+    ui::label_column_row("Popups at").child(picker)
 }
 
 /// "Time zone", then a dropdown of the clock's UTC offsets.

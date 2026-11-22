@@ -2,21 +2,31 @@
 
 pub(crate) mod clock;
 pub(crate) mod everything_bar;
+mod notifications;
 mod settings;
 
 use nsh_core::prelude::*;
 
 use crate::{
     data::DataServices,
-    layout, storage, theme,
+    layout,
+    notify::Notifications,
+    storage, theme,
     widgets::{common::accounts::AddressGroups, picker::Picker},
 };
 
-/// The root shell: Everything Bar above the persistent workspace grid.
+/// The root shell: Everything Bar above the persistent workspace grid, and
+/// the notifications that pop up over both.
 pub fn shell() -> impl IntoElement {
     // Before anything that renders: every widget below finds the data
     // services in its context. Nothing connects until one asks for data.
     let services = DataServices::provide();
+    // Before anything that renders too: whatever has something to tell the
+    // user finds the center in its context.
+    let center = Notifications::provide();
+    // The connected account's trades are told whether a widget shows them
+    // or not.
+    notifications::fills::announce(services.trading.clone(), center);
     let active_theme = theme::ActiveTheme::restore();
     let clock = clock::Clock::restore();
     // Widgets that show times (the Trade Stream) show them as the bar does.
@@ -49,4 +59,5 @@ pub fn shell() -> impl IntoElement {
         .child(everything_bar::bar(workspace, active_theme, clock, picker))
         .child(layout::workspace(workspace, picker))
         .child(picker.view(workspace))
+        .child(notifications::popups(center, clock))
 }

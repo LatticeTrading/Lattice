@@ -7,6 +7,7 @@ mod exchanges;
 mod format;
 mod layout;
 mod link;
+mod notify;
 mod shell;
 mod storage;
 mod theme;

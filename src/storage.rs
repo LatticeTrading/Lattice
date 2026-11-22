@@ -78,6 +78,31 @@ pub(crate) struct StoredSettings {
     /// search sends a pick to. Absent: the default color.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link_color: Option<String>,
+    /// How notifications pop up.
+    pub notifications: StoredNotifications,
+}
+
+/// The notifications' saved preferences (`crate::notify::Prefs`): popups
+/// on, in the default corner, until the user says otherwise.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct StoredNotifications {
+    /// Whether a notification pops up in a corner of the window as it
+    /// arrives. The bell's list keeps it either way.
+    pub popups: bool,
+    /// The corner's id (`bottom-right`). Absent, or one no longer
+    /// offered: the default corner.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub corner: Option<String>,
+}
+
+impl Default for StoredNotifications {
+    fn default() -> Self {
+        Self {
+            popups: true,
+            corner: None,
+        }
+    }
 }
 
 /// The clock's saved preferences: 24-hour UTC+0 by default.
