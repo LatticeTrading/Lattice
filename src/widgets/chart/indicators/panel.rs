@@ -5,7 +5,7 @@
 //!
 //! - A row an input of the indicator's kind ([`Input`]): the compact
 //!   number field for one of whole numbers (a length), a compact select of
-//!   the values it takes for another (a multiplier).
+//!   the values it takes for another (a multiplier, a period).
 //! - Color: a compact select of the colors an indicator can be drawn in
 //!   ([`COLORS`]).
 
@@ -96,7 +96,8 @@ fn input_row(tab: TabContext<ChartSettings>, at: usize, number: usize, input: In
             move || SharedString::from(input.text(value())),
             move || input.text(value()),
             move |picked| {
-                if let Ok(next) = picked.parse::<f64>() {
+                let next = input.values().find(|value| input.text(*value) == picked);
+                if let Some(next) = next {
                     set(next);
                 }
             },

@@ -61,6 +61,8 @@ pub(crate) struct Ink {
     pub down: Hsla,
     pub up_tint: Hsla,
     pub down_tint: Hsla,
+    /// What a zone is filled with: a rectangle's inside.
+    pub tint: Hsla,
 }
 
 impl Ink {
@@ -79,6 +81,7 @@ impl Ink {
             down: of(theme::ASK),
             up_tint: of(theme::BID.opacity(0.14)),
             down_tint: of(theme::ASK.opacity(0.14)),
+            tint: of(theme::ACCENT.opacity(0.1)),
         }
     }
 }

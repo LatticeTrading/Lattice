@@ -400,6 +400,25 @@ fn drawings_are_saved_with_their_market_and_read_leniently() {
 
     // A drawing has its kind's points, and a point is two numbers.
     assert!(Drawing::new(Kind::Fib, &market, vec![point(1.0, 2.0)]).is_none());
+    // A horizontal line is one point, a rectangle two.
+    let level = Drawing::new(Kind::Horizontal, &market, vec![point(60.0, 100.0)]).unwrap();
+    let corners = vec![point(60.0, 100.0), point(180.0, 90.0)];
+    assert!(Drawing::new(Kind::Horizontal, &market, corners.clone()).is_none());
+    let zone = Drawing::new(Kind::Rectangle, &market, corners).unwrap();
+    let both = ChartSettings::default().with_drawings(vec![level, zone]);
+    let value = saved(&both);
+    assert_eq!(
+        value["drawings"],
+        json!([
+            { "type": "hline", "market": "bybit:BTC/USDT:USDT", "points": [[60.0, 100.0]] },
+            {
+                "type": "rect",
+                "market": "bybit:BTC/USDT:USDT",
+                "points": [[60.0, 100.0], [180.0, 90.0]],
+            },
+        ])
+    );
+    assert_eq!(ChartSettings::from(value), both);
     assert!(Anchor::at(f64::NAN, 1.0).is_none());
     // What is no drawing is left out: a kind Lattice does not know or
     // does not keep, too few points, no market, a price that is no number.
@@ -458,6 +477,7 @@ fn ink() -> Ink {
         down: shade(0.7),
         up_tint: shade(0.8),
         down_tint: shade(0.9),
+        tint: shade(0.95),
     }
 }
 
@@ -554,6 +574,39 @@ fn each_kind_is_painted_where_its_points_are() {
     let (tint, _) = measure.boxes[0];
     assert!(close(f64::from(tint[0]), 100.0) && close(f64::from(tint[2]), 200.0));
 
+    // A rectangle: its tint between its corners, and a line along each
+    // edge, from its top left round.
+    let zone = painted(Kind::Rectangle, Emphasis::Plain);
+    assert_eq!((zone.lines.len(), zone.boxes.len()), (4, 1));
+    let (tint, shade) = zone.boxes[0];
+    let sides = tint.iter().zip([100.0_f32, 50.0, 200.0, 50.0]);
+    assert!(
+        sides
+            .into_iter()
+            .all(|(side, right)| (side - right).abs() < 1e-3)
+    );
+    assert!(same(shade, ink.tint) && zone.texts.is_empty());
+    assert!(starts_at(zone.lines[0].from, 100.0, 50.0));
+    assert!(starts_at(zone.lines[2].from, 300.0, 100.0));
+
+    // A horizontal line: across the whole plot at its point's price,
+    // which is written over its right end; picked, it has its one handle.
+    let level = |emphasis: Emphasis| {
+        let item = Item {
+            kind: Kind::Horizontal,
+            points: vec![point(3_600.0, 157.6)],
+            emphasis,
+        };
+        Record::of(&paint(&scale, &[item], &ink).finish())
+    };
+    let across = level(Emphasis::Plain);
+    assert_eq!((across.lines.len(), across.boxes.len()), (1, 0));
+    assert!(starts_at(across.lines[0].from, 0.0, 50.5));
+    assert_eq!(across.words(), ["157.600"]);
+    let price = across.find("157.600");
+    assert!((price.x - 454.0).abs() < 1e-3 && (price.y - 43.5).abs() < 1e-3);
+    assert_eq!(level(Emphasis::Picked).boxes.len(), 1);
+
     // A point months off the plot asks nothing of the canvas beyond it.
     let far = Item {
         kind: Kind::Trend,
@@ -614,6 +667,20 @@ fn a_press_takes_a_point_or_a_line_and_a_drag_moves_what_it_took() {
     let carried = moved(&scale, trend.points(), Grip::Body, grabbed, (210.0, 65.0)).unwrap();
     assert!(same_point(carried[0], point(3_660.0, 168.0)));
     assert!(same_point(carried[1], point(4_860.0, 118.0)));
+
+    // A horizontal line is taken anywhere along the plot, at its price; a
+    // rectangle by its edges and not its inside, which is the plot's.
+    let level = Drawing::new(Kind::Horizontal, "m", vec![point(3_240.0, 137.6)]).unwrap();
+    let zone = Drawing::new(Kind::Rectangle, "m", vec![from, to]).unwrap();
+    let shapes = [(0, &level), (1, &zone)];
+    let takes = |at: (f64, f64)| hit(&scale, &shapes, None, at);
+    assert_eq!(takes((20.0, 72.0)), Some((0, Grip::Body)));
+    assert_eq!(takes((40.0, 70.0)), Some((0, Grip::Point(0))));
+    assert_eq!(takes((20.0, 80.0)), None);
+    assert_eq!(takes((200.0, 52.0)), Some((1, Grip::Body)));
+    assert_eq!(takes((300.0, 50.0)), Some((1, Grip::Body)));
+    assert_eq!(takes((100.0, 50.0)), Some((1, Grip::Point(0))));
+    assert_eq!(takes((200.0, 85.0)), None);
 }
 
 #[test]
@@ -625,6 +692,10 @@ fn a_draft_places_its_points_one_after_another() {
     draft.aim(second);
     assert_eq!(draft.points(), [first, second]);
     assert_eq!(draft.place(), Some(vec![first, second]));
+    // One of a single point is that point, placed as it begins.
+    let mut draft = Draft::begin(Kind::Horizontal, first);
+    assert_eq!(draft.points(), [first]);
+    assert_eq!(draft.place(), Some(vec![first]));
 }
 
 /// What the drawings' canvas showed when it was last painted: where each
@@ -793,6 +864,42 @@ fn drawings_are_made_picked_moved_and_removed_on_the_plot() {
     app.wait(pause).unwrap();
     assert!(drawings().is_empty() && painted().lines.is_empty());
 
+    // A horizontal line by one click: it is across the plot at the price
+    // pressed, which it says, with its one handle.
+    app.press("Horizontal line").unwrap();
+    app.drag("id:chart-plot", by(0.0, 0.0)).unwrap();
+    app.wait_until("the horizontal line", WAIT, |_| drawings().len() == 1)
+        .unwrap();
+    assert_eq!(drawings()[0]["type"], "hline");
+    assert_eq!(drawings()[0]["points"].as_array().map(Vec::len), Some(1));
+    app.wait_until("its line and its price", WAIT, |_| {
+        let level = painted();
+        (level.lines.len(), level.boxes, level.texts.len()) == (1, 1, 1)
+    })
+    .unwrap();
+    assert!(painted().lines[0].0.abs() < 0.01);
+    app.press_key("Delete").unwrap();
+    app.wait_until("no drawing", WAIT, |_| drawings().is_empty())
+        .unwrap();
+
+    // A rectangle by a drag, corner to corner: its tint, its four edges
+    // and a handle on each of its points.
+    app.press("Rectangle").unwrap();
+    app.drag("id:chart-plot", by(120.0, -60.0)).unwrap();
+    app.wait_until("the rectangle", WAIT, |_| drawings().len() == 1)
+        .unwrap();
+    assert_eq!(drawings()[0]["type"], "rect");
+    app.wait_until("its edges", WAIT, |_| {
+        let zone = painted();
+        (zone.lines.len(), zone.boxes) == (4, 3)
+    })
+    .unwrap();
+    app.press_key("Delete").unwrap();
+    app.wait_until("no drawing", WAIT, |_| drawings().is_empty())
+        .unwrap();
+    app.wait_until("an empty canvas", WAIT, |_| painted().lines.is_empty())
+        .unwrap();
+
     // A retracement by two presses: a click places its first point, and
     // the next press, wherever it is let go, its second.
     app.press("Fib retracement").unwrap();
@@ -935,6 +1042,34 @@ fn indicators_are_saved_with_their_inputs_and_read_leniently() {
     );
     assert_eq!(ChartSettings::from(value), settings);
 
+    // A choice is saved by its name, and read by it in either case.
+    let vwap = Indicator::new(Kind::Vwap, &[]);
+    assert_eq!(vwap.title(), "VWAP Day");
+    let weekly = vwap.clone().with_input(0, 1.0);
+    assert_eq!(weekly.title(), "VWAP Week");
+    let settings = ChartSettings::default().with_indicators(vec![vwap, weekly]);
+    let value = saved(&settings);
+    assert_eq!(
+        value,
+        json!({
+            "indicators": [
+                { "type": "vwap", "anchor": "day", "color": "yellow" },
+                { "type": "vwap", "anchor": "week", "color": "yellow" },
+            ],
+        })
+    );
+    assert_eq!(ChartSettings::from(value), settings);
+    let lenient = ChartSettings::from(json!({
+        "indicators": [
+            { "type": "vwap", "anchor": "MONTH" },
+            { "type": "vwap", "anchor": "year" },
+            { "type": "vwap", "anchor": 1 },
+            { "type": "sma", "length": 50 },
+        ],
+    }));
+    let titles: Vec<String> = lenient.indicators().iter().map(Indicator::title).collect();
+    assert_eq!(titles, ["VWAP Month", "VWAP Day", "VWAP Week", "SMA 50"]);
+
     // Once every color is taken they go round again.
     let mut five: Vec<Indicator> = Vec::new();
     for _ in COLORS {
@@ -1017,6 +1152,59 @@ fn indicators_are_computed_from_the_closes() {
     assert!(runs(&narrow[0], &[None, Some(2.0), Some(3.0)]));
     assert!(runs(&narrow[1], &[None, Some(4.0), Some(3.0)]));
     assert!(runs(&narrow[2], &[None, Some(0.0), Some(3.0)]));
+
+    // A simple average is the plain mean of the last bars: over three, a
+    // bar behind a steady rise too.
+    let sma = indicator(Kind::Sma, &[3.0]).lines(&rising);
+    assert!(sma.len() == 1 && runs(&sma[0], &behind) && sma[0].at(6) == Some(6.0));
+    let uneven = indicator(Kind::Sma, &[2.0]).lines(&closing(&[1.0, 3.0, 9.0, 4.0]));
+    assert!(runs(&uneven[0], &[None, Some(2.0), Some(6.0), Some(6.5)]));
+
+    // A volume-weighted average is what was paid a unit traded since its
+    // period began, and starts over with the next: Sunday the 4th of
+    // January 1970, the Monday after, Saturday the 31st and the 1st of
+    // February, a unit traded in each.
+    let days = [(3.0, 10.0), (4.0, 20.0), (30.0, 30.0), (31.0, 40.0)];
+    let traded: Vec<Candle> = days
+        .iter()
+        .map(|(day, price)| {
+            let bar = closing(&[*price])[0];
+            Candle {
+                time: day * 86_400.0,
+                volume: Some(1.0),
+                ..bar
+            }
+        })
+        .collect();
+    let vwap = |period: f64| indicator(Kind::Vwap, &[period]).lines(&traded).remove(0);
+    let (daily, weekly, monthly) = (vwap(0.0), vwap(1.0), vwap(2.0));
+    assert!(runs(
+        &daily,
+        &[Some(10.0), Some(20.0), Some(30.0), Some(40.0)]
+    ));
+    assert!(runs(
+        &weekly,
+        &[Some(10.0), Some(20.0), Some(30.0), Some(35.0)]
+    ));
+    assert!(runs(
+        &monthly,
+        &[Some(10.0), Some(15.0), Some(20.0), Some(40.0)]
+    ));
+    assert!(daily.restarts(0, 1) && weekly.restarts(1, 2) && !weekly.restarts(2, 3));
+    assert!(!monthly.restarts(0, 2) && monthly.restarts(0, 3) && !monthly.restarts(3, 9));
+    // What traded more weighs more, and a bar nothing traded in (or whose
+    // venue does not say) leaves it where it was: nowhere before the
+    // period's first trade.
+    let mut sparse = closing(&[50.0, 10.0, 20.0, 90.0]);
+    let volumes = [None, Some(1.0), Some(3.0), Some(0.0)];
+    for (bar, volume) in sparse.iter_mut().zip(volumes) {
+        bar.volume = volume;
+    }
+    let weighed = indicator(Kind::Vwap, &[]).lines(&sparse);
+    assert!(runs(
+        &weighed[0],
+        &[None, Some(10.0), Some(17.5), Some(17.5)]
+    ));
 
     // Too few bars compute nothing, and a hidden one has no line.
     let long = indicator(Kind::Ema, &[20.0]).lines(&rising);
@@ -1118,6 +1306,17 @@ fn indicator_lines_are_painted_through_their_buckets() {
         "{:?}",
         line.lines[0]
     );
+
+    // A volume-weighted average is not joined across the start of its
+    // period: midnight at bar 75 cuts one of its fifty lines out.
+    let mut traded = bars.clone();
+    for (bar, candle) in traded.iter_mut().enumerate() {
+        candle.time = 86_400.0 + (bar as f64 - 75.0) * 60.0;
+        candle.volume = Some(1.0);
+    }
+    let computed = Computed::of(&[indicator(Kind::Vwap, &[])], &traded);
+    let cut = Record::of(&indicators::paint(&scene, &computed, &ink).finish());
+    assert_eq!(cut.lines.len(), 49);
 }
 
 #[test]

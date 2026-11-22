@@ -1,12 +1,13 @@
 //! What the chart computes from its bars and draws over them
-//! ([`Indicator`]): an exponential moving average, a triple exponential
-//! one and Bollinger Bands, each added from the menu that the badge beside
-//! the plot's header opens.
+//! ([`Indicator`]): a simple moving average, an exponential one, a triple
+//! exponential one, Bollinger Bands and a volume-weighted average price,
+//! each added from the menu that the badge beside the plot's header opens.
 //!
 //! An indicator is a kind ([`Kind`]), the numbers it is computed with (its
-//! kind's [`Input`]s: a length, a multiplier), a color and whether it
-//! shows. It is the chart's, not a market's: it is computed from the
-//! closes of whatever the chart charts, candles or ticks. Indicators are
+//! kind's [`Input`]s: a length, a multiplier, a period), a color and
+//! whether it shows. It is the chart's, not a market's: it is computed
+//! from the bars of whatever the chart charts, candles or ticks (their
+//! closes, and for a volume-weighted average what traded in them). Indicators are
 //! saved in the chart's settings (`indicators`) in the order they were
 //! added, which is the order the legend lists them in and the layer draws
 //! them in (later ones over earlier ones).
@@ -16,7 +17,8 @@
 //! - [`series`]: an indicator's lines over a series ([`Line`]) and every
 //!   indicator's ([`Computed`]), which the chart's session computes when
 //!   a bar or an indicator changes;
-//! - one module a kind ([`ema`], [`tema`], [`bands`]): what it computes;
+//! - one module a kind ([`sma`], [`ema`], [`tema`], [`bands`], [`vwap`]):
+//!   what it computes;
 //! - [`layer`]: the canvas over the plot the lines are painted on;
 //! - [`legend`]: a row an indicator under the plot's header (its name, its
 //!   values at the bar under the pointer, and its controls: hiding it,
@@ -36,7 +38,9 @@ mod legend;
 mod menu;
 mod panel;
 mod series;
+mod sma;
 mod tema;
+mod vwap;
 
 use nsh_core::{element::ImageSrc, prelude::*};
 use serde::{Serialize, Serializer, ser::SerializeMap};
@@ -76,6 +80,9 @@ pub(crate) struct Input {
     pub least: f64,
     pub most: f64,
     pub step: f64,
+    /// What its values are called, the least first, where they are choices
+    /// and not amounts (a period): none for an amount.
+    pub names: &'static [&'static str],
 }
 
 impl Input {
@@ -87,6 +94,7 @@ impl Input {
         least: 1.0,
         most: 500.0,
         step: 1.0,
+        names: &[],
     };
 
     /// How many standard deviations a band is from its basis.
@@ -97,6 +105,19 @@ impl Input {
         least: 0.5,
         most: 5.0,
         step: 0.5,
+        names: &[],
+    };
+
+    /// The period a volume-weighted average starts over with: one of
+    /// [`vwap::PERIODS`], by its number.
+    const ANCHOR: Self = Self {
+        id: "anchor",
+        label: "Anchor",
+        default: 0.0,
+        least: 0.0,
+        most: (vwap::PERIODS.len() - 1) as f64,
+        step: 1.0,
+        names: &vwap::PERIODS,
     };
 
     /// `value` as one it takes: the nearest of its steps within its range,
@@ -109,10 +130,10 @@ impl Input {
         (self.least + steps * self.step).min(self.most)
     }
 
-    /// Whether its values are whole numbers: typed in a number field, where
-    /// another's are picked from a list.
+    /// Whether its values are whole amounts: typed in a number field, where
+    /// another's (and a choice's) are picked from a list.
     pub fn whole(&self) -> bool {
-        self.least.fract() == 0.0 && self.step.fract() == 0.0
+        self.names.is_empty() && self.least.fract() == 0.0 && self.step.fract() == 0.0
     }
 
     /// Every value it takes, the least first.
@@ -122,36 +143,66 @@ impl Input {
         (0..=steps).map(move |at| least + at as f64 * step)
     }
 
-    /// A value of it as it is written (`20`, `2.5`).
+    /// A value of it as it is written (`20`, `2.5`), a choice by its name
+    /// (`Week`).
     pub fn text(&self, value: f64) -> String {
+        if let Some(name) = self.names.get(value as usize) {
+            return (*name).to_owned();
+        }
         let written = format!("{value:.2}");
         let written = written.trim_end_matches('0').trim_end_matches('.');
         written.to_owned()
+    }
+
+    /// What settings save `value` as where it is a choice: its name in
+    /// lower case (`week`); none for an amount.
+    fn saved(&self, value: f64) -> Option<String> {
+        let name = self.names.get(value as usize)?;
+        Some(name.to_ascii_lowercase())
+    }
+
+    /// The value saved as `saved`: a choice by its name, in either case,
+    /// and otherwise a number; none for what is neither.
+    fn read(&self, saved: &Value) -> Option<f64> {
+        let named = saved.as_str().and_then(|name| {
+            let known = self.names.iter();
+            let mut known = known.map(|known| known.eq_ignore_ascii_case(name));
+            Some(known.position(|same| same)? as f64)
+        });
+        named.or_else(|| saved.as_f64())
     }
 }
 
 /// The kinds of indicator, in the order the menu lists them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Kind {
-    /// The closes' exponential moving average.
+    /// The closes' simple moving average.
+    Sma,
+    /// Their exponential moving average, in which the newest weigh the
+    /// most.
     Ema,
     /// Their triple exponential moving average, which lags them less.
     Tema,
     /// Bollinger Bands: their simple moving average, and a band above and
     /// below it some standard deviations away.
     Bands,
+    /// The volume-weighted average price: what a unit traded cost on
+    /// average since its period began.
+    Vwap,
 }
 
 impl Kind {
-    pub const ALL: [Self; 3] = [Self::Ema, Self::Tema, Self::Bands];
+    pub const ALL: [Self; 5] = [Self::Sma, Self::Ema, Self::Tema, Self::Bands, Self::Vwap];
 
     /// What settings save it as, and what its menu row's test id ends
     /// with.
     pub fn id(self) -> &'static str {
         match self {
+            Self::Sma => "sma",
             Self::Ema => "ema",
             Self::Tema => "tema",
             Self::Bands => "bb",
+            Self::Vwap => "vwap",
         }
     }
 
@@ -162,27 +213,32 @@ impl Kind {
     /// Its short name, which starts its row of the legend (`EMA 20`).
     pub fn label(self) -> &'static str {
         match self {
+            Self::Sma => "SMA",
             Self::Ema => "EMA",
             Self::Tema => "TEMA",
             Self::Bands => "BB",
+            Self::Vwap => "VWAP",
         }
     }
 
     /// Its whole name, which the menu lists it by.
     pub fn name(self) -> &'static str {
         match self {
+            Self::Sma => "Simple Moving Average",
             Self::Ema => "Exponential Moving Average",
             Self::Tema => "Triple Exponential Moving Average",
             Self::Bands => "Bollinger Bands",
+            Self::Vwap => "Volume Weighted Average Price",
         }
     }
 
     /// What one is computed with, in the order its row names their values
-    /// and its settings list them. Every kind's first is its length.
+    /// and its settings list them: every kind has one at least.
     pub fn inputs(self) -> &'static [Input] {
         match self {
-            Self::Ema | Self::Tema => &[Input::LENGTH],
+            Self::Sma | Self::Ema | Self::Tema => &[Input::LENGTH],
             Self::Bands => &[Input::LENGTH, Input::DEVIATIONS],
+            Self::Vwap => &[Input::ANCHOR],
         }
     }
 }
@@ -271,14 +327,18 @@ impl Indicator {
         if self.hidden {
             return Vec::new();
         }
-        let closes: Vec<f64> = bars.iter().map(|bar| bar.close).collect();
+        let closes = || bars.iter().map(|bar| bar.close).collect::<Vec<f64>>();
         // One value an input, whole where the input is: `new`, `read` and
-        // `with_input` make no other.
-        let length = self.inputs[0] as usize;
+        // `with_input` make no other. The first is a length, but for the
+        // kind that has a period.
+        let first = self.inputs[0];
+        let length = first as usize;
         match self.kind {
-            Kind::Ema => vec![ema::line(&closes, length)],
-            Kind::Tema => vec![tema::line(&closes, length)],
-            Kind::Bands => bands::lines(&closes, length, self.inputs[1]),
+            Kind::Sma => vec![sma::line(&closes(), length)],
+            Kind::Ema => vec![ema::line(&closes(), length)],
+            Kind::Tema => vec![tema::line(&closes(), length)],
+            Kind::Bands => bands::lines(&closes(), length, self.inputs[1]),
+            Kind::Vwap => vec![vwap::line(bars, vwap::Period::of(first))],
         }
     }
 
@@ -288,7 +348,7 @@ impl Indicator {
     /// Lattice does not know the first.
     fn read(saved: &Value) -> Option<Self> {
         let kind = Kind::from_id(saved.get("type")?.as_str()?)?;
-        let number = |input: &Input| saved.get(input.id).and_then(Value::as_f64);
+        let number = |input: &Input| saved.get(input.id).and_then(|value| input.read(value));
         let color = saved.get("color").and_then(Value::as_str);
         Some(Self {
             kind,
@@ -310,13 +370,15 @@ impl Indicator {
 }
 
 /// Saved as its kind (`type`), each input under its id (a whole one as a
-/// whole number), its color's id, and `hidden` while it is.
+/// whole number, a choice as its name), its color's id, and `hidden` while it is.
 impl Serialize for Indicator {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut saved = serializer.serialize_map(None)?;
         saved.serialize_entry("type", self.kind.id())?;
         for (input, value) in self.kind.inputs().iter().zip(&self.inputs) {
-            if input.whole() {
+            if let Some(name) = input.saved(*value) {
+                saved.serialize_entry(input.id, &name)?;
+            } else if input.whole() {
                 saved.serialize_entry(input.id, &(*value as u64))?;
             } else {
                 saved.serialize_entry(input.id, value)?;

@@ -34,8 +34,9 @@ path), drawn in `currentColor`.
 (`lattice-pro/src/components/trading/FundingRates.tsx`, its inline SVG
 paths), drawn in `currentColor`.
 
-`icons/cursor.svg`, `icons/trend-line.svg`, `icons/fib-retracement.svg`,
-`icons/measure.svg`, `icons/trash.svg`, `icons/chevron-left.svg` and
+`icons/cursor.svg`, `icons/trend-line.svg`, `icons/horizontal-line.svg`,
+`icons/rectangle.svg`, `icons/fib-retracement.svg`, `icons/measure.svg`,
+`icons/trash.svg`, `icons/chevron-left.svg` and
 `icons/chevron-right.svg` are the Chart's drawing toolbar's (its tools,
 removing drawings, and closing and opening it): Lattice's own, paths only,
 drawn in `currentColor`; `src/widgets/chart/drawings.rs` and

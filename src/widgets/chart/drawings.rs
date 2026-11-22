@@ -1,6 +1,7 @@
 //! What is drawn on the chart by hand ([`Drawing`]): a trend line, a
-//! Fibonacci retracement and a measurement, each made with its tool
-//! ([`Tool`]) from the toolbar beside the plot.
+//! horizontal line, a rectangle, a Fibonacci retracement and a
+//! measurement, each made with its tool ([`Tool`]) from the toolbar beside
+//! the plot.
 //!
 //! A drawing is a kind ([`Kind`]) and its points ([`Anchor`]: a time and a
 //! price each), so it stays on its bars through a pan, a zoom, a page of
@@ -13,8 +14,8 @@
 //! Its parts:
 //!
 //! - [`shape`]: what a kind looks like and where it can be grabbed
-//!   ([`Shape`]), one module a kind ([`trend`], [`fib`], [`measure`]), and
-//!   what they draw with;
+//!   ([`Shape`]), one module a kind ([`trend`], [`horizontal`],
+//!   [`rectangle`], [`fib`], [`measure`]), and what they draw with;
 //! - [`scale`]: where a point is on the plot, and which point a place of
 //!   the plot is;
 //! - [`editor`]: the tool in hand and what the pointer does with it
@@ -30,8 +31,10 @@
 
 mod editor;
 mod fib;
+mod horizontal;
 mod layer;
 mod measure;
+mod rectangle;
 mod scale;
 mod shape;
 mod toolbar;
@@ -100,6 +103,10 @@ impl Serialize for Anchor {
 pub(crate) enum Kind {
     /// A line between two points.
     Trend,
+    /// A line across the plot at one point's price.
+    Horizontal,
+    /// A zone whose opposite corners are two points.
+    Rectangle,
     /// The Fibonacci retracement levels of a move between two points.
     Fib,
     /// How far apart two points are, in price, in bars and in time.
@@ -107,12 +114,20 @@ pub(crate) enum Kind {
 }
 
 impl Kind {
-    pub const ALL: [Self; 3] = [Self::Trend, Self::Fib, Self::Measure];
+    pub const ALL: [Self; 5] = [
+        Self::Trend,
+        Self::Horizontal,
+        Self::Rectangle,
+        Self::Fib,
+        Self::Measure,
+    ];
 
     /// What settings save it as, and what its tool's test id ends with.
     pub fn id(self) -> &'static str {
         match self {
             Self::Trend => "trend",
+            Self::Horizontal => "hline",
+            Self::Rectangle => "rect",
             Self::Fib => "fib",
             Self::Measure => "measure",
         }
@@ -126,6 +141,8 @@ impl Kind {
     pub fn label(self) -> &'static str {
         match self {
             Self::Trend => "Trend line",
+            Self::Horizontal => "Horizontal line",
+            Self::Rectangle => "Rectangle",
             Self::Fib => "Fib retracement",
             Self::Measure => "Measure",
         }
@@ -134,7 +151,8 @@ impl Kind {
     /// How many points make one.
     pub fn anchors(self) -> usize {
         match self {
-            Self::Trend | Self::Fib | Self::Measure => 2,
+            Self::Horizontal => 1,
+            Self::Trend | Self::Rectangle | Self::Fib | Self::Measure => 2,
         }
     }
 
@@ -142,7 +160,7 @@ impl Kind {
     /// not shows until the next press on the plot.
     pub fn kept(self) -> bool {
         match self {
-            Self::Trend | Self::Fib => true,
+            Self::Trend | Self::Horizontal | Self::Rectangle | Self::Fib => true,
             Self::Measure => false,
         }
     }
@@ -151,6 +169,8 @@ impl Kind {
     fn shape(self) -> &'static dyn Shape {
         match self {
             Self::Trend => &trend::Trend,
+            Self::Horizontal => &horizontal::Horizontal,
+            Self::Rectangle => &rectangle::Rectangle,
             Self::Fib => &fib::Fib,
             Self::Measure => &measure::Measure,
         }
@@ -173,9 +193,11 @@ pub(crate) enum Tool {
 
 impl Tool {
     /// Every tool, in the order the toolbar lists them.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 6] = [
         Self::Cursor,
         Self::Draw(Kind::Trend),
+        Self::Draw(Kind::Horizontal),
+        Self::Draw(Kind::Rectangle),
         Self::Draw(Kind::Fib),
         Self::Draw(Kind::Measure),
     ];
@@ -201,6 +223,10 @@ impl Tool {
         match self {
             Self::Cursor => include_str!("../../../assets/icons/cursor.svg"),
             Self::Draw(Kind::Trend) => include_str!("../../../assets/icons/trend-line.svg"),
+            Self::Draw(Kind::Horizontal) => {
+                include_str!("../../../assets/icons/horizontal-line.svg")
+            }
+            Self::Draw(Kind::Rectangle) => include_str!("../../../assets/icons/rectangle.svg"),
             Self::Draw(Kind::Fib) => include_str!("../../../assets/icons/fib-retracement.svg"),
             Self::Draw(Kind::Measure) => include_str!("../../../assets/icons/measure.svg"),
         }

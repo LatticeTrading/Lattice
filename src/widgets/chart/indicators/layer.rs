@@ -54,7 +54,7 @@ impl Ink {
 
 /// `computed`'s lines painted in order (later ones over earlier ones) on
 /// the plot showing `scene`, in `ink`'s colors: a line is cut where it has
-/// no value.
+/// no value, and where it starts over.
 pub(crate) fn paint(scene: &Scene, computed: &Computed, ink: &Ink) -> Painter {
     let (width, height) = (f64::from(scene.width), f64::from(scene.height));
     let (top, bottom) = (-FAR * height, (FAR + 1.0) * height);
@@ -71,22 +71,26 @@ pub(crate) fn paint(scene: &Scene, computed: &Computed, ink: &Ink) -> Painter {
                     .line_width(WIDTH)
                     .line_join(LineJoin::Round)
                     .begin_path();
-                let mut drawing = false;
+                // The bar the line was last drawn to, which the next
+                // is joined to unless the line starts over between
+                // them.
+                let mut drawn = None;
                 for at in buckets.clone() {
                     let spot = scene
                         .bucket_end(at)
-                        .and_then(|(x, bar)| Some((x, line.at(bar)?)));
-                    let Some((x, value)) = spot else {
-                        drawing = false;
+                        .and_then(|(x, bar)| Some((x, bar, line.at(bar)?)));
+                    let Some((x, bar, value)) = spot else {
+                        drawn = None;
                         continue;
                     };
                     let (x, y) = (x as f32, scene.y_of(value).clamp(top, bottom) as f32);
-                    painter = if drawing {
+                    let joined = drawn.is_some_and(|drawn| !line.restarts(drawn, bar));
+                    painter = if joined {
                         painter.line_to(x, y)
                     } else {
                         painter.move_to(x, y)
                     };
-                    drawing = true;
+                    drawn = Some(bar);
                 }
                 painter.stroke()
             });

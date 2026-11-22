@@ -31,8 +31,9 @@
 //! record; the pane's gear opens its settings panel ([`panel`]).
 //!
 //! Drawings ([`drawings`]): a toolbar down the plot's left side has the
-//! tools (a trend line, a Fibonacci retracement, a measurement), and what
-//! is drawn with them is fixed to its times and prices on the market it
+//! tools (a trend line, a horizontal line, a rectangle, a Fibonacci
+//! retracement, a measurement), and what is drawn with them is fixed to
+//! its times and prices on the market it
 //! was drawn on, over the plot. Closed, the toolbar takes no room: a thin
 //! badge floating on the plot, just inside its left edge and halfway down
 //! it, brings it out again. The plot is still the shared one: it asks the
@@ -44,9 +45,10 @@
 //! without the settings panel.
 //!
 //! Indicators ([`indicators`]): the badge right of the timeframe's, which
-//! says `INDICATORS`, opens the menu of them (an exponential moving
-//! average, a triple exponential one, Bollinger Bands). Each one added is
-//! computed from the bars charted, whatever the market, and drawn over
+//! says `INDICATORS`, opens the menu of them (a simple moving average,
+//! an exponential one, a triple exponential one, Bollinger Bands, a
+//! volume-weighted average price). Each one added is computed from the
+//! bars charted, whatever the market, and drawn over
 //! them in its color; the prices fitted to the bars make room for its
 //! lines. A legend under the header lists them, each with its values at
 //! the bar under the pointer and, with the pointer over its row, its

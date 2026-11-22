@@ -16,6 +16,10 @@ pub(crate) struct Line {
     values: Vec<f64>,
     /// Drawn fainter than the indicator's main line: a band about it.
     quiet: bool,
+    /// The bars it starts over at, oldest first: each the first of a
+    /// period whose values owe nothing to the one before, so the line is
+    /// not joined to it from the bar before.
+    restarts: Vec<usize>,
 }
 
 impl Line {
@@ -25,7 +29,21 @@ impl Line {
             first,
             values,
             quiet: false,
+            restarts: Vec::new(),
         }
+    }
+
+    /// It starting over at each of the bars `at`, oldest first.
+    pub fn restarting(mut self, at: Vec<usize>) -> Self {
+        self.restarts = at;
+        self
+    }
+
+    /// Whether it starts over after bar `from`, at bar `to` or before it:
+    /// the two are not joined then.
+    pub fn restarts(&self, from: usize, to: usize) -> bool {
+        let next = self.restarts.partition_point(|bar| *bar <= from);
+        self.restarts.get(next).is_some_and(|bar| *bar <= to)
     }
 
     /// It drawn fainter.
