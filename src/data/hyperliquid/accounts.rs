@@ -16,6 +16,9 @@
 //!   the token prices, one request for every account, 20 more. Its trades
 //!   weigh 20 and 1 more for every 20 returned: up to 120 for the 2000
 //!   Hyperliquid returns at most.
+//! - What a position's instrument is priced at between two reports is
+//!   followed over the WebSocket ([`super::pricing`]), which costs none of
+//!   that weight.
 
 use std::time::Duration;
 

@@ -1,4 +1,7 @@
-use std::{rc::Rc, sync::Arc};
+use std::{
+    rc::Rc,
+    sync::{Arc, Mutex},
+};
 
 use super::*;
 use nsh_core::{
@@ -13,7 +16,7 @@ use crate::{
     data::{
         DataConfig, DataServices,
         ferris::FerrisConfig,
-        hyperliquid::HyperliquidConfig,
+        hyperliquid::{HyperliquidConfig, signing},
         wallet::{Event, Reach, WalletConfig, testing::StandIn},
     },
     widgets::WidgetKind,
@@ -815,32 +818,47 @@ fn wallet_bar(reach: Reach, names: &[&str]) -> View {
         ))
 }
 
-/// Answers the stubbed Hyperliquid: an account worth $1,234.50 with one
-/// position, whoever is asked about.
-fn stub_hyperliquid(request: HttpRequest, reply: StubReply) {
-    let body: Value = match &request.body {
+/// A request's JSON body.
+fn body_of(request: &HttpRequest) -> Value {
+    match &request.body {
         HttpBody::Bytes(bytes) => serde_json::from_slice(bytes).unwrap_or_default(),
         _ => Value::Null,
-    };
+    }
+}
+
+/// Answers the stubbed Hyperliquid's exchange endpoint: whatever is
+/// posted was done, and an agent approved is the one `listed` from then on
+/// (an account has one of a name).
+fn stub_hyperliquid_exchange(
+    listed: &Mutex<Option<String>>,
+    request: &HttpRequest,
+    reply: StubReply,
+) {
+    let action = &body_of(request)["action"];
+    if action["type"] == "approveAgent" {
+        *listed.lock().unwrap() = action["agentAddress"].as_str().map(str::to_owned);
+    }
     let mut response = StubResponse::default();
-    if body["type"] == "clearinghouseState" && body["user"] == ACCOUNT {
-        let state = json!({
-            "assetPositions": [{
-                "position": { "coin": "ETH", "szi": "0.5", "positionValue": "1500.0" },
-                "type": "oneWay",
-            }],
-            "crossMaintenanceMarginUsed": "7.5",
-            "crossMarginSummary": { "accountValue": "1234.5" },
-            "marginSummary": {
-                "accountValue": "1234.5",
-                "totalMarginUsed": "75.0",
-                "totalNtlPos": "1500.0",
-            },
-            "time": 1_700_000_000_000_u64,
-            "withdrawable": "1159.5",
-        });
+    response.status = 200;
+    response.body = br#"{"status":"ok","response":{"type":"default"}}"#.to_vec();
+    reply.send(response);
+}
+
+/// Answers the stubbed Hyperliquid's info requests: the agent `listed`,
+/// valid for years, and nothing else.
+fn stub_hyperliquid_info(listed: &Mutex<Option<String>>, request: &HttpRequest, reply: StubReply) {
+    let mut response = StubResponse::default();
+    if body_of(request)["type"] == "extraAgents" {
+        let agents: Value = listed
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|agent| {
+                json!({ "name": "Lattice", "address": agent, "validUntil": 4_102_444_800_000_u64 })
+            })
+            .collect();
         response.status = 200;
-        response.body = serde_json::to_vec(&state).expect("the state is JSON");
+        response.body = serde_json::to_vec(&agents).expect("the agents are JSON");
     } else {
         response.status = 422;
         response.body = b"Failed to deserialize the JSON body into the target type".to_vec();
@@ -854,20 +872,65 @@ fn start_wallet(root: Root, os: Os) -> Headless {
 
 /// [`start_wallet`] in a window `width` wide.
 fn start_wallet_in(root: Root, os: Os, width: f32) -> Headless {
-    let network = Arc::new(StubNetwork::new([(
-        format!("POST {HYPERLIQUID}/info"),
-        StubRoute::Handler(Arc::new(stub_hyperliquid)),
-    )]));
+    start_trading_in(root, os, width).0
+}
+
+/// [`start_wallet`] with the stub network, which keeps what was posted to
+/// Hyperliquid.
+fn start_trading(root: Root, os: Os) -> (Headless, Arc<StubNetwork>) {
+    start_trading_in(root, os, 1280.0)
+}
+
+fn start_trading_in(root: Root, os: Os, width: f32) -> (Headless, Arc<StubNetwork>) {
+    let listed: Arc<Mutex<Option<String>>> = Arc::default();
+    let (approves, lists) = (listed.clone(), listed);
+    let network = Arc::new(StubNetwork::new([
+        (
+            format!("POST {HYPERLIQUID}/exchange"),
+            StubRoute::Handler(Arc::new(move |request: HttpRequest, reply: StubReply| {
+                stub_hyperliquid_exchange(&approves, &request, reply);
+            })),
+        ),
+        (
+            format!("POST {HYPERLIQUID}/info"),
+            StubRoute::Handler(Arc::new(move |request: HttpRequest, reply: StubReply| {
+                stub_hyperliquid_info(&lists, &request, reply);
+            })),
+        ),
+    ]));
     let mut config = EngineConfig::new(root);
     config.viewport = Size::new(px(width), px(800.0));
     config.storage = Some(MemoryStorage::new([]));
-    config.network = Some(network);
+    config.network = Some(network.clone());
     config.environment.os = os;
     config.environment.idiom = Idiom::Desktop;
     let mut app = Headless::start(config).unwrap();
     app.wait_for(WALLET).unwrap();
-    app
+    (app, network)
 }
+
+/// What was posted to Hyperliquid's exchange endpoint so far, in order.
+fn posted(network: &StubNetwork) -> Vec<Value> {
+    let exchange = format!("{HYPERLIQUID}/exchange");
+    let requests = network.requests();
+    let posted = requests.iter().filter(|request| request.url == exchange);
+    posted.map(body_of).collect()
+}
+
+/// How many times Hyperliquid was asked which agents the account has.
+fn agents_asked(network: &StubNetwork) -> usize {
+    let info = format!("{HYPERLIQUID}/info");
+    let requests = network.requests();
+    let asked = requests.iter().filter(|request| request.url == info);
+    asked
+        .filter(|request| body_of(request)["type"] == "extraAgents")
+        .count()
+}
+
+/// The stand-in wallet's Hyperliquid row, and what it says while trading
+/// is on or off.
+const ENABLE: &str = "label:Enable trading on Hyperliquid";
+const DISABLE: &str = "label:Disable trading on Hyperliquid";
 
 /// Whether the bar's cell says no wallet is connected.
 fn disconnected(app: &Headless) -> bool {
@@ -885,6 +948,12 @@ fn connect_wallet(app: &mut Headless) {
     open_wallet(app);
     app.press("Connect wallet").unwrap();
     app.wait_for("Rabby Wallet").unwrap();
+    app.wait_for(ACCOUNT_SHORT).unwrap();
+}
+
+/// Connects the one wallet there is again, with the panel open.
+fn connect_again(app: &mut Headless) {
+    app.press("Connect wallet").unwrap();
     app.wait_for(ACCOUNT_SHORT).unwrap();
 }
 
@@ -933,8 +1002,8 @@ fn the_wallet_stands_between_the_wordmark_and_the_layout_button() {
 }
 
 #[test]
-fn the_one_wallet_there_is_connects_and_passes_the_hyperliquid_test() {
-    let mut app = start_wallet(Root::of::<OneWallet>(), Os::Web);
+fn the_one_wallet_there_is_connects_and_enables_trading() {
+    let (mut app, network) = start_trading(Root::of::<OneWallet>(), Os::Web);
     connect_wallet(&mut app);
     // The bar's cell is the account now, and the panel says what is
     // connected.
@@ -949,31 +1018,110 @@ fn the_one_wallet_there_is_connects_and_passes_the_hyperliquid_test() {
     app.press("Copy the account's address").unwrap();
     assert_eq!(app.screen().clipboard(), Some(ACCOUNT));
 
-    // Hyperliquid knows the account, and the wallet signs for it.
-    app.press("Test Hyperliquid").unwrap();
-    app.wait_for("Hyperliquid: $1,234.50 in perpetuals, 1 open position.")
-        .unwrap();
-    app.wait_for("Signature: Signed by this account.").unwrap();
+    // Each exchange it can trade on is listed with where it stands there:
+    // nothing trades for it yet, and what enabling asks is said before it
+    // is asked.
+    assert!(app.shows("Hyperliquid") && app.shows("Trading off"));
+    assert!(app.screen().texts().iter().any(|text| {
+        text.starts_with("Your wallet signs one approval.")
+            && text.ends_with("The key cannot withdraw or transfer.")
+    }));
+    assert!(posted(&network).is_empty());
+
+    // Enabling: the wallet signs one approval, which is posted.
+    app.press(ENABLE).unwrap();
+    app.wait_for("Trading on").unwrap();
     assert_eq!(
         asked(&mut app),
         "eth_requestAccounts eth_chainId eth_signTypedData_v4"
     );
+    let requests = posted(&network);
+    let [approval] = &requests[..] else {
+        panic!("one approval is posted, not {requests:?}");
+    };
+    let action = &approval["action"];
+    assert_eq!(action["type"], "approveAgent");
+    assert_eq!(action["hyperliquidChain"], "Mainnet");
+    // The chain the wallet signed on, Arbitrum One.
+    assert_eq!(action["signatureChainId"], "0xa4b1");
+    assert_eq!(action["agentName"], "Lattice");
+    assert_eq!(action["nonce"], approval["nonce"]);
+    assert_eq!(approval["vaultAddress"], Value::Null);
+    // What was posted is what the account signed: read as Hyperliquid
+    // reads it, the signer is the account, and the agent is a key of the
+    // app's own.
+    let agent = action["agentAddress"].as_str().unwrap();
+    assert_ne!(agent, ACCOUNT);
+    let signed = signing::approve_agent(
+        signing::Network::Mainnet,
+        42_161,
+        agent.parse().unwrap(),
+        "Lattice",
+        approval["nonce"].as_u64().unwrap(),
+    )
+    .unwrap();
+    let signature = &approval["signature"];
+    let word = |name: &str| signature[name].as_str().unwrap().parse().unwrap();
+    let signature = alloy::primitives::Signature::new(
+        word("r"),
+        word("s"),
+        signature["v"].as_u64().unwrap() == 28,
+    );
+    assert_eq!(
+        signing::signer_of(&signed, &signature).map(|signer| format!("{signer:#x}")),
+        Ok(ACCOUNT.to_owned())
+    );
+
+    // Disabling forgets the agent for good; enabling again approves a new
+    // one, which the wallet signs for.
+    app.press(DISABLE).unwrap();
+    app.wait_for("Trading off").unwrap();
+    app.press(ENABLE).unwrap();
+    app.wait_for("Trading on").unwrap();
+    let again = posted(&network);
+    assert_eq!(again.len(), 2);
+    assert_ne!(again[1]["action"]["agentAddress"], agent);
+    assert_eq!(agents_asked(&network), 0, "nothing was kept to ask about");
 
     // Closing the panel changes nothing of the connection; Disconnect ends
-    // it.
+    // it, and nothing trades for an account that is not connected.
     app.press("Close Wallet").unwrap();
     app.wait_for_gone(WALLET_PANEL, WAIT).unwrap();
     assert!(app.shows(ACCOUNT_SHORT));
     open_wallet(&mut app);
+    assert!(app.shows("Trading on"));
     app.press("Disconnect").unwrap();
     app.wait_for("label:Wallet: not connected").unwrap();
     assert!(app.shows("Connect wallet"));
-    assert!(!app.shows("Signature: Signed by this account."));
+    assert!(!app.shows("Trading on"));
+
+    // Connected again, what the account allowed is taken up: Hyperliquid
+    // is asked whether the agent still holds, and the wallet signs nothing
+    // more.
+    connect_again(&mut app);
+    app.wait_for("Trading on").unwrap();
+    assert_eq!(agents_asked(&network), 1);
+    assert_eq!(posted(&network).len(), 2);
+    assert_eq!(
+        asked(&mut app),
+        "eth_requestAccounts eth_chainId eth_signTypedData_v4 eth_signTypedData_v4 \
+         eth_requestAccounts eth_chainId"
+    );
+
+    // Disabled, it is not taken up again: nothing is kept to ask about.
+    app.press(DISABLE).unwrap();
+    app.wait_for("Trading off").unwrap();
+    app.press("Disconnect").unwrap();
+    app.wait_for("label:Wallet: not connected").unwrap();
+    connect_again(&mut app);
+    assert!(app.shows("Trading off"));
+    assert_eq!(agents_asked(&network), 1);
+    assert_eq!(posted(&network).len(), 2);
 }
 
 #[test]
 fn what_the_user_turns_down_is_said_and_can_be_tried_again() {
-    let mut app = start_wallet(Root::of::<OneWallet>(), Os::Web);
+    let (mut app, network) = start_trading(Root::of::<OneWallet>(), Os::Web);
     app.press("the user rejects").unwrap();
     open_wallet(&mut app);
     app.press("Connect wallet").unwrap();
@@ -984,23 +1132,28 @@ fn what_the_user_turns_down_is_said_and_can_be_tried_again() {
     app.press("Connect Rabby Wallet").unwrap();
     app.wait_for(ACCOUNT_SHORT).unwrap();
 
-    // A signature turned down fails that check alone.
+    // An approval turned down enables nothing, and nothing is posted.
     app.press("the user rejects").unwrap();
-    app.press("Test Hyperliquid").unwrap();
-    app.wait_for("Signature: Rejected in the wallet.").unwrap();
-    assert!(app.shows("Hyperliquid: $1,234.50 in perpetuals, 1 open position."));
+    app.press(ENABLE).unwrap();
+    app.wait_for("Hyperliquid: Rejected in the wallet.")
+        .unwrap();
+    assert!(app.shows("Trading off"));
     assert!(app.shows(ACCOUNT_SHORT));
+    assert!(posted(&network).is_empty());
 
-    // And one made by another key is not this account's.
+    // And one signed by another key is not this account's: Hyperliquid
+    // would take it for that key's account, so it is never sent.
     app.press("the user approves").unwrap();
     app.press("another key signs").unwrap();
-    app.press("Test Hyperliquid").unwrap();
+    app.press(ENABLE).unwrap();
     app.wait_until("the other signer being named", WAIT, |screen| {
         screen.texts().iter().any(|text| {
-            text.starts_with("Signature: Signed by 0x") && text.contains("not by this account")
+            text.starts_with("Hyperliquid: Signed by 0x") && text.contains("not by this account")
         })
     })
     .unwrap();
+    assert!(app.shows("Trading off"));
+    assert!(posted(&network).is_empty());
 }
 
 #[test]
@@ -1041,20 +1194,22 @@ fn the_wallets_of_the_browser_are_chosen_from_on_desktop() {
 fn the_wallet_keeps_the_connection_current() {
     let mut app = start_wallet(Root::of::<OneWallet>(), Os::Web);
     connect_wallet(&mut app);
-    app.press("Test Hyperliquid").unwrap();
-    app.wait_for("Signature: Signed by this account.").unwrap();
+    app.press(ENABLE).unwrap();
+    app.wait_for("Trading on").unwrap();
 
+    // The chain the wallet is on is not who it is: trading stays on.
     app.press("the wallet changes chain").unwrap();
     app.wait_for("Ethereum (1)").unwrap();
-    assert!(app.shows("Signature: Signed by this account."));
+    assert!(app.shows("Trading on"));
     // Another wallet's news changes nothing.
     app.press("another wallet changes account").unwrap();
     assert!(app.shows(ACCOUNT_SHORT));
 
-    // Another account is another connection to test.
+    // Another account has allowed nothing: what the last one's agent was
+    // approved for is not its to use.
     app.press("the wallet changes account").unwrap();
     app.wait_for("0x5e9e…a13a").unwrap();
-    assert!(!app.shows("Signature: Signed by this account."));
+    assert!(app.shows("Trading off") && !app.shows("Trading on"));
 
     // The site disconnected in the wallet is the end of it.
     app.press("the wallet disconnects").unwrap();

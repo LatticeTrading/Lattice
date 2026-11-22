@@ -39,7 +39,7 @@ use super::AddressGroups;
 use crate::{
     data::{
         DataConfig, DataServices, ferris::FerrisConfig, hyperliquid::HyperliquidConfig,
-        lighter::LighterConfig, txflow::TxFlowConfig,
+        lighter::LighterConfig, net::ScriptedSocket, txflow::TxFlowConfig,
     },
     layout,
     shell::clock::Clock as BarClock,
@@ -106,6 +106,16 @@ pub(crate) fn workspace_of(kind: WidgetKind, saved: Option<Value>) -> impl IntoE
     workspace_within(kind, saved, budget)
 }
 
+/// What the stubbed Hyperliquid's WebSocket answers a frame with: a pong
+/// to a ping, and nothing to anything else.
+fn silent(frame: &str) -> Vec<String> {
+    if frame.contains(r#""ping""#) {
+        vec![r#"{"channel":"pong"}"#.to_owned()]
+    } else {
+        Vec::new()
+    }
+}
+
 /// [`workspace_of`] with `weight_per_minute` as all the app may ask of
 /// Hyperliquid a minute.
 pub(crate) fn workspace_within(
@@ -122,6 +132,10 @@ pub(crate) fn workspace_within(
         hyperliquid: HyperliquidConfig {
             http_base: HYPERLIQUID.to_owned(),
             weight_per_minute,
+            // No test reaches the real socket either: this one answers its
+            // keepalive and says nothing else, so what shows is what the
+            // requests answer.
+            transport: Some(ScriptedSocket::new(silent).transport()),
             ..HyperliquidConfig::production()
         },
         lighter: LighterConfig {

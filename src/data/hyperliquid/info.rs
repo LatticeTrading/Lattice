@@ -2,8 +2,8 @@
 //! what is asked. Every request here reads public data.
 //!
 //! A request has a weight, which Hyperliquid counts against the address's
-//! limit ([`super::WEIGHT_LIMIT`] a minute): 2 for the two account states,
-//! 20 for every other documented request. A request spends its weight from
+//! limit ([`super::WEIGHT_LIMIT`] a minute): 2 for the two account states
+//! and the mid prices, 20 for every other documented request. A request spends its weight from
 //! the client's budget before it is sent, waiting while the minute is
 //! spent; Hyperliquid refusing one all the same (`429`) spends what is left
 //! of the minute and fails the request as `RATE_LIMITED`, which its query
@@ -52,6 +52,22 @@ pub enum Info {
         #[serde(rename = "aggregateByTime")]
         aggregate_by_time: bool,
     },
+    /// The perpetuals of Hyperliquid's own dex: each one's name, the
+    /// decimal places of its sizes and its most leverage, in the order
+    /// that numbers them.
+    Meta,
+    /// The mid price of everything traded, by its name.
+    AllMids,
+    /// A user's open orders, with what each is (its kind, its trigger,
+    /// whether it only reduces).
+    FrontendOpenOrders { user: String },
+    /// The agents a user has approved by name, each with when it runs
+    /// out.
+    ExtraAgents { user: String },
+    /// How a user is set to trade a perpetual, whether it holds any or
+    /// not: its leverage and margin mode there, and how much it could
+    /// trade of it now.
+    ActiveAssetData { user: String, coin: String },
 }
 
 impl Info {
@@ -59,13 +75,19 @@ impl Info {
     /// Hyperliquid adds per item returned (none of these has one).
     pub fn weight(&self) -> u32 {
         match self {
-            Self::ClearinghouseState { .. } | Self::SpotClearinghouseState { .. } => 2,
+            Self::ClearinghouseState { .. }
+            | Self::SpotClearinghouseState { .. }
+            | Self::AllMids => 2,
             Self::Portfolio { .. }
             | Self::SpotMetaAndAssetCtxs
             | Self::DelegatorSummary { .. }
             | Self::UserVaultEquities { .. }
             | Self::UserFees { .. }
-            | Self::UserFills { .. } => 20,
+            | Self::UserFills { .. }
+            | Self::Meta
+            | Self::FrontendOpenOrders { .. }
+            | Self::ExtraAgents { .. }
+            | Self::ActiveAssetData { .. } => 20,
         }
     }
 
@@ -91,20 +113,7 @@ impl Api {
     /// the reply as `T`.
     pub(super) async fn info<T: DeserializeOwned>(&self, request: &Info) -> Result<T, ApiError> {
         self.budget.spend(request.weight()).await?;
-        match self.http.post(PATH, request).await {
-            Err(error) if error.status == Some(429) => {
-                // Something else spends the address's limit too: nothing
-                // more goes out until a minute has passed.
-                self.budget.exhaust();
-                Err(ApiError::api(
-                    Some(429),
-                    "RATE_LIMITED",
-                    "Hyperliquid's request limit for this connection was reached; \
-                     requests resume within a minute",
-                ))
-            }
-            reply => reply,
-        }
+        self.limited(self.http.post(PATH, request).await)
     }
 }
 
@@ -211,5 +220,42 @@ mod tests {
             json!({ "type": "portfolio", "user": USER })
         );
         assert_eq!(portfolio.weight(), 20);
+
+        // What trading reads: the universe, the mid prices, the open orders.
+        assert_eq!(
+            serde_json::to_value(Info::Meta).unwrap(),
+            json!({ "type": "meta" })
+        );
+        assert_eq!(Info::Meta.weight(), 20);
+        assert_eq!(
+            serde_json::to_value(Info::AllMids).unwrap(),
+            json!({ "type": "allMids" })
+        );
+        assert_eq!(Info::AllMids.weight(), 2);
+        let orders = Info::FrontendOpenOrders {
+            user: USER.to_owned(),
+        };
+        assert_eq!(
+            serde_json::to_value(&orders).unwrap(),
+            json!({ "type": "frontendOpenOrders", "user": USER })
+        );
+        assert_eq!(orders.weight(), 20);
+        let agents = Info::ExtraAgents {
+            user: USER.to_owned(),
+        };
+        assert_eq!(
+            serde_json::to_value(&agents).unwrap(),
+            json!({ "type": "extraAgents", "user": USER })
+        );
+        assert_eq!(agents.weight(), 20);
+        let setting = Info::ActiveAssetData {
+            user: USER.to_owned(),
+            coin: "kPEPE".to_owned(),
+        };
+        assert_eq!(
+            serde_json::to_value(&setting).unwrap(),
+            json!({ "type": "activeAssetData", "user": USER, "coin": "kPEPE" })
+        );
+        assert_eq!(setting.weight(), 20);
     }
 }

@@ -1,7 +1,7 @@
 //! The user's wallet: a browser wallet (Rabby, MetaMask, anything that
 //! speaks EIP-1193) whose account the app asks for and which signs for it.
-//! No key is ever in the app: what needs one is asked of the wallet, which
-//! asks its user.
+//! The wallet's key is never in the app: what needs it is asked of the
+//! wallet, which asks its user.
 //!
 //! One connection, the same on both builds, in three layers:
 //!
@@ -18,7 +18,7 @@
 //!   and [`WalletSigner`] is alloy's `Signer`, for what the wallet signs.
 //! - [`Wallet`], the service the app sees: what the connection is doing
 //!   ([`WalletState`], a signal) and what the user can do about it
-//!   (connect, choose a wallet, disconnect, test Hyperliquid).
+//!   (connect, choose a wallet, disconnect).
 //!
 //! Connecting: the wallets are looked for; one alone is asked for its
 //! accounts at once (`eth_requestAccounts`, which prompts there), several
@@ -28,12 +28,10 @@
 //! user disconnected the site in the wallet) ends it. Nothing is restored
 //! on the next start: a connection lasts while the app runs.
 //!
-//! The Hyperliquid test ([`Wallet::check_hyperliquid`]) is two checks of
-//! the connected account: Hyperliquid is asked for its perpetuals account
-//! (the public request the portfolio widgets make), and the wallet signs
-//! the connection test's message
-//! ([`signing::connection_test`]), whose signer is read back from the
-//! signature and must be the account. Nothing signed is sent anywhere.
+//! The wallet knows no exchange. What it signs for one is asked by that
+//! exchange's side of trading ([`super::trading`]), which is handed the
+//! connected account's signer ([`Wallet::signer`]): the wallet's user is
+//! shown what is signed and approves it there, each time.
 
 #[cfg(not(target_arch = "wasm32"))]
 mod bridge;
@@ -53,22 +51,16 @@ use alloy::{
     primitives::Address,
     providers::{Provider, RootProvider},
     rpc::client::{NoParams, RpcClient},
-    signers::Signer,
     transports::TransportError,
 };
-use nsh_core::{prelude::*, time::unix_ms};
+use nsh_core::prelude::*;
 use serde::Deserialize;
 use serde_json::Value;
 
-pub use self::link::Refusal;
 pub(crate) use self::link::{Call, Link};
-use self::{signer::WalletSigner, transport::WalletTransport};
-use super::{
-    hyperliquid::{Hyperliquid, signing},
-    net::{TaskHandle, sanitize},
-    portfolio::{AccountSource, MarginAccount},
-};
-use crate::format;
+use self::transport::WalletTransport;
+pub use self::{link::Refusal, signer::WalletSigner};
+use super::net::{TaskHandle, sanitize};
 
 /// The longest a wallet's name is kept and shown, in characters, and the
 /// longest of what it says when it refuses.
@@ -213,34 +205,6 @@ pub enum Phase {
     Connected(Account),
 }
 
-/// How one check of the Hyperliquid test stands.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum Outcome {
-    /// Not made yet.
-    #[default]
-    Idle,
-    Running,
-    /// What it found.
-    Passed(String),
-    /// What went wrong.
-    Failed(String),
-}
-
-/// The Hyperliquid test of the connected account.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Check {
-    /// Hyperliquid's answer about the account.
-    pub account: Outcome,
-    /// The wallet's signature of the test message.
-    pub signature: Outcome,
-}
-
-impl Check {
-    pub fn running(&self) -> bool {
-        self.account == Outcome::Running || self.signature == Outcome::Running
-    }
-}
-
 /// Everything the app shows of the wallet.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WalletState {
@@ -250,7 +214,6 @@ pub struct WalletState {
     pub page: Option<String>,
     /// What last went wrong, until something else is tried.
     pub failure: Option<String>,
-    pub check: Check,
 }
 
 /// The wallet service. Cloning is cheap: every clone is the same wallet.
@@ -259,7 +222,6 @@ pub struct Wallet(Rc<Inner>);
 
 struct Inner {
     connector: Rc<dyn Connector>,
-    hyperliquid: Hyperliquid,
     state: Signal<WalletState>,
     /// The backend, from Connect until the connection ends.
     session: RefCell<Option<Session>>,
@@ -269,24 +231,20 @@ struct Inner {
     provider: RefCell<Option<RootProvider>>,
     /// The request for the wallet's accounts, while it waits for the user.
     approving: RefCell<Option<TaskHandle>>,
-    /// The Hyperliquid test, while it runs.
-    checking: RefCell<Option<TaskHandle>>,
 }
 
 impl Wallet {
     /// A wallet service under the current owner (the shell), reaching the
-    /// wallets as `config` says and testing against `hyperliquid`. Nothing
-    /// is looked for until the user connects.
-    pub(crate) fn new(config: WalletConfig, hyperliquid: Hyperliquid) -> Self {
+    /// wallets as `config` says. Nothing is looked for until the user
+    /// connects.
+    pub(crate) fn new(config: WalletConfig) -> Self {
         Self(Rc::new(Inner {
             connector: config.connector.unwrap_or_else(platform_connector),
-            hyperliquid,
             state: signal(WalletState::default()),
             session: RefCell::new(None),
             wallets: RefCell::new(Vec::new()),
             provider: RefCell::new(None),
             approving: RefCell::new(None),
-            checking: RefCell::new(None),
         }))
     }
 
@@ -298,6 +256,27 @@ impl Wallet {
     /// Reads the state (tracked).
     pub fn with<R>(&self, read: impl FnOnce(&WalletState) -> R) -> R {
         self.0.state.with(read)
+    }
+
+    /// The connected account, if there is one (tracked).
+    pub fn account(&self) -> Option<Account> {
+        self.with(|state| match &state.phase {
+            Phase::Connected(account) => Some(account.clone()),
+            _ => None,
+        })
+    }
+
+    /// What signs for the connected account as it is now (its address and
+    /// the chain its wallet is on): every signature it makes is the user's
+    /// approval in the wallet. `None` while nothing is connected.
+    pub(crate) fn signer(&self) -> Option<WalletSigner> {
+        let account = self.connected()?;
+        let provider = self.0.provider.borrow().clone()?;
+        Some(WalletSigner::new(
+            provider,
+            account.address,
+            Some(account.chain_id),
+        ))
     }
 
     /// Starts connecting: looks for the wallets. Does nothing while a
@@ -351,58 +330,9 @@ impl Wallet {
         }
     }
 
-    /// Tests the connected account against Hyperliquid: asks Hyperliquid
-    /// about it, then has the wallet sign the test message and reads the
-    /// signer back. Does nothing while a test runs or nothing is connected.
-    pub fn check_hyperliquid(&self) {
-        if self.0.state.with_untracked(|state| state.check.running()) {
-            return;
-        }
-        let (Some(account), Some(provider)) = (self.connected(), self.0.provider.borrow().clone())
-        else {
-            return;
-        };
-        self.set_check(Check {
-            account: Outcome::Running,
-            signature: Outcome::Idle,
-        });
-        let this = self.clone();
-        let task = TaskHandle::spawn(async move {
-            let hyperliquid = &this.0.hyperliquid;
-            let found = match hyperliquid.margin_query(&account.address_text()) {
-                Some(query) => match hyperliquid.queries().get(query).await {
-                    Ok(margin) => Outcome::Passed(account_line(&margin)),
-                    Err(error) => Outcome::Failed(error.message),
-                },
-                None => Outcome::Failed("Hyperliquid reports no accounts.".to_owned()),
-            };
-            // The chain the wallet is on now: it may have changed meanwhile,
-            // and the message must name it. (Another account, or none, ends
-            // this task before it gets here.)
-            let Some(account) = this.connected() else {
-                return;
-            };
-            this.set_check(Check {
-                account: found.clone(),
-                signature: Outcome::Running,
-            });
-            let signer = WalletSigner::new(provider, account.address, Some(account.chain_id));
-            let signed = match sign_test(&signer, hyperliquid.network()).await {
-                Ok(()) => Outcome::Passed("Signed by this account.".to_owned()),
-                Err(wrong) => Outcome::Failed(wrong),
-            };
-            this.set_check(Check {
-                account: found,
-                signature: signed,
-            });
-        });
-        *self.0.checking.borrow_mut() = Some(task);
-    }
-
     /// Ends everything in flight (the app is going away).
     pub(crate) fn shutdown(&self) {
         self.0.approving.take();
-        self.0.checking.take();
         self.0.provider.take();
         self.0.session.take();
     }
@@ -411,16 +341,12 @@ impl Wallet {
         self.0.state.with_untracked(|state| state.phase.clone())
     }
 
-    /// The connected account as it is now, if there is one.
-    fn connected(&self) -> Option<Account> {
+    /// The connected account as it is now, if there is one (untracked).
+    pub(crate) fn connected(&self) -> Option<Account> {
         match self.phase() {
             Phase::Connected(account) => Some(account),
             _ => None,
         }
-    }
-
-    fn set_check(&self, check: Check) {
-        self.0.state.update(|state| state.check = check);
     }
 
     /// Back to disconnected, saying `failure` if that is why.
@@ -466,11 +392,11 @@ impl Wallet {
                         account.wallet.name
                     ))),
                     Some(&address) if address != account.address => {
-                        // Another account: what was tested was the old one.
-                        self.0.checking.take();
+                        // Another account: what the old one allowed (an
+                        // exchange's trading) is not this one's, which
+                        // trading sees from the state.
                         self.0.state.update(|state| {
                             state.phase = Phase::Connected(Account { address, ..account });
-                            state.check = Check::default();
                         });
                     }
                     Some(_) => {}
@@ -579,7 +505,6 @@ impl Wallet {
                                 chain_id,
                             });
                             state.failure = None;
-                            state.check = Check::default();
                         });
                     }
                     None => this.offer(format!("{} shared no account.", wallet.name)),
@@ -592,30 +517,6 @@ impl Wallet {
     }
 }
 
-/// Has `signer`'s wallet sign the connection test's message for `network`
-/// and reads the signer back, which must be the account. What went wrong
-/// otherwise, in words.
-async fn sign_test(signer: &WalletSigner, network: signing::Network) -> Result<(), String> {
-    // Whole milliseconds since 1970 fit a `u64` for good.
-    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let time_ms = unix_ms().max(0.0) as u64;
-    let chain_id = signer.chain_id().unwrap_or_default();
-    let message = signing::connection_test(network, chain_id, time_ms)?;
-    let signature = signer
-        .sign_dynamic_typed_data(&message)
-        .await
-        .map_err(|error| describe_signing(&error))?;
-    let signed_by = signing::signer_of(&message, &signature)?;
-    if signed_by == signer.address() {
-        Ok(())
-    } else {
-        Err(format!(
-            "Signed by {signed_by}, not by this account. Hyperliquid would take it for that \
-             address (a contract wallet cannot sign for Hyperliquid)."
-        ))
-    }
-}
-
 /// A wallet's name as the app shows it. A wallet names itself, so its name
 /// is text from outside the app: cleaned, cut, and never nothing.
 fn named(name: &str) -> String {
@@ -624,16 +525,6 @@ fn named(name: &str) -> String {
         "Wallet".to_owned()
     } else {
         name
-    }
-}
-
-/// What Hyperliquid's answer about an account says of it.
-fn account_line(margin: &MarginAccount) -> String {
-    let equity = format::usd(margin.equity.unwrap_or(0.0));
-    match margin.positions.len() {
-        0 => format!("{equity} in perpetuals, no open positions."),
-        1 => format!("{equity} in perpetuals, 1 open position."),
-        open => format!("{equity} in perpetuals, {open} open positions."),
     }
 }
 
@@ -687,7 +578,7 @@ fn describe(error: &TransportError) -> String {
 }
 
 /// [`describe`] for a signature that was not made.
-fn describe_signing(error: &alloy::signers::Error) -> String {
+pub(crate) fn describe_signing(error: &alloy::signers::Error) -> String {
     match error {
         alloy::signers::Error::Other(source) => match source.downcast_ref::<TransportError>() {
             Some(error) => describe(error),

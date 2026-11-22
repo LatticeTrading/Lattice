@@ -31,6 +31,7 @@ mod premium_arb_chart;
 mod price_delta_monitor;
 mod protocol_tvl;
 mod trade_history;
+mod trade_panel;
 mod trade_stream;
 
 pub(crate) use host::{Category, Linking, SettingsPanel, TabContext, TabHandle};
@@ -49,6 +50,7 @@ registry::registry! {
     price_delta_monitor::PriceDeltaMonitor,
     protocol_tvl::ProtocolTvl,
     trade_history::TradeHistory,
+    trade_panel::TradePanel,
     trade_stream::TradeStream,
 }
 

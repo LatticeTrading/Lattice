@@ -27,7 +27,7 @@ use async_trait::async_trait;
 
 /// One account of a wallet, signing through the wallet's own prompts.
 #[derive(Clone, Debug)]
-pub(crate) struct WalletSigner {
+pub struct WalletSigner {
     provider: RootProvider,
     address: Address,
     chain_id: Option<ChainId>,

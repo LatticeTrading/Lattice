@@ -231,7 +231,7 @@ pub fn bar(
     // a bar rendered on its own, which has no wallet to show.
     let wallet = services
         .as_ref()
-        .map(|services| wallet::WalletCell::new(services.wallet.clone()));
+        .map(|services| wallet::WalletCell::new(services.wallet.clone(), services.trading.clone()));
     let wallet_button = wallet.as_ref().map(wallet::WalletCell::button);
 
     let layouts = dynamic(move || {

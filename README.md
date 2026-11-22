@@ -49,10 +49,34 @@ widgets stream and poll. Next to the wordmark the bar connects the user's
 browser wallet (Rabby, MetaMask, any EIP-1193 wallet) through
 [alloy](https://alloy.rs): the web build asks the wallets of its own page,
 and the desktop build opens a page it serves on this machine in the user's
-browser, which carries its requests to the wallet there. No key is ever in
-the app; the first use is a Hyperliquid test of the connected account (its
-account is looked up and the wallet signs a test message that authorizes
-nothing). On desktop the platform's normal title bar keeps minimize,
+browser, which carries its requests to the wallet there. The wallet's key is
+never in the app. The connected account can trade: the Trade Panel places
+and cancels orders for it (limit and market, each with a take profit and a
+stop loss if wanted, on Hyperliquid's perpetuals first), sets its leverage
+and margin mode per market, and places exits for a position it holds; the
+Positions reduces and closes the account's own positions at the market's
+price, from their rows, and says the take profit and stop loss that wait on
+each. Every position it shows, anybody's, is valued at its market's live
+price between two reports of its account: on Hyperliquid the middle of the
+best bid and offer, each time either changes (several times a second for a
+busy market), or the exchange's own mark price if the settings ask for it
+(about once a second, which is Hyperliquid's pace). The Trade Panel shows
+the same live price beside its market. Prices have a source of their own
+per exchange, apart from accounts and trading. Both
+widgets are behind an exchange-neutral trading layer, as the portfolio layer
+is for reading. Trading is enabled per exchange with one signature in the
+wallet, which approves an agent key the app keeps on this device, so
+trading stays enabled between runs: connecting the account again is enough
+while the exchange still lists the agent, and disabling trading forgets it.
+The agent can place and cancel orders and cannot withdraw; its key is saved
+in the app's storage in the clear, as Hyperliquid's own site keeps its
+agent. An account that trades is followed live over the exchange's
+WebSocket: its open orders, margin and fills arrive as the market changes
+them, into the same shared requests every widget watching the account
+reads, with polling as the fallback. No exchange SDK is linked: each
+exchange's signing and wire format is written over alloy and checked
+against that exchange's own SDK's test vectors. On desktop the platform's
+normal title bar keeps minimize,
 maximize/restore, and close; on web the browser owns the window chrome.
 
 Before changing code, read `docs/nsh-development.md`, the development guide
@@ -130,8 +154,8 @@ visual and native-caption acceptance remains a user-run check.
 - `src/storage.rs`: versioned NSH storage-service persistence.
 - `src/theme.rs`, `src/theme/roles.rs`: the theme engine and its color roles.
 - `src/assets.rs`, `assets/`: compile-time fonts and app assets (icons, exchange logos).
-- `src/data.rs`, `src/data/`: the data layer (`net/`: shared HTTP, WebSocket, polling, live-feed and rate-limit plumbing; `ferris/`: the Ferris integration, with per-exchange rules in `ferris/venues.rs` and the DefiLlama data it proxies in `ferris/defillama.rs`; `hyperliquid/`: Hyperliquid's own API, asked by the app itself within its rate limit; `lighter/`: Lighter's, asked the same way; `txflow/`: TxFlow's, the same again; `portfolio/`: what an account holds and has made, in one shape whatever its exchange, the trait an exchange's integration implements to report accounts, and several accounts' reports combined into one; `session.rs`: per-widget data sessions; `markets.rs`: the app's one directory of every market, which the search and the market picker read; `wallet.rs`, `wallet/`: the user's browser wallet through alloy, `web.rs` for the page's own wallets and `bridge.rs` with `bridge.html` for the desktop's page in the user's browser).
-- `src/widgets.rs`, `src/widgets/`: the widget registry, the widget picker, shared widget parts (`common/`: market picker, exchange logos, number field, double clicks, in `common/books/` what the widgets that draw order books share, in `common/plot/` the GPU plot the charts share, and in `common/accounts/` what the widgets that show an account share), and one folder per widget (`account_performance/`, `account_summary/`, `chart/`, `defi_protocols/`, `depth_chart/`, `funding_rates/`, `market_screener/`, `order_book/`, `positions/`, `premium_arb_chart/`, `price_delta_monitor/`, `protocol_tvl/`, `trade_stream/`).
+- `src/data.rs`, `src/data/`: the data layer (`net/`: shared HTTP, WebSocket, polling, live-feed and rate-limit plumbing; `ferris/`: the Ferris integration, with per-exchange rules in `ferris/venues.rs` and the DefiLlama data it proxies in `ferris/defillama.rs`; `hyperliquid/`: Hyperliquid's own API, asked by the app itself within its rate limit; `lighter/`: Lighter's, asked the same way; `txflow/`: TxFlow's, the same again; `portfolio/`: what an account holds and has made, in one shape whatever its exchange, the trait an exchange's integration implements to report accounts, and several accounts' reports combined into one; `trading.rs`, `trading/`: orders for the connected wallet's account in one shape whatever the exchange, and the trait an exchange's integration implements to be traded on (Hyperliquid's is `hyperliquid/trading.rs`, with `exchange.rs`, `signing.rs`, `agent.rs` and `pack.rs`, and `stream.rs` with `live.rs` for its WebSocket); `session.rs`: per-widget data sessions; `markets.rs`: the app's one directory of every market, which the search and the market picker read; `wallet.rs`, `wallet/`: the user's browser wallet through alloy, `web.rs` for the page's own wallets and `bridge.rs` with `bridge.html` for the desktop's page in the user's browser).
+- `src/widgets.rs`, `src/widgets/`: the widget registry, the widget picker, shared widget parts (`common/`: market picker, exchange logos, number field, double clicks, in `common/books/` what the widgets that draw order books share, in `common/plot/` the GPU plot the charts share, in `common/accounts/` what the widgets that show an account share, and in `common/access.rs` the rows that connect a wallet and enable an exchange for it), and one folder per widget (`account_performance/`, `account_summary/`, `chart/`, `defi_protocols/`, `depth_chart/`, `funding_rates/`, `market_screener/`, `order_book/`, `positions/`, `premium_arb_chart/`, `price_delta_monitor/`, `protocol_tvl/`, `trade_history/`, `trade_panel/`, `trade_stream/`).
 - `src/link.rs`: color linking (the link colors, and the Everything Bar's).
 - `src/exchanges.rs`, `src/format.rs`: exchange names and logos; number formatting.
 - `src/platform/`: future native integrations (empty).

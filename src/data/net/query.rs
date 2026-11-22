@@ -16,6 +16,13 @@
 //! interval). An unwatched value is kept for ten minutes, so the next
 //! widget to ask gets it immediately.
 //!
+//! A stream may bring a key's value too ([`Queries::supply`]): an API that
+//! both answers a request and pushes its answer as it changes (an account's
+//! open orders) is polled as the fallback and supplied as it happens. What
+//! is supplied counts as a fetch: watchers get it, the key's next poll is
+//! an interval after it, and a fetch that was in flight meanwhile is dropped
+//! when it lands, since what it asked for is older than what was supplied.
+//!
 //! A fetch that panics (building its future or in a poll) settles as a
 //! failed fetch with a `PANICKED` error, so the key never stays "fetching",
 //! its waiters wake and its poll loop goes on; a watcher whose signal write
@@ -308,6 +315,9 @@ struct Entry {
     settled: u64,
     failures: u32,
     in_flight: Option<TaskHandle>,
+    /// Whether a value was supplied while the fetch in flight was out: what
+    /// the fetch brings is then the older of the two, and is dropped.
+    superseded: bool,
     waiters: Vec<Waker>,
     watchers: Vec<Watcher>,
     poller: Option<TaskHandle>,
@@ -337,6 +347,7 @@ impl Entry {
             settled: 0,
             failures: 0,
             in_flight: None,
+            superseded: false,
             waiters: Vec::new(),
             watchers: Vec::new(),
             poller: None,
@@ -513,6 +524,44 @@ impl Queries {
         self.0.fetch_now(key);
     }
 
+    /// Gives `key` the value `value`, as a fetch of it would have: what a
+    /// stream of the same data brings. Its watchers get it, its error is
+    /// cleared, its next poll is an interval from now, and a fetch of it in
+    /// flight is dropped when it lands (it asked before this value was made).
+    /// `false`, and nothing kept, for a key nobody has asked for: there is
+    /// nobody to give it to, and whoever asks next fetches it.
+    ///
+    /// `T` must be the type the key's fetch gives: a watcher of another
+    /// type reads the value as a mismatch.
+    pub fn supply<T: 'static>(&self, key: &str, value: T) -> bool {
+        let core = &self.0;
+        let changed = {
+            let mut entries = core.entries.borrow_mut();
+            let Some(entry) = entries.get_mut(key) else {
+                return false;
+            };
+            // What the hub's health is read from.
+            let changed = entry.failures > 0 || entry.data.is_none();
+            let at = now();
+            entry.data = Some(Rc::new(value) as Erased);
+            entry.error = None;
+            entry.failure = None;
+            entry.failures = 0;
+            entry.updated_at = Some(at);
+            entry.updated_at_ms = Some(unix_ms());
+            entry.settled_at = Some(at);
+            entry.superseded = entry.in_flight.is_some();
+            changed
+        };
+        core.notify(key);
+        // A stream supplies often: the board hears of it only when it
+        // changes what the hub reports.
+        if changed {
+            core.publish();
+        }
+        true
+    }
+
     /// The hub in full, as it stands now: its report, and every watched
     /// request with who watches it and when its value last came. Read from
     /// the hub's own entries, so it costs nothing until something asks (the
@@ -611,9 +660,12 @@ impl Core {
             entry.in_flight = None;
             entry.settled += 1;
             let at = now();
-            entry.settled_at = Some(at);
             match result {
+                // A value was supplied while this fetch was out: it is the
+                // newer one, whatever the fetch came back with.
+                _ if std::mem::take(&mut entry.superseded) => {}
                 Ok(value) => {
+                    entry.settled_at = Some(at);
                     entry.data = Some(value);
                     entry.error = None;
                     entry.failure = None;
@@ -623,6 +675,7 @@ impl Core {
                 }
                 Err(error) => {
                     log::debug!("{}: {key}: {error}", self.label);
+                    entry.settled_at = Some(at);
                     entry.failures += 1;
                     let failure = Failure::from(&error);
                     *self.last_failure.borrow_mut() = Some(failure.clone());
@@ -704,8 +757,21 @@ impl Core {
                     return;
                 };
                 timer_until(due).await;
-                let Some(target) = me.upgrade().and_then(|core| core.fetch_now(&key)) else {
-                    return;
+                let target = {
+                    let Some(core) = me.upgrade() else {
+                        return;
+                    };
+                    // A value supplied meanwhile is as good as a fetch: the
+                    // wait starts over from it.
+                    match core.next_poll(&key) {
+                        None => return,
+                        Some(next) if next > now() => continue,
+                        Some(_) => {}
+                    }
+                    let Some(target) = core.fetch_now(&key) else {
+                        return;
+                    };
+                    target
                 };
                 settled(&me, &key, target).await;
             }

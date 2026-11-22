@@ -36,8 +36,13 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+#[cfg(test)]
+mod scripted;
 #[cfg(target_arch = "wasm32")]
 mod web;
+
+#[cfg(test)]
+pub(crate) use scripted::ScriptedSocket;
 
 use std::{
     cell::{Cell, RefCell},
@@ -234,7 +239,31 @@ impl<P: SocketProtocol> Clone for SharedSocket<P> {
     }
 }
 
+/// A shared socket held without keeping it alive: what one of its own
+/// subscribers' callbacks holds to subscribe another topic once the first
+/// has spoken. The socket holds its callbacks, so one that held the socket
+/// would keep both for good.
+pub struct WeakSocket<P: SocketProtocol>(Weak<Core<P>>);
+
+impl<P: SocketProtocol> Clone for WeakSocket<P> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<P: SocketProtocol> WeakSocket<P> {
+    /// The socket, while something still holds it.
+    pub fn upgrade(&self) -> Option<SharedSocket<P>> {
+        self.0.upgrade().map(SharedSocket)
+    }
+}
+
 impl<P: SocketProtocol> SharedSocket<P> {
+    /// A handle that does not keep the socket alive ([`WeakSocket`]).
+    pub fn downgrade(&self) -> WeakSocket<P> {
+        WeakSocket(Rc::downgrade(&self.0))
+    }
+
     /// A shared socket on the platform's stack that reports to `status` as
     /// source `id` (`ferris.socket`) named `label` (`Ferris realtime`).
     pub fn new(

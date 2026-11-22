@@ -7,60 +7,52 @@
 //!   color while its panel is open, as every cell of the bar that opens
 //!   something.
 //! - The panel is the whole connection, a stack of rows for where it has
-//!   come ([`Phase`]): the button that starts it; what is being waited for
-//!   (on desktop, the page in the user's browser, with its link to open
-//!   again or copy); the wallets to choose from; the connected account
-//!   with the Hyperliquid test and its two results; Disconnect.
+//!   come ([`Phase`]): the rows that make it
+//!   ([`wallet_rows`], which a trading widget shows too); then the
+//!   connected account, each exchange it can trade on with where it stands
+//!   there and the cell that enables or disables it ([`venue_rows`]), and
+//!   Disconnect.
 //!
-//! Everything it shows is the wallet service's state
-//! ([`Wallet`](crate::data::Wallet)); nothing of the connection lives
-//! here, so closing the panel changes nothing of it.
+//! Everything it shows is the services' state
+//! ([`Wallet`](crate::data::Wallet), [`Trading`](crate::data::Trading));
+//! nothing of the connection lives here, so closing the panel changes
+//! nothing of it.
 
-use nsh_core::{LineHeight, prelude::*};
+use nsh_core::prelude::*;
 
 use crate::{
     data::{
-        Wallet,
+        Trading, Wallet,
         portfolio::short_address,
-        wallet::{Account, Check, Outcome, Phase, Reach, WalletInfo, WalletState},
+        wallet::{Account, Phase, WalletState},
     },
     theme,
     ui::{self, Side, Tone},
+    widgets::common::access::{Voice, stacked, strip, venue_rows, wallet_rows},
 };
 
 /// The connected dot's diameter.
 const DOT: Points = px(6.0);
-/// A wallet's line in the list to choose from.
-const WALLET_ROW: Points = px(30.0);
 /// The window width from which the cell says "Connect Wallet" in full. In a
 /// narrower one the bar's left group, with the default two pages, would be
 /// wider than its side of the bar and push the search off the middle.
 const ROOMY: f32 = 1360.0;
 
-/// The bar's wallet: the service, whether the panel is open and what it
+/// The bar's wallet: the services, whether the panel is open and what it
 /// hangs from.
 #[derive(Clone)]
 pub(super) struct WalletCell {
     wallet: Wallet,
+    trading: Trading,
     open: Signal<bool>,
     anchor: ElementRef,
 }
 
-/// What a strip of the panel says, and so how it is drawn.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Voice {
-    /// Something to know.
-    Plain,
-    /// Something the user is waited for, or should look at.
-    Waiting,
-    Failed,
-    Passed,
-}
-
 impl WalletCell {
-    pub(super) fn new(wallet: Wallet) -> Self {
+    pub(super) fn new(wallet: Wallet, trading: Trading) -> Self {
         Self {
             wallet,
+            trading,
             open: signal(false),
             anchor: element_ref(),
         }
@@ -130,17 +122,7 @@ impl WalletCell {
         let this = self.clone();
         let body = dynamic(move || {
             let state = this.wallet.with(Clone::clone);
-            let rows = this.rows(&state);
-            view()
-                .test_id("wallet-panel")
-                .flex_col()
-                .children(rows.into_iter().enumerate().map(|(index, row)| {
-                    if index == 0 {
-                        row
-                    } else {
-                        row.border_t_1().border_color(theme::BORDER)
-                    }
-                }))
+            stacked(this.rows(&state)).test_id("wallet-panel")
         });
         ui::floating_panel(
             &self.anchor,
@@ -153,118 +135,35 @@ impl WalletCell {
         )
     }
 
-    /// The panel's rows for `state`, top to bottom. Each after the first
-    /// gets the stack's line on its top edge.
+    /// The panel's rows for `state`, top to bottom (tracked: they follow
+    /// where the account stands with each exchange too).
     fn rows(&self, state: &WalletState) -> Vec<View> {
-        let reach = self.wallet.reach();
+        let Phase::Connected(account) = &state.phase else {
+            return wallet_rows(&self.wallet, state);
+        };
         let mut rows = Vec::new();
-        let failure = |voice: Voice| state.failure.clone().map(|failure| strip(failure, voice));
-        match &state.phase {
-            Phase::Disconnected => {
-                rows.extend(failure(Voice::Failed));
-                let (label, note) = match reach {
-                    Reach::Page => ("Connect wallet", None),
-                    Reach::Browser => (
-                        "Connect wallet in browser",
-                        Some(
-                            "A page opens in your browser, where your wallet is. \
-                             Keep it open while connected.",
-                        ),
-                    ),
-                };
-                rows.push(self.action(label, Tone::Normal, Wallet::connect));
-                rows.extend(note.map(|note| strip(note.to_owned(), Voice::Plain)));
-            }
-            Phase::Finding => {
-                let waiting = match reach {
-                    Reach::Page => "Looking for wallets…",
-                    Reach::Browser => "Waiting for the wallet page in your browser…",
-                };
-                rows.push(strip(waiting.to_owned(), Voice::Plain));
-                rows.extend(failure(Voice::Waiting));
-                rows.extend(self.page_row(state));
-                rows.push(self.action("Cancel", Tone::Quiet, Wallet::disconnect));
-            }
-            Phase::Choosing(wallets) => {
-                rows.extend(failure(Voice::Failed));
-                rows.extend(wallets.iter().map(|wallet| self.wallet_row(wallet)));
-                rows.push(self.action("Cancel", Tone::Quiet, Wallet::disconnect));
-            }
-            Phase::Approving(wallet) => {
-                let asks = match reach {
-                    Reach::Page => format!("Approve the connection in {}.", wallet.name),
-                    Reach::Browser => format!(
-                        "Approve the connection in {}, in your browser.",
-                        wallet.name
-                    ),
-                };
-                rows.push(strip(asks, Voice::Waiting));
-                rows.extend(self.page_row(state));
-                rows.push(self.action("Cancel", Tone::Quiet, Wallet::disconnect));
-            }
-            Phase::Connected(account) => {
-                rows.extend(failure(Voice::Failed));
-                rows.push(fact("Wallet", account.wallet.name.clone()));
-                rows.push(address_row(account));
-                rows.push(fact("Network", network(account.chain_id)));
-                rows.push(
-                    self.action("Test Hyperliquid", Tone::Normal, Wallet::check_hyperliquid)
-                        .disabled(state.check.running()),
-                );
-                rows.extend(check_strips(&state.check, account, reach));
-                rows.push(self.action("Disconnect", Tone::Quiet, Wallet::disconnect));
-            }
+        rows.extend(
+            state
+                .failure
+                .clone()
+                .map(|failure| strip(failure, Voice::Failed)),
+        );
+        rows.push(fact("Wallet", account.wallet.name.clone()));
+        rows.push(address_row(account));
+        rows.push(fact("Network", network(account.chain_id)));
+        let reach = self.wallet.reach();
+        for venue in self.trading.venues() {
+            rows.extend(venue_rows(&self.trading, venue, &account.wallet, reach));
         }
-        rows
-    }
-
-    /// A row that is one action of the wallet's.
-    fn action(&self, label: &'static str, tone: Tone, act: fn(&Wallet)) -> View {
         let wallet = self.wallet.clone();
-        ui::button(label, tone)
-            .h(ui::ROW_HEIGHT)
-            .w_full()
-            .label(label)
-            .on_press(move || act(&wallet))
-    }
-
-    /// The bridge page's row, where the wallets are reached through one:
-    /// two equal halves, to open it again and to copy its link (for the
-    /// browser the wallet is in, when that is not the one that opened).
-    fn page_row(&self, state: &WalletState) -> Option<View> {
-        let page = state.page.clone()?;
-        let wallet = self.wallet.clone();
-        let half = |label: &'static str| ui::button(label, Tone::Normal).flex_1().justify_center();
-        Some(
-            view()
+        rows.push(
+            ui::button("Disconnect", Tone::Quiet)
                 .h(ui::ROW_HEIGHT)
                 .w_full()
-                .flex_row()
-                .child(
-                    half("Open page again")
-                        .label("Open the wallet page again")
-                        .on_press(move || wallet.reopen_page()),
-                )
-                .child(
-                    half("Copy link")
-                        .label("Copy the wallet page's link")
-                        .border_l_1()
-                        .border_color(theme::BORDER)
-                        .on_press(move || set_clipboard(page.clone())),
-                ),
-        )
-    }
-
-    /// A wallet to choose: its name, and what a press does at the far edge.
-    fn wallet_row(&self, found: &WalletInfo) -> View {
-        let (wallet, id) = (self.wallet.clone(), found.id.clone());
-        ui::button(found.name.clone(), Tone::Normal)
-            .h(WALLET_ROW)
-            .w_full()
-            .label(format!("Connect {}", found.name))
-            .on_press(move || wallet.choose(&id))
-            .child(view().flex_1())
-            .child(text("›").text_color(theme::TEXT_FAINT))
+                .label("Disconnect")
+                .on_press(move || wallet.disconnect()),
+        );
+        rows
     }
 }
 
@@ -324,62 +223,6 @@ fn address_row(account: &Account) -> View {
                 .label("Copy the account's address")
                 .on_press(move || set_clipboard(address.clone())),
         )
-}
-
-/// The strips of the Hyperliquid test, for the checks made or being made.
-fn check_strips(check: &Check, account: &Account, reach: Reach) -> Vec<View> {
-    let signing = match reach {
-        Reach::Page => format!(
-            "Sign the test message in {}. It authorizes nothing.",
-            account.wallet.name
-        ),
-        Reach::Browser => format!(
-            "Sign the test message in {}, in your browser. It authorizes nothing.",
-            account.wallet.name
-        ),
-    };
-    let said = |what: &str, outcome: &Outcome, running: String| match outcome {
-        Outcome::Idle => None,
-        Outcome::Running => Some(strip(running, Voice::Waiting)),
-        Outcome::Passed(found) => Some(strip(format!("{what}: {found}"), Voice::Passed)),
-        Outcome::Failed(wrong) => Some(strip(format!("{what}: {wrong}"), Voice::Failed)),
-    };
-    let asking = "Asking Hyperliquid about this account…".to_owned();
-    said("Hyperliquid", &check.account, asking)
-        .into_iter()
-        .chain(said("Signature", &check.signature, signing))
-        .collect()
-}
-
-/// A strip of the panel: `said`, in the color of its `voice`, with the
-/// thick left edge and the tint when it is more than something to know.
-fn strip(said: String, voice: Voice) -> View {
-    let role = match voice {
-        Voice::Plain => theme::TEXT_MUTED,
-        Voice::Waiting => theme::WARNING,
-        Voice::Failed => theme::DANGER,
-        Voice::Passed => theme::SUCCESS,
-    };
-    let strip = view()
-        .w_full()
-        .px(px(10.0))
-        .py(px(5.0))
-        .text_size(px(11.0))
-        .text_color(role)
-        .role(if voice == Voice::Failed {
-            AccessibilityRole::Alert
-        } else {
-            AccessibilityRole::Text
-        })
-        .child(text(said).line_height(LineHeight::Multiple(1.5)));
-    if voice == Voice::Plain {
-        strip
-    } else {
-        strip
-            .border_l(px(3.0))
-            .border_l_color(role)
-            .bg(role.opacity(0.1))
-    }
 }
 
 /// What the chain `chain_id` is called: its name when it is one a wallet

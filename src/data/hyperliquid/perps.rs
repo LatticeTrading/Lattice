@@ -89,12 +89,27 @@ struct CumFunding {
     since_open: Option<Figure>,
 }
 
+/// A leverage setting, as a position names its own and as the account's
+/// setting for an asset is answered ([`super::leverage`]).
 #[derive(Debug, Deserialize)]
-struct LeverageState {
+pub(super) struct LeverageState {
     /// `cross` or `isolated`.
     #[serde(rename = "type")]
     mode: String,
     value: Figure,
+}
+
+impl From<LeverageState> for Leverage {
+    fn from(leverage: LeverageState) -> Self {
+        Self {
+            value: leverage.value.0,
+            mode: if leverage.mode == "isolated" {
+                MarginMode::Isolated
+            } else {
+                MarginMode::Cross
+            },
+        }
+    }
 }
 
 /// A figure's number, when there is one.
@@ -126,14 +141,7 @@ impl PositionState {
             return_on_equity: number(self.return_on_equity),
             liquidation_price: number(self.liquidation_px),
             margin_used: number(self.margin_used),
-            leverage: self.leverage.map(|leverage| Leverage {
-                value: leverage.value.0,
-                mode: if leverage.mode == "isolated" {
-                    MarginMode::Isolated
-                } else {
-                    MarginMode::Cross
-                },
-            }),
+            leverage: self.leverage.map(Leverage::from),
         })
     }
 }

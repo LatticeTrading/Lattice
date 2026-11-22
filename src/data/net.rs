@@ -56,9 +56,11 @@ pub use feed::{FeedHub, FeedHubs, FeedLease, FeedNode};
 pub use http::{ErrorDecoder, HttpClient, HttpOptions, Request};
 pub use json::{Figure, canonical_json};
 pub use query::{Queries, QuerySpec, QueryState, Watch, WeakQueries};
+#[cfg(test)]
+pub(crate) use socket::ScriptedSocket;
 pub use socket::{
     Inbound, Route, SharedSocket, SocketConfig, SocketProtocol, Subscription, TopicPhase,
-    platform_transport,
+    WeakSocket, platform_transport,
 };
 pub use status::{
     Alias, Failure, Feed, FeedState, Health, Link, LinkState, SourceDetails, SourceStatus,

@@ -95,24 +95,6 @@ fn what_a_wallet_says_is_cleaned_and_cut_before_it_is_shown() {
 }
 
 #[test]
-fn an_account_is_summed_up_by_what_it_holds_in_perpetuals() {
-    let mut margin = MarginAccount {
-        equity: Some(1_234.5),
-        ..MarginAccount::default()
-    };
-    assert_eq!(
-        account_line(&margin),
-        format!("{} in perpetuals, no open positions.", format::usd(1_234.5))
-    );
-    // An account Hyperliquid has never seen is one with nothing.
-    margin.equity = None;
-    assert_eq!(
-        account_line(&margin),
-        format!("{} in perpetuals, no open positions.", format::usd(0.0))
-    );
-}
-
-#[test]
 fn an_address_is_written_as_exchanges_are_asked_about_it() {
     let account = Account {
         wallet: WalletInfo {

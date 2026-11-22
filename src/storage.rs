@@ -124,6 +124,37 @@ pub(crate) fn save_address_groups(groups: &impl Serialize) -> Result<()> {
     Ok(())
 }
 
+/// Where what `venue` keeps to trade between runs is saved.
+fn trading_key(venue: &str) -> String {
+    format!("lattice.trading.{venue}.v1")
+}
+
+/// What the exchange `venue` keeps to trade for the user's accounts between
+/// runs, as its integration wrote it (`crate::data::trading`); `None` when
+/// it keeps nothing or what is saved is not JSON.
+///
+/// It is the one thing saved that is a secret: keys that can trade (and
+/// cannot withdraw), in the clear, as everything this storage holds is. An
+/// integration saves only what its exchange lets it revoke.
+pub(crate) fn load_trading_keys(venue: &str) -> Option<serde_json::Value> {
+    let contents = Storage::get_item(&trading_key(venue))?;
+    serde_json::from_str(&contents)
+        .map_err(|error| log::warn!("Lattice: ignoring malformed {venue} trading keys: {error}"))
+        .ok()
+}
+
+/// Saves what `venue` keeps to trade between runs; `None` keeps nothing
+/// (the entry goes).
+pub(crate) fn save_trading_keys(venue: &str, keys: Option<&serde_json::Value>) -> Result<()> {
+    let Some(keys) = keys else {
+        Storage::remove_item(&trading_key(venue));
+        return Ok(());
+    };
+    let contents = serde_json::to_string(keys).context("serializing trading keys")?;
+    Storage::set_item(trading_key(venue), contents).context("saving trading keys")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

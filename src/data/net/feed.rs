@@ -48,6 +48,13 @@ impl<K: Eq + Hash, S> FeedNode<K, S> {
         &self.state
     }
 
+    /// Runs `f` with what it asks for held by the feed's leases, as what
+    /// the feed asked for while it started is: for a topic a feed
+    /// subscribes later than that (once another of its topics has spoken).
+    pub fn scope<R>(&self, f: impl FnOnce() -> R) -> R {
+        self.consumers.scope(f)
+    }
+
     /// Tells every lease's `on_change` that something changed, in the
     /// order they leased.
     pub fn notify(&self) {
