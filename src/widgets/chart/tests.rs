@@ -419,6 +419,31 @@ fn drawings_are_saved_with_their_market_and_read_leniently() {
         ])
     );
     assert_eq!(ChartSettings::from(value), both);
+    // A channel and a position are three points each.
+    let three = vec![point(60.0, 100.0), point(180.0, 90.0), point(120.0, 80.0)];
+    let two = vec![point(60.0, 100.0), point(180.0, 90.0)];
+    assert!(Drawing::new(Kind::Channel, &market, two.clone()).is_none());
+    assert!(Drawing::new(Kind::Position, &market, two).is_none());
+    let channel = Drawing::new(Kind::Channel, &market, three.clone()).unwrap();
+    let plan = Drawing::new(Kind::Position, &market, three).unwrap();
+    let planned = ChartSettings::default().with_drawings(vec![channel, plan]);
+    let value = saved(&planned);
+    assert_eq!(
+        value["drawings"],
+        json!([
+            {
+                "type": "channel",
+                "market": "bybit:BTC/USDT:USDT",
+                "points": [[60.0, 100.0], [180.0, 90.0], [120.0, 80.0]],
+            },
+            {
+                "type": "position",
+                "market": "bybit:BTC/USDT:USDT",
+                "points": [[60.0, 100.0], [180.0, 90.0], [120.0, 80.0]],
+            },
+        ])
+    );
+    assert_eq!(ChartSettings::from(value), planned);
     assert!(Anchor::at(f64::NAN, 1.0).is_none());
     // What is no drawing is left out: a kind Lattice does not know or
     // does not keep, too few points, no market, a price that is no number.
@@ -607,6 +632,121 @@ fn each_kind_is_painted_where_its_points_are() {
     assert!((price.x - 454.0).abs() < 1e-3 && (price.y - 43.5).abs() < 1e-3);
     assert_eq!(level(Emphasis::Picked).boxes.len(), 1);
 
+    // A kind of `points`, as it is painted.
+    let drawn = |kind: Kind, points: Vec<Anchor>, emphasis: Emphasis| {
+        let item = Item {
+            kind,
+            points,
+            emphasis,
+        };
+        Record::of(&paint(&scale, &[item], &ink).finish())
+    };
+
+    // A channel: its tint between its two lines, the dashed line midway,
+    // then the line between its first two points and the one alongside
+    // it through its third, 20 points under it.
+    let through = point(4_200.0, 113.0);
+    let channel = drawn(Kind::Channel, vec![from, to, through], Emphasis::Plain);
+    assert_eq!(
+        (
+            channel.lines.len(),
+            channel.boxes.len(),
+            channel.areas.len()
+        ),
+        (3, 0, 1)
+    );
+    assert!(channel.lines[0].dashed && starts_at(channel.lines[0].from, 100.0, 60.0));
+    assert!(!channel.lines[1].dashed && starts_at(channel.lines[1].from, 100.0, 50.0));
+    assert!(starts_at(channel.lines[2].from, 100.0, 70.0));
+    let (corners, shade) = &channel.areas[0];
+    let round = [(100.0, 50.0), (300.0, 100.0), (300.0, 120.0), (100.0, 70.0)];
+    assert!(same(*shade, ink.tint) && corners.len() == round.len());
+    assert!(
+        corners
+            .iter()
+            .zip(round)
+            .all(|(corner, (x, y))| starts_at(*corner, x, y)),
+        "{corners:?}"
+    );
+    // Picked, it has a handle on each of its three points; being made,
+    // it is its first line alone until that one's second point is placed.
+    let picked = drawn(Kind::Channel, vec![from, to, through], Emphasis::Picked);
+    assert_eq!(picked.boxes.len(), 3);
+    let begun = drawn(Kind::Channel, vec![from, to], Emphasis::Picked);
+    assert_eq!(
+        (begun.lines.len(), begun.boxes.len(), begun.areas.len()),
+        (1, 2, 0)
+    );
+
+    // A position, long from 157.6 to a target 30 over it with its stop 15
+    // under it: the reward's zone and the risk's, a line along the
+    // target, the stop and the entry, and what each says.
+    let entry = point(3_600.0, 157.6);
+    let long = vec![entry, point(4_800.0, 187.6), point(4_200.0, 142.6)];
+    let position = drawn(Kind::Position, long.clone(), Emphasis::Plain);
+    assert_eq!((position.lines.len(), position.boxes.len()), (3, 2));
+    let sides = |zone: [f32; 4], right: [f32; 4]| {
+        let sides = zone.iter().zip(right);
+        sides
+            .into_iter()
+            .all(|(side, right)| (side - right).abs() < 1e-3)
+    };
+    let ((reward, made), (risk, lost)) = (position.boxes[0], position.boxes[1]);
+    assert!(sides(reward, [100.0, 20.5, 200.0, 30.0]) && same(made, ink.up_tint));
+    assert!(sides(risk, [100.0, 50.5, 200.0, 15.0]) && same(lost, ink.down_tint));
+    let rows: Vec<(f32, Hsla)> = position
+        .lines
+        .iter()
+        .map(|line| (line.from.1, line.color))
+        .collect();
+    for ((row, color), (at, right)) in
+        rows.iter()
+            .zip([(20.5, ink.up), (65.5, ink.down), (50.5, ink.line)])
+    {
+        assert!((row - at).abs() < 1e-3 && same(*color, right), "{rows:?}");
+    }
+    assert_eq!(
+        position.words(),
+        [
+            "Target 187.600 (+19.04%)",
+            "Stop 142.600 (-9.52%)",
+            "Long 157.600  R:R 2.00",
+        ]
+    );
+    // The target's and the stop's outside their lines, the entry's
+    // beside its own, past the plan's right end.
+    let target = position.find("Target 187.600 (+19.04%)");
+    assert!((target.x - 102.0).abs() < 1e-3 && (target.y - 13.5).abs() < 1e-3);
+    let stop = position.find("Stop 142.600 (-9.52%)");
+    assert!((stop.y - 72.5).abs() < 1e-3 && same(stop.color, ink.down));
+    let entered = position.find("Long 157.600  R:R 2.00");
+    assert!((entered.x - 304.0).abs() < 1e-3 && (entered.y - 50.5).abs() < 1e-3);
+    // Picked, its stop's handle is at the target's end of the stop's
+    // line, whatever time the stop was placed at.
+    let picked = drawn(Kind::Position, long, Emphasis::Picked);
+    assert_eq!(picked.boxes.len(), 5);
+    let [left, top, ..] = picked.boxes[4].0;
+    assert!((left - 296.5).abs() <= 0.5 && (top - 62.0).abs() <= 0.5);
+    // A target under the entry plans a short, which makes what the price
+    // falls; being made, a plan is its reward alone.
+    let short = vec![entry, point(4_800.0, 127.6), point(4_200.0, 172.6)];
+    let position = drawn(Kind::Position, short, Emphasis::Plain);
+    assert_eq!(
+        position.words(),
+        [
+            "Target 127.600 (+19.04%)",
+            "Stop 172.600 (-9.52%)",
+            "Short 157.600  R:R 2.00",
+        ]
+    );
+    let begun = drawn(
+        Kind::Position,
+        vec![entry, point(4_800.0, 187.6)],
+        Emphasis::Plain,
+    );
+    assert_eq!((begun.lines.len(), begun.boxes.len()), (2, 1));
+    assert_eq!(begun.words(), ["Target 187.600 (+19.04%)", "Long 157.600"]);
+
     // A point months off the plot asks nothing of the canvas beyond it.
     let far = Item {
         kind: Kind::Trend,
@@ -681,6 +821,47 @@ fn a_press_takes_a_point_or_a_line_and_a_drag_moves_what_it_took() {
     assert_eq!(takes((300.0, 50.0)), Some((1, Grip::Body)));
     assert_eq!(takes((100.0, 50.0)), Some((1, Grip::Point(0))));
     assert_eq!(takes((200.0, 85.0)), None);
+
+    // A channel is taken by either of its lines (the other is 20 points
+    // under the first) and by the point the other goes through, and not
+    // between them.
+    let through = point(4_200.0, 113.0);
+    let channel = Drawing::new(Kind::Channel, "m", vec![from, to, through]).unwrap();
+    let alone = [(0, &channel)];
+    let takes = |at: (f64, f64)| hit(&scale, &alone, None, at);
+    assert_eq!(takes((200.0, 75.0)), Some((0, Grip::Body)));
+    assert_eq!(takes((150.0, 82.0)), Some((0, Grip::Body)));
+    assert_eq!(takes((200.0, 95.0)), Some((0, Grip::Point(2))));
+    assert_eq!(takes((200.0, 85.0)), None);
+
+    // A position is taken by its edges and not its zones, and its stop
+    // where its handle is: at the target's end of the stop's line.
+    let planned = vec![
+        point(3_600.0, 157.6),
+        point(4_800.0, 187.6),
+        point(4_200.0, 142.6),
+    ];
+    let plan = Drawing::new(Kind::Position, "m", planned).unwrap();
+    let alone = [(0, &plan)];
+    let takes = |at: (f64, f64)| hit(&scale, &alone, None, at);
+    assert_eq!(takes((300.0, 65.0)), Some((0, Grip::Point(2))));
+    assert_eq!(takes((200.0, 65.0)), Some((0, Grip::Body)));
+    assert_eq!(takes((100.0, 35.0)), Some((0, Grip::Body)));
+    assert_eq!(takes((200.0, 35.0)), None);
+    assert_eq!(takes((200.0, 58.0)), None);
+    // The stop taken there moves to the price the pointer goes to, and
+    // leaves the entry and the target where they were.
+    let grabbed = scale.anchor(300.0, 65.0).unwrap();
+    let pulled = moved(
+        &scale,
+        plan.points(),
+        Grip::Point(2),
+        grabbed,
+        (310.0, 75.0),
+    )
+    .unwrap();
+    assert_eq!(pulled[..2], plan.points()[..2]);
+    assert!(close(pulled[2].price(), 132.6));
 }
 
 #[test]
@@ -696,6 +877,15 @@ fn a_draft_places_its_points_one_after_another() {
     let mut draft = Draft::begin(Kind::Horizontal, first);
     assert_eq!(draft.points(), [first]);
     assert_eq!(draft.place(), Some(vec![first]));
+    // One of three: its second placed, the third follows from there.
+    let third = point(180.0, 90.0);
+    let mut draft = Draft::begin(Kind::Channel, first);
+    assert_eq!(draft.points(), [first, first]);
+    draft.aim(second);
+    assert_eq!(draft.place(), None);
+    assert_eq!(draft.points(), [first, second, second]);
+    draft.aim(third);
+    assert_eq!(draft.place(), Some(vec![first, second, third]));
 }
 
 /// What the drawings' canvas showed when it was last painted: where each
@@ -900,6 +1090,59 @@ fn drawings_are_made_picked_moved_and_removed_on_the_plot() {
     app.wait_until("an empty canvas", WAIT, |_| painted().lines.is_empty())
         .unwrap();
 
+    // A channel by a drag and a press: the drag draws its first line, and
+    // the next press places the point its other line goes through (here
+    // where the first began). Its dashed middle, its two lines and a
+    // handle on each of its three points.
+    app.press("Parallel channel").unwrap();
+    app.drag("id:chart-plot", by(120.0, -60.0)).unwrap();
+    app.wait(pause).unwrap();
+    assert!(drawings().is_empty());
+    app.drag("id:chart-plot", by(0.0, 0.0)).unwrap();
+    app.wait_until("the channel", WAIT, |_| drawings().len() == 1)
+        .unwrap();
+    assert_eq!(drawings()[0]["type"], "channel");
+    assert_eq!(drawings()[0]["points"].as_array().map(Vec::len), Some(3));
+    app.wait_until("its lines", WAIT, |_| {
+        let channel = painted();
+        (channel.lines.len(), channel.boxes) == (3, 3)
+    })
+    .unwrap();
+    app.press_key("Delete").unwrap();
+    app.wait_until("no drawing", WAIT, |_| drawings().is_empty())
+        .unwrap();
+
+    // A position the same way: its entry and its target by the drag (up
+    // the plot: a long), its stop by the next press, here at the entry's
+    // price, where it risks nothing yet. The reward's zone, its three
+    // lines and handles, and what the target, the stop and the entry say.
+    app.press("Long/short position").unwrap();
+    app.drag("id:chart-plot", by(120.0, -60.0)).unwrap();
+    app.wait(pause).unwrap();
+    assert!(drawings().is_empty());
+    app.drag("id:chart-plot", by(0.0, 0.0)).unwrap();
+    app.wait_until("the position", WAIT, |_| drawings().len() == 1)
+        .unwrap();
+    assert_eq!(drawings()[0]["type"], "position");
+    assert_eq!(drawings()[0]["points"].as_array().map(Vec::len), Some(3));
+    app.wait_until("its zones", WAIT, |_| {
+        let plan = painted();
+        (plan.lines.len(), plan.boxes, plan.texts.len()) == (3, 4, 3)
+    })
+    .unwrap();
+    let said = painted().texts;
+    assert!(
+        said[0].starts_with("Target ") && said[0].contains("(+"),
+        "{said:?}"
+    );
+    assert!(said[1].starts_with("Stop ") && said[1].ends_with("(+0.00%)"));
+    assert!(said[2].starts_with("Long ") && !said[2].contains("R:R"));
+    app.press_key("Delete").unwrap();
+    app.wait_until("no drawing", WAIT, |_| drawings().is_empty())
+        .unwrap();
+    app.wait_until("an empty canvas", WAIT, |_| painted().lines.is_empty())
+        .unwrap();
+
     // A retracement by two presses: a click places its first point, and
     // the next press, wherever it is let go, its second.
     app.press("Fib retracement").unwrap();
@@ -1070,6 +1313,28 @@ fn indicators_are_saved_with_their_inputs_and_read_leniently() {
     let titles: Vec<String> = lenient.indicators().iter().map(Indicator::title).collect();
     assert_eq!(titles, ["VWAP Month", "VWAP Day", "VWAP Week", "SMA 50"]);
 
+    // A trend is saved with its range's length and its factor. It is not
+    // drawn in a color of its own, so it takes none from the next.
+    let trend = Indicator::new(Kind::Supertrend, &[]);
+    assert_eq!(trend.title(), "ST 10 3");
+    assert!(!Kind::Supertrend.colored() && Kind::Donchian.colored());
+    let channels = Indicator::new(Kind::Donchian, std::slice::from_ref(&trend));
+    assert_eq!(channels.title(), "DC 20");
+    assert_eq!(channels.color(), LinkColor::Yellow);
+    let settings =
+        ChartSettings::default().with_indicators(vec![trend.with_input(1, 2.5), channels]);
+    let value = saved(&settings);
+    assert_eq!(
+        value,
+        json!({
+            "indicators": [
+                { "type": "supertrend", "length": 10, "factor": 2.5, "color": "yellow" },
+                { "type": "donchian", "length": 20, "color": "yellow" },
+            ],
+        })
+    );
+    assert_eq!(ChartSettings::from(value), settings);
+
     // Once every color is taken they go round again.
     let mut five: Vec<Indicator> = Vec::new();
     for _ in COLORS {
@@ -1206,6 +1471,76 @@ fn indicators_are_computed_from_the_closes() {
         &[None, Some(10.0), Some(17.5), Some(17.5)]
     ));
 
+    // Donchian Channels are the highest high and the lowest low of the
+    // last bars, and, fainter, the price midway between them.
+    let ranges = [
+        (5.0, 1.0),
+        (6.0, 2.0),
+        (4.0, 3.0),
+        (7.0, 3.0),
+        (3.0, 2.0),
+        (2.0, 0.0),
+    ];
+    let ranging: Vec<Candle> = ranges
+        .iter()
+        .enumerate()
+        .map(|(bar, (high, low))| Candle {
+            time: bar as f64 * 60.0,
+            open: *low,
+            high: *high,
+            low: *low,
+            close: *low,
+            volume: None,
+        })
+        .collect();
+    let channels = indicator(Kind::Donchian, &[3.0]).lines(&ranging);
+    let [basis, upper, lower] = channels.as_slice() else {
+        panic!("channels are three lines: {channels:?}");
+    };
+    let highest = [None, None, Some(6.0), Some(7.0), Some(7.0), Some(7.0)];
+    let lowest = [None, None, Some(1.0), Some(2.0), Some(2.0), Some(0.0)];
+    let midway = [None, None, Some(3.5), Some(4.5), Some(4.5), Some(3.5)];
+    assert!(runs(upper, &highest) && runs(lower, &lowest) && runs(basis, &midway));
+    assert_eq!(
+        (basis.is_quiet(), upper.is_quiet(), lower.is_quiet()),
+        (true, false, false)
+    );
+
+    // Supertrend trails the bars by its factor of their average true
+    // range (here over two bars, once): over them from its first value,
+    // lower only while they stay under it, then under them from the bar
+    // that closes over it (15, over 12), higher only, until one closes
+    // under it (9, under 12.5). It starts over where it changes sides.
+    let turning = closing(&[10.0, 12.0, 11.0, 15.0, 14.0, 9.0]);
+    let trend = indicator(Kind::Supertrend, &[2.0, 1.0]).lines(&turning);
+    let [trail] = trend.as_slice() else {
+        panic!("a trend is one line: {trend:?}");
+    };
+    let trailed = [
+        None,
+        Some(13.0),
+        Some(12.0),
+        Some(12.5),
+        Some(12.5),
+        Some(12.375),
+    ];
+    assert!(runs(trail, &trailed), "{trail:?}");
+    let sides: Vec<Option<bool>> = (1..6).map(|bar| trail.rising_at(bar)).collect();
+    assert_eq!(
+        sides,
+        [
+            Some(false),
+            Some(false),
+            Some(true),
+            Some(true),
+            Some(false)
+        ]
+    );
+    assert!(trail.is_trend() && trail.restarts(2, 3) && trail.restarts(4, 5));
+    assert!(!trail.restarts(3, 4));
+    // Another kind's line is no trend's: it has no side.
+    assert!(!sma[0].is_trend() && sma[0].rising_at(3).is_none());
+
     // Too few bars compute nothing, and a hidden one has no line.
     let long = indicator(Kind::Ema, &[20.0]).lines(&rising);
     assert!(runs(&long[0], &[None; 7]));
@@ -1248,6 +1583,8 @@ fn indicator_lines_are_painted_through_their_buckets() {
     let ink = indicators::Ink {
         plain: [0.0, 0.1, 0.2, 0.3, 0.4].map(shade),
         quiet: [0.5, 0.6, 0.7, 0.8, 0.9].map(shade),
+        rising: shade(0.45),
+        falling: shade(0.95),
     };
     let painted = |listed: &[Indicator], scene: &Scene| {
         let computed = Computed::of(listed, &bars);
@@ -1317,6 +1654,26 @@ fn indicator_lines_are_painted_through_their_buckets() {
     let computed = Computed::of(&[indicator(Kind::Vwap, &[])], &traded);
     let cut = Record::of(&indicators::paint(&scene, &computed, &ink).finish());
     assert_eq!(cut.lines.len(), 49);
+
+    // A trend's line is in the bars' colors, a side at a time, and not
+    // joined where it changes sides: under bars that rise a price each to
+    // bar 74 (the rising ones' color through 26 of the buckets), over them
+    // once they fall five a bar from bar 75 (the falling ones' through the
+    // other 25).
+    let mut turning = bars.clone();
+    for (bar, candle) in turning.iter_mut().enumerate() {
+        let price = if bar < 75 {
+            100.0 + bar as f64
+        } else {
+            174.0 - 5.0 * (bar as f64 - 74.0)
+        };
+        (candle.open, candle.high, candle.low, candle.close) = (price, price, price, price);
+    }
+    let computed = Computed::of(&[indicator(Kind::Supertrend, &[])], &turning);
+    let sided = Record::of(&indicators::paint(&scene, &computed, &ink).finish());
+    assert_eq!(sided.ruled(ink.rising).len(), 25);
+    assert_eq!(sided.ruled(ink.falling).len(), 24);
+    assert_eq!(sided.lines.len(), 49);
 }
 
 #[test]
@@ -1527,6 +1884,29 @@ fn indicators_are_added_hidden_set_and_removed_on_the_plot() {
     app.wait_until("the average alone", WAIT, |_| saved().len() == 1)
         .unwrap();
     app.wait_for("1108.08").unwrap();
+
+    // A trend's line is in the bars' colors: its settings have its range's
+    // length and its factor, and no color to pick.
+    app.press("Indicators").unwrap();
+    app.press("Add Supertrend").unwrap();
+    app.wait_for("ST 10 3").unwrap();
+    assert_eq!(
+        saved()[1],
+        json!({ "type": "supertrend", "length": 10, "factor": 3.0, "color": "yellow" })
+    );
+    app.wait_until("its line too", WAIT, |screen| lines(screen) > 220)
+        .unwrap();
+    app.press("ST 10 3 settings").unwrap();
+    app.wait_for("id:chart-indicator-settings").unwrap();
+    assert!(app.shows("ATR Length") && app.shows("Factor"));
+    assert!(!app.screen().matches("Color").unwrap());
+    app.press("Close ST settings").unwrap();
+    app.wait_for_gone("id:chart-indicator-settings", WAIT)
+        .unwrap();
+    app.press("Remove ST 10 3").unwrap();
+    app.wait_until("the average alone", WAIT, |_| saved().len() == 1)
+        .unwrap();
+
     app.press("Remove EMA 50").unwrap();
     app.wait_until("no indicator", WAIT, |_| saved().is_empty())
         .unwrap();

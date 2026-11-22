@@ -1,7 +1,7 @@
 //! What is drawn on the chart by hand ([`Drawing`]): a trend line, a
-//! horizontal line, a rectangle, a Fibonacci retracement and a
-//! measurement, each made with its tool ([`Tool`]) from the toolbar beside
-//! the plot.
+//! horizontal line, a parallel channel, a rectangle, a Fibonacci
+//! retracement, a long or short position and a measurement, each made
+//! with its tool ([`Tool`]) from the toolbar beside the plot.
 //!
 //! A drawing is a kind ([`Kind`]) and its points ([`Anchor`]: a time and a
 //! price each), so it stays on its bars through a pan, a zoom, a page of
@@ -15,7 +15,8 @@
 //!
 //! - [`shape`]: what a kind looks like and where it can be grabbed
 //!   ([`Shape`]), one module a kind ([`trend`], [`horizontal`],
-//!   [`rectangle`], [`fib`], [`measure`]), and what they draw with;
+//!   [`channel`], [`rectangle`], [`fib`], [`position`], [`measure`]), and
+//!   what they draw with;
 //! - [`scale`]: where a point is on the plot, and which point a place of
 //!   the plot is;
 //! - [`editor`]: the tool in hand and what the pointer does with it
@@ -29,11 +30,13 @@
 //! icon ([`Tool::icon`]). The editor, the layer, the toolbar and the
 //! settings take it from there.
 
+mod channel;
 mod editor;
 mod fib;
 mod horizontal;
 mod layer;
 mod measure;
+mod position;
 mod rectangle;
 mod scale;
 mod shape;
@@ -105,20 +108,28 @@ pub(crate) enum Kind {
     Trend,
     /// A line across the plot at one point's price.
     Horizontal,
+    /// A line between two points, and another alongside it through a
+    /// third.
+    Channel,
     /// A zone whose opposite corners are two points.
     Rectangle,
     /// The Fibonacci retracement levels of a move between two points.
     Fib,
+    /// A trade planned from an entry to a target, with its stop: what it
+    /// risks for what it may make.
+    Position,
     /// How far apart two points are, in price, in bars and in time.
     Measure,
 }
 
 impl Kind {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::Trend,
         Self::Horizontal,
+        Self::Channel,
         Self::Rectangle,
         Self::Fib,
+        Self::Position,
         Self::Measure,
     ];
 
@@ -127,8 +138,10 @@ impl Kind {
         match self {
             Self::Trend => "trend",
             Self::Horizontal => "hline",
+            Self::Channel => "channel",
             Self::Rectangle => "rect",
             Self::Fib => "fib",
+            Self::Position => "position",
             Self::Measure => "measure",
         }
     }
@@ -142,8 +155,10 @@ impl Kind {
         match self {
             Self::Trend => "Trend line",
             Self::Horizontal => "Horizontal line",
+            Self::Channel => "Parallel channel",
             Self::Rectangle => "Rectangle",
             Self::Fib => "Fib retracement",
+            Self::Position => "Long/short position",
             Self::Measure => "Measure",
         }
     }
@@ -153,16 +168,14 @@ impl Kind {
         match self {
             Self::Horizontal => 1,
             Self::Trend | Self::Rectangle | Self::Fib | Self::Measure => 2,
+            Self::Channel | Self::Position => 3,
         }
     }
 
     /// Whether one stays on the chart and is saved once made. One that is
     /// not shows until the next press on the plot.
     pub fn kept(self) -> bool {
-        match self {
-            Self::Trend | Self::Horizontal | Self::Rectangle | Self::Fib => true,
-            Self::Measure => false,
-        }
+        !matches!(self, Self::Measure)
     }
 
     /// What it looks like and where it can be grabbed.
@@ -170,8 +183,10 @@ impl Kind {
         match self {
             Self::Trend => &trend::Trend,
             Self::Horizontal => &horizontal::Horizontal,
+            Self::Channel => &channel::Channel,
             Self::Rectangle => &rectangle::Rectangle,
             Self::Fib => &fib::Fib,
+            Self::Position => &position::Position,
             Self::Measure => &measure::Measure,
         }
     }
@@ -193,12 +208,14 @@ pub(crate) enum Tool {
 
 impl Tool {
     /// Every tool, in the order the toolbar lists them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 8] = [
         Self::Cursor,
         Self::Draw(Kind::Trend),
         Self::Draw(Kind::Horizontal),
+        Self::Draw(Kind::Channel),
         Self::Draw(Kind::Rectangle),
         Self::Draw(Kind::Fib),
+        Self::Draw(Kind::Position),
         Self::Draw(Kind::Measure),
     ];
 
@@ -226,8 +243,12 @@ impl Tool {
             Self::Draw(Kind::Horizontal) => {
                 include_str!("../../../assets/icons/horizontal-line.svg")
             }
+            Self::Draw(Kind::Channel) => {
+                include_str!("../../../assets/icons/parallel-channel.svg")
+            }
             Self::Draw(Kind::Rectangle) => include_str!("../../../assets/icons/rectangle.svg"),
             Self::Draw(Kind::Fib) => include_str!("../../../assets/icons/fib-retracement.svg"),
+            Self::Draw(Kind::Position) => include_str!("../../../assets/icons/position.svg"),
             Self::Draw(Kind::Measure) => include_str!("../../../assets/icons/measure.svg"),
         }
     }

@@ -2,8 +2,10 @@
 //! chart's drawings and the crosshair, on which every indicator that
 //! shows is painted ([`paint`]): each of its lines through its value at
 //! every bucket of the scene, over the bucket's middle, as the plot draws
-//! a line's points. It is painted again when the plot moves or its series
-//! or an indicator changes, and not at all while no indicator shows.
+//! a line's points, in its indicator's color or, for a trend's line, in
+//! the bars' (the rising ones' under them, the falling ones' over them).
+//! It is painted again when the plot moves or its series or an indicator
+//! changes, and not at all while no indicator shows.
 
 use std::rc::Rc;
 
@@ -12,6 +14,7 @@ use nsh_core::{canvas::LineJoin, prelude::*};
 use super::Computed;
 use crate::{
     link::LinkColor,
+    theme,
     widgets::{
         chart::session::ChartSession,
         common::{
@@ -30,10 +33,13 @@ const QUIET: f32 = 0.55;
 const FAR: f64 = 64.0;
 
 /// The colors lines are painted in: each link color's
-/// ([`LinkColor::index`]), as it is and as a quiet line has it.
+/// ([`LinkColor::index`]), as it is and as a quiet line has it, and the
+/// two a trend's line has, under the bars and over them.
 pub(crate) struct Ink {
     pub plain: [Hsla; 5],
     pub quiet: [Hsla; 5],
+    pub rising: Hsla,
+    pub falling: Hsla,
 }
 
 impl Ink {
@@ -43,6 +49,8 @@ impl Ink {
         Self {
             plain: LinkColor::ALL.map(|link| color(link.role().get())),
             quiet: LinkColor::ALL.map(|link| color(link.role().opacity(QUIET).get())),
+            rising: color(theme::BID.get()),
+            falling: color(theme::ASK.get()),
         }
     }
 
@@ -54,7 +62,8 @@ impl Ink {
 
 /// `computed`'s lines painted in order (later ones over earlier ones) on
 /// the plot showing `scene`, in `ink`'s colors: a line is cut where it has
-/// no value, and where it starts over.
+/// no value, and where it starts over. A trend's line is painted a side
+/// at a time, each in its color.
 pub(crate) fn paint(scene: &Scene, computed: &Computed, ink: &Ink) -> Painter {
     let (width, height) = (f64::from(scene.width), f64::from(scene.height));
     let (top, bottom) = (-FAR * height, (FAR + 1.0) * height);
@@ -64,36 +73,44 @@ pub(crate) fn paint(scene: &Scene, computed: &Computed, ink: &Ink) -> Painter {
     pen.clip(0.0, 0.0, width, height);
     for (indicator, lines) in computed.each() {
         for line in lines {
-            let stroke = ink.of(indicator.color(), line.is_quiet());
-            pen.with(|painter| {
-                let mut painter = painter
-                    .stroke_color(stroke)
-                    .line_width(WIDTH)
-                    .line_join(LineJoin::Round)
-                    .begin_path();
-                // The bar the line was last drawn to, which the next
-                // is joined to unless the line starts over between
-                // them.
-                let mut drawn = None;
-                for at in buckets.clone() {
-                    let spot = scene
-                        .bucket_end(at)
-                        .and_then(|(x, bar)| Some((x, bar, line.at(bar)?)));
-                    let Some((x, bar, value)) = spot else {
-                        drawn = None;
-                        continue;
-                    };
-                    let (x, y) = (x as f32, scene.y_of(value).clamp(top, bottom) as f32);
-                    let joined = drawn.is_some_and(|drawn| !line.restarts(drawn, bar));
-                    painter = if joined {
-                        painter.line_to(x, y)
-                    } else {
-                        painter.move_to(x, y)
-                    };
-                    drawn = Some(bar);
-                }
-                painter.stroke()
-            });
+            let strokes = if line.is_trend() {
+                vec![(ink.rising, Some(true)), (ink.falling, Some(false))]
+            } else {
+                vec![(ink.of(indicator.color(), line.is_quiet()), None)]
+            };
+            for (stroke, side) in strokes {
+                pen.with(|painter| {
+                    let mut painter = painter
+                        .stroke_color(stroke)
+                        .line_width(WIDTH)
+                        .line_join(LineJoin::Round)
+                        .begin_path();
+                    // The bar the line was last drawn to, which the next
+                    // is joined to unless the line starts over between
+                    // them.
+                    let mut drawn = None;
+                    for at in buckets.clone() {
+                        let spot = scene
+                            .bucket_end(at)
+                            .and_then(|(x, bar)| Some((x, bar, line.at(bar)?)))
+                            // Of a trend's line, the bars on this side.
+                            .filter(|(_, bar, _)| side.is_none() || line.rising_at(*bar) == side);
+                        let Some((x, bar, value)) = spot else {
+                            drawn = None;
+                            continue;
+                        };
+                        let (x, y) = (x as f32, scene.y_of(value).clamp(top, bottom) as f32);
+                        let joined = drawn.is_some_and(|drawn| !line.restarts(drawn, bar));
+                        painter = if joined {
+                            painter.line_to(x, y)
+                        } else {
+                            painter.move_to(x, y)
+                        };
+                        drawn = Some(bar);
+                    }
+                    painter.stroke()
+                });
+            }
         }
     }
     pen.restore();

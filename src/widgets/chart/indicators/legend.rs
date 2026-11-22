@@ -4,7 +4,8 @@
 //!
 //! A row says what the indicator is (`EMA 20`: its kind and its inputs)
 //! and, in its color, the value of each of its lines at the bar under the
-//! pointer, or at the newest bar while the pointer is off the plot. With
+//! pointer, or at the newest bar while the pointer is off the plot (a
+//! trend's line in the color of the side of the bars it is on there). With
 //! the pointer over the row its controls show beside them: one hides the
 //! indicator or shows it again (hidden, it stays in the legend, dimmed,
 //! with that control), one opens its settings ([`super::panel`]) and one
@@ -80,8 +81,9 @@ fn row(session: &Rc<ChartSession>, tab: &TabContext<ChartSettings>, at: usize) -
     let hidden =
         computed(move || shown.with(|shown| shown.as_ref().is_some_and(Indicator::hidden)));
     let (lines, scene, pointer) = (session.indicators, session.plot.scene, session.plot.pointer);
-    // Its lines' values at the bar under the pointer, else at the newest;
-    // nothing while it is hidden or not computed yet.
+    // Its lines' values at the bar under the pointer, else at the newest,
+    // and the side of the bars a trend's line is on there; nothing while
+    // it is hidden or not computed yet.
     let values = computed(move || {
         let lines = lines.get();
         let said = shown.with(|shown| {
@@ -93,7 +95,8 @@ fn row(session: &Rc<ChartSession>, tab: &TabContext<ChartSettings>, at: usize) -
             let values = lines_of
                 .iter()
                 .map(|line| line.at(bar).map_or_else(|| NO_VALUE.to_owned(), price_text));
-            Some(values.collect::<Vec<_>>().join("  "))
+            let rising = lines_of.first().and_then(|line| line.rising_at(bar));
+            Some((values.collect::<Vec<_>>().join("  "), rising))
         });
         said.unwrap_or_default()
     });
@@ -184,14 +187,21 @@ fn row(session: &Rc<ChartSession>, tab: &TabContext<ChartSettings>, at: usize) -
                 }),
         )
         .child(
-            text(move || values.get())
+            text(move || values.with(|(said, _)| said.clone()))
                 .flex_none()
                 .number_of_lines(1)
-                .text_color(move || {
-                    let color = shown.with(|shown| shown.as_ref().map(Indicator::color));
-                    color.map_or_else(|| theme::TEXT_MUTED.get(), |color| color.role().get())
+                .text_color(move || match values.with(|(_, rising)| *rising) {
+                    Some(true) => theme::BID.get(),
+                    Some(false) => theme::ASK.get(),
+                    None => {
+                        let color = shown.with(|shown| shown.as_ref().map(Indicator::color));
+                        color.map_or_else(|| theme::TEXT_MUTED.get(), |color| color.role().get())
+                    }
                 })
-                .style_when(move || values.with(String::is_empty), |s| s.hidden())
+                .style_when(
+                    move || values.with(|(said, _)| said.is_empty()),
+                    |s| s.hidden(),
+                )
                 .test_id(&format!("chart-indicator-{at}-values")),
         )
         .child(

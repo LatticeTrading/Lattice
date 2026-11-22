@@ -64,6 +64,20 @@ impl Pen {
         self.with(|painter| painter.fill_rect(x as f32, y as f32, width as f32, height as f32));
     }
 
+    /// The shape whose corners are `corners`, in order round it, filled.
+    pub fn area(&mut self, corners: &[(f64, f64)]) {
+        let Some(((x, y), rest)) = corners.split_first() else {
+            return;
+        };
+        self.with(|painter| {
+            let start = painter.begin_path().move_to(*x as f32, *y as f32);
+            let round = rest.iter().fold(start, |painter, (x, y)| {
+                painter.line_to(*x as f32, *y as f32)
+            });
+            round.close_path().fill()
+        });
+    }
+
     pub fn outline(&mut self, x: f64, y: f64, width: f64, height: f64) {
         self.with(|painter| painter.stroke_rect(area(x, y, width, height)));
     }

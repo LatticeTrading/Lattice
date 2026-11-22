@@ -7,7 +7,8 @@
 //!   number field for one of whole numbers (a length), a compact select of
 //!   the values it takes for another (a multiplier, a period).
 //! - Color: a compact select of the colors an indicator can be drawn in
-//!   ([`COLORS`]).
+//!   ([`COLORS`]), for a kind that is drawn in one of its own
+//!   ([`super::Kind::colored`]).
 
 use nsh_base::SelectItem;
 use nsh_core::prelude::*;
@@ -40,7 +41,7 @@ pub(super) fn panel(
         .flex_col()
         .py(px(4.0))
         .children(inputs.map(|(number, input)| input_row(tab.clone(), at, number, *input)))
-        .child(color_row(tab.clone(), at));
+        .children(kind.colored().then(|| color_row(tab.clone(), at)));
     Some(ui::settings_panel(
         anchor,
         Side::Left,

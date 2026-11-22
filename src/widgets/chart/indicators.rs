@@ -1,13 +1,15 @@
 //! What the chart computes from its bars and draws over them
 //! ([`Indicator`]): a simple moving average, an exponential one, a triple
-//! exponential one, Bollinger Bands and a volume-weighted average price,
-//! each added from the menu that the badge beside the plot's header opens.
+//! exponential one, Bollinger Bands, Donchian Channels, a volume-weighted
+//! average price and Supertrend, each added from the menu that the badge
+//! beside the plot's header opens.
 //!
 //! An indicator is a kind ([`Kind`]), the numbers it is computed with (its
 //! kind's [`Input`]s: a length, a multiplier, a period), a color and
 //! whether it shows. It is the chart's, not a market's: it is computed
 //! from the bars of whatever the chart charts, candles or ticks (their
-//! closes, and for a volume-weighted average what traded in them). Indicators are
+//! closes, for a channel or a trend their highs and lows too, and for a
+//! volume-weighted average what traded in them). Indicators are
 //! saved in the chart's settings (`indicators`) in the order they were
 //! added, which is the order the legend lists them in and the layer draws
 //! them in (later ones over earlier ones).
@@ -17,8 +19,8 @@
 //! - [`series`]: an indicator's lines over a series ([`Line`]) and every
 //!   indicator's ([`Computed`]), which the chart's session computes when
 //!   a bar or an indicator changes;
-//! - one module a kind ([`sma`], [`ema`], [`tema`], [`bands`], [`vwap`]):
-//!   what it computes;
+//! - one module a kind ([`sma`], [`ema`], [`tema`], [`bands`],
+//!   [`donchian`], [`vwap`], [`supertrend`]): what it computes;
 //! - [`layer`]: the canvas over the plot the lines are painted on;
 //! - [`legend`]: a row an indicator under the plot's header (its name, its
 //!   values at the bar under the pointer, and its controls: hiding it,
@@ -32,6 +34,7 @@
 //! settings, the layer and the chart's settings take it from there.
 
 mod bands;
+mod donchian;
 mod ema;
 mod layer;
 mod legend;
@@ -39,6 +42,7 @@ mod menu;
 mod panel;
 mod series;
 mod sma;
+mod supertrend;
 mod tema;
 mod vwap;
 
@@ -104,6 +108,29 @@ impl Input {
         default: 2.0,
         least: 0.5,
         most: 5.0,
+        step: 0.5,
+        names: &[],
+    };
+
+    /// How many bars a trend's average true range is taken over.
+    const RANGE_LENGTH: Self = Self {
+        id: "length",
+        label: "ATR Length",
+        default: 10.0,
+        least: 1.0,
+        most: 500.0,
+        step: 1.0,
+        names: &[],
+    };
+
+    /// How many average true ranges a trend's line is from its bars'
+    /// middle.
+    const FACTOR: Self = Self {
+        id: "factor",
+        label: "Factor",
+        default: 3.0,
+        least: 0.5,
+        most: 10.0,
         step: 0.5,
         names: &[],
     };
@@ -186,13 +213,27 @@ pub(crate) enum Kind {
     /// Bollinger Bands: their simple moving average, and a band above and
     /// below it some standard deviations away.
     Bands,
+    /// Donchian Channels: the highest high and the lowest low of the last
+    /// bars, and the price midway between them.
+    Donchian,
     /// The volume-weighted average price: what a unit traded cost on
     /// average since its period began.
     Vwap,
+    /// Supertrend: a line some average true ranges from the bars, under
+    /// them while they rise and over them while they fall.
+    Supertrend,
 }
 
 impl Kind {
-    pub const ALL: [Self; 5] = [Self::Sma, Self::Ema, Self::Tema, Self::Bands, Self::Vwap];
+    pub const ALL: [Self; 7] = [
+        Self::Sma,
+        Self::Ema,
+        Self::Tema,
+        Self::Bands,
+        Self::Donchian,
+        Self::Vwap,
+        Self::Supertrend,
+    ];
 
     /// What settings save it as, and what its menu row's test id ends
     /// with.
@@ -202,7 +243,9 @@ impl Kind {
             Self::Ema => "ema",
             Self::Tema => "tema",
             Self::Bands => "bb",
+            Self::Donchian => "donchian",
             Self::Vwap => "vwap",
+            Self::Supertrend => "supertrend",
         }
     }
 
@@ -217,7 +260,9 @@ impl Kind {
             Self::Ema => "EMA",
             Self::Tema => "TEMA",
             Self::Bands => "BB",
+            Self::Donchian => "DC",
             Self::Vwap => "VWAP",
+            Self::Supertrend => "ST",
         }
     }
 
@@ -228,7 +273,9 @@ impl Kind {
             Self::Ema => "Exponential Moving Average",
             Self::Tema => "Triple Exponential Moving Average",
             Self::Bands => "Bollinger Bands",
+            Self::Donchian => "Donchian Channels",
             Self::Vwap => "Volume Weighted Average Price",
+            Self::Supertrend => "Supertrend",
         }
     }
 
@@ -236,10 +283,17 @@ impl Kind {
     /// and its settings list them: every kind has one at least.
     pub fn inputs(self) -> &'static [Input] {
         match self {
-            Self::Sma | Self::Ema | Self::Tema => &[Input::LENGTH],
+            Self::Sma | Self::Ema | Self::Tema | Self::Donchian => &[Input::LENGTH],
             Self::Bands => &[Input::LENGTH, Input::DEVIATIONS],
             Self::Vwap => &[Input::ANCHOR],
+            Self::Supertrend => &[Input::RANGE_LENGTH, Input::FACTOR],
         }
+    }
+
+    /// Whether one is drawn in a color of its own, which its settings
+    /// pick: a trend's line is in the bars' colors instead.
+    pub fn colored(self) -> bool {
+        !matches!(self, Self::Supertrend)
     }
 }
 
@@ -261,9 +315,13 @@ impl Indicator {
     /// A `kind` as one starts: its inputs at what they start as, showing,
     /// in the first of [`COLORS`] none of `others` (the chart's other
     /// indicators) is drawn in, or once they are all taken the one after
-    /// the last's.
+    /// the last's. One that is not drawn in its color takes none from the
+    /// others.
     pub fn new(kind: Kind, others: &[Self]) -> Self {
-        let taken = |color: &LinkColor| others.iter().any(|other| other.color == *color);
+        let taken = |color: &LinkColor| {
+            let mut drawn = others.iter().filter(|other| other.kind.colored());
+            drawn.any(|other| other.color == *color)
+        };
         let color = COLORS
             .into_iter()
             .find(|color| !taken(color))
@@ -338,7 +396,9 @@ impl Indicator {
             Kind::Ema => vec![ema::line(&closes(), length)],
             Kind::Tema => vec![tema::line(&closes(), length)],
             Kind::Bands => bands::lines(&closes(), length, self.inputs[1]),
+            Kind::Donchian => donchian::lines(bars, length),
             Kind::Vwap => vec![vwap::line(bars, vwap::Period::of(first))],
+            Kind::Supertrend => vec![supertrend::line(bars, length, self.inputs[1])],
         }
     }
 

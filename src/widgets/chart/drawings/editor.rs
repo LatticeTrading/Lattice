@@ -4,7 +4,8 @@
 //! With a drawing tool, the pointer makes a drawing ([`Draft`]): a press
 //! places its first point, and the next follows the pointer, which places
 //! it where the press is let go once it was dragged, and otherwise where
-//! the next press is (so a drag makes a line, and so do two clicks). With
+//! the next press is (so a drag makes a line, and so do two clicks; a
+//! kind of three points takes one press more, for its third). With
 //! its last point placed, a kept kind is saved in the chart's settings and
 //! picked, another (a measurement) shows until the next press, and the
 //! cursor is back in hand.
@@ -109,9 +110,11 @@ pub(crate) fn hit(
     picked: Option<usize>,
     at: (f64, f64),
 ) -> Option<(usize, Grip)> {
-    let point = |spots: &[Spot]| {
-        let near = |spot: &Spot| (spot.x - at.0).hypot(spot.y - at.1) <= POINT_REACH;
-        spots.iter().position(near).map(Grip::Point)
+    // The point of `drawing` grabbed there: where its kind has it grabbed.
+    let point = |drawing: &Drawing, spots: &[Spot]| {
+        let near = |grip: &(f64, f64)| (grip.0 - at.0).hypot(grip.1 - at.1) <= POINT_REACH;
+        let grips = drawing.kind().shape().grips(spots);
+        grips.iter().position(near).map(Grip::Point)
     };
     let placed: Vec<_> = drawings
         .iter()
@@ -120,11 +123,11 @@ pub(crate) fn hit(
     let of_picked = placed
         .iter()
         .filter(|(number, ..)| Some(*number) == picked)
-        .find_map(|(number, _, spots)| Some((*number, point(spots)?)));
+        .find_map(|(number, drawing, spots)| Some((*number, point(drawing, spots)?)));
     of_picked.or_else(|| {
         placed.iter().rev().find_map(|(number, drawing, spots)| {
             let on_line = || drawing.kind().shape().distance(spots, at) <= LINE_REACH;
-            let grip = point(spots).or_else(|| on_line().then_some(Grip::Body))?;
+            let grip = point(drawing, spots).or_else(|| on_line().then_some(Grip::Body))?;
             Some((*number, grip))
         })
     })

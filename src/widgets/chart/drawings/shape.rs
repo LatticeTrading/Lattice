@@ -42,6 +42,13 @@ pub(crate) trait Shape {
     /// How far `at` is from what of it can be grabbed (its lines), in
     /// points.
     fn distance(&self, spots: &[Spot], at: (f64, f64)) -> f64;
+
+    /// Where each of its points is grabbed and its handle shows, in their
+    /// order: where the point is, but for a kind that reads only a part of
+    /// one (a price, whatever its time).
+    fn grips(&self, spots: &[Spot]) -> Vec<(f64, f64)> {
+        spots.iter().map(Spot::place).collect()
+    }
 }
 
 /// The colors drawings are made in.
@@ -56,12 +63,13 @@ pub(crate) struct Ink {
     pub edge: Hsla,
     /// What a handle is filled with.
     pub ground: Hsla,
-    /// A measurement up and one down: its lines, and its box's tint.
+    /// A measurement up and one down, and what a position makes and what
+    /// it risks: their lines, and their boxes' tint.
     pub up: Hsla,
     pub down: Hsla,
     pub up_tint: Hsla,
     pub down_tint: Hsla,
-    /// What a zone is filled with: a rectangle's inside.
+    /// What a zone is filled with: a rectangle's inside, a channel's.
     pub tint: Hsla,
 }
 
@@ -141,6 +149,16 @@ impl Brush<'_> {
         }
     }
 
+    /// The shape whose corners are `corners`, in order round it, filled
+    /// with `color`: the part of it on the plot.
+    pub fn area(&mut self, corners: &[(f64, f64)], color: Hsla) {
+        let on_plot = cropped(corners, self.width, self.height);
+        if on_plot.len() > 2 {
+            self.pen.fill(color);
+            self.pen.area(&on_plot);
+        }
+    }
+
     /// `text` in `color` from `x`, its middle at `y`.
     pub fn text(&mut self, text: &str, x: f64, y: f64, color: Hsla) {
         self.pen.fill(color);
@@ -194,6 +212,54 @@ fn clipped(from: (f64, f64), to: (f64, f64), width: f64, height: f64) -> Option<
     })
 }
 
+/// The part of the shape whose corners are `corners`, in order round it,
+/// that is on a plot of `width` by `height` points (and [`MARGIN`] past
+/// its edges): its corners, in order round it; none where no part is.
+fn cropped(corners: &[(f64, f64)], width: f64, height: f64) -> Vec<(f64, f64)> {
+    if corners
+        .iter()
+        .any(|(x, y)| !(x.is_finite() && y.is_finite()))
+    {
+        return Vec::new();
+    }
+    // Each edge of the plot in turn keeps what is on its side of it: the
+    // edge is at `bound` across the plot (or down it), and what is kept is
+    // before it or past it.
+    let edges = [
+        (true, -MARGIN, false),
+        (true, width + MARGIN, true),
+        (false, -MARGIN, false),
+        (false, height + MARGIN, true),
+    ];
+    let mut kept = corners.to_vec();
+    for (across, bound, before) in edges {
+        let along = |corner: (f64, f64)| if across { corner.0 } else { corner.1 };
+        let inside = |corner: (f64, f64)| {
+            if before {
+                along(corner) <= bound
+            } else {
+                along(corner) >= bound
+            }
+        };
+        let whole = std::mem::take(&mut kept);
+        for (at, corner) in whole.iter().enumerate() {
+            let last = whole[(at + whole.len() - 1) % whole.len()];
+            if inside(*corner) != inside(last) {
+                // Where the side from the corner before crosses the edge.
+                let share = (bound - along(last)) / (along(*corner) - along(last));
+                kept.push((
+                    last.0 + (corner.0 - last.0) * share,
+                    last.1 + (corner.1 - last.1) * share,
+                ));
+            }
+            if inside(*corner) {
+                kept.push(*corner);
+            }
+        }
+    }
+    kept
+}
+
 /// How far `at` is from the line from `from` to `to`.
 pub(crate) fn segment_distance(at: (f64, f64), from: (f64, f64), to: (f64, f64)) -> f64 {
     let (dx, dy) = (to.0 - from.0, to.1 - from.1);
@@ -235,6 +301,35 @@ mod tests {
         // A slanted one keeps its slope where it is cut.
         let cut = clipped((-108.0, -108.0), (1_000.0, 1_000.0), 100.0, 50.0).unwrap();
         assert!(near(cut.from, (-8.0, -8.0)) && near(cut.to, (58.0, 58.0)));
+    }
+
+    #[test]
+    fn a_shape_is_cropped_to_the_plot() {
+        // One on a 100 by 50 plot is itself.
+        let on = [(10.0, 10.0), (90.0, 10.0), (90.0, 40.0)];
+        assert_eq!(cropped(&on, 100.0, 50.0), on);
+        // One far wider than the plot is what of it is on the plot, and
+        // the 8 points past its edges.
+        let wide = [
+            (-1_000.0, 10.0),
+            (1_000.0, 10.0),
+            (1_000.0, 40.0),
+            (-1_000.0, 40.0),
+        ];
+        let cut = cropped(&wide, 100.0, 50.0);
+        let kept = [(-8.0, 10.0), (108.0, 10.0), (108.0, 40.0), (-8.0, 40.0)];
+        assert_eq!(cut.len(), kept.len(), "{cut:?}");
+        assert!(cut.iter().zip(kept).all(|(left, right)| near(*left, right)));
+        // A slanted side is cut where it crosses the plot's edge.
+        let slanted = [(50.0, 25.0), (50.0, 45.0), (250.0, 45.0), (250.0, 125.0)];
+        let cut = cropped(&slanted, 100.0, 50.0);
+        assert!(cut.iter().any(|corner| near(*corner, (108.0, 54.0))));
+        assert!(cut.iter().all(|(x, y)| *x <= 108.0 && *y <= 58.0));
+        // One that misses the plot is nothing, as one with no place is.
+        let off = [(200.0, 10.0), (300.0, 10.0), (300.0, 40.0)];
+        assert!(cropped(&off, 100.0, 50.0).is_empty());
+        let nowhere = [(f64::NAN, 10.0), (90.0, 10.0), (90.0, 40.0)];
+        assert!(cropped(&nowhere, 100.0, 50.0).is_empty());
     }
 
     #[test]

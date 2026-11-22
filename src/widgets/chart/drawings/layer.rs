@@ -11,7 +11,7 @@ use nsh_core::{canvas::CanvasTextBaseline, prelude::*};
 use super::{
     Anchor, Editor, Kind,
     scale::Scale,
-    shape::{Brush, Ink, Spot},
+    shape::{Brush, Ink},
 };
 use crate::widgets::common::{Pen, SMALL_FONT, Shared, plot};
 
@@ -61,10 +61,11 @@ pub(crate) fn paint(scale: &Scale<'_>, items: &[Item], ink: &Ink) -> Painter {
                 Emphasis::Hovered | Emphasis::Picked => 2.0,
             },
         };
-        item.kind.shape().draw(&mut brush, &spots);
+        let shape = item.kind.shape();
+        shape.draw(&mut brush, &spots);
         if item.emphasis == Emphasis::Picked {
-            for spot in &spots {
-                handle(&mut pen, spot, ink, width, height);
+            for grip in shape.grips(&spots) {
+                handle(&mut pen, grip, ink, width, height);
             }
         }
     }
@@ -72,16 +73,17 @@ pub(crate) fn paint(scale: &Scale<'_>, items: &[Item], ink: &Ink) -> Painter {
     pen.0
 }
 
-/// The handle on `spot`, while it is on the plot.
-fn handle(pen: &mut Pen, spot: &Spot, ink: &Ink, width: f64, height: f64) {
+/// The handle at `at` (where a point of a drawing is grabbed), while it is
+/// on the plot.
+fn handle(pen: &mut Pen, at: (f64, f64), ink: &Ink, width: f64, height: f64) {
     let reach = HANDLE / 2.0;
     let on_plot =
-        (-reach..=width + reach).contains(&spot.x) && (-reach..=height + reach).contains(&spot.y);
+        (-reach..=width + reach).contains(&at.0) && (-reach..=height + reach).contains(&at.1);
     if !on_plot {
         return;
     }
     // On whole points, so its edge is one sharp line.
-    let (left, top) = ((spot.x - reach).round(), (spot.y - reach).round());
+    let (left, top) = ((at.0 - reach).round(), (at.1 - reach).round());
     pen.fill(ink.ground);
     pen.rect(left, top, HANDLE, HANDLE);
     pen.stroke(ink.line);

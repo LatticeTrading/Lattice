@@ -20,6 +20,11 @@ pub(crate) struct Line {
     /// period whose values owe nothing to the one before, so the line is
     /// not joined to it from the bar before.
     restarts: Vec<usize>,
+    /// Whether it is under the bars (a rising trend) from its first value,
+    /// where it is a trend's line: it changes sides at each of `restarts`,
+    /// and is drawn in the rising bars' color under them and the falling
+    /// ones' over them. None for a line in its indicator's color.
+    rising: Option<bool>,
 }
 
 impl Line {
@@ -30,6 +35,7 @@ impl Line {
             values,
             quiet: false,
             restarts: Vec::new(),
+            rising: None,
         }
     }
 
@@ -44,6 +50,27 @@ impl Line {
     pub fn restarts(&self, from: usize, to: usize) -> bool {
         let next = self.restarts.partition_point(|bar| *bar <= from);
         self.restarts.get(next).is_some_and(|bar| *bar <= to)
+    }
+
+    /// It as a trend's line: under the bars from its first value
+    /// (`rising`) or over them, and changing sides at each of the bars
+    /// `flips`, oldest first, where it starts over.
+    pub fn trending(mut self, rising: bool, flips: Vec<usize>) -> Self {
+        self.rising = Some(rising);
+        self.restarts = flips;
+        self
+    }
+
+    /// Whether it is a trend's line, drawn in the bars' colors.
+    pub fn is_trend(&self) -> bool {
+        self.rising.is_some()
+    }
+
+    /// Whether it is under the bars at bar `bar` (a rising trend) or over
+    /// them, where it is a trend's line; none for another.
+    pub fn rising_at(&self, bar: usize) -> Option<bool> {
+        let flips = self.restarts.partition_point(|flip| *flip <= bar);
+        Some(self.rising? ^ (flips % 2 == 1))
     }
 
     /// It drawn fainter.

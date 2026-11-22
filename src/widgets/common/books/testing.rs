@@ -135,6 +135,8 @@ pub(crate) struct Record {
     pub lines: Vec<Ruled>,
     /// Filled rectangles: left, top, width, height.
     pub boxes: Vec<([f32; 4], Hsla)>,
+    /// Other filled shapes: their corners, in order round them.
+    pub areas: Vec<(Vec<(f32, f32)>, Hsla)>,
 }
 
 impl Record {
@@ -186,6 +188,10 @@ impl Record {
                         color: state.stroke,
                         dashed: state.dashed,
                     }));
+                }
+                CanvasOp::Fill(None, _) => {
+                    let corners = path.iter().copied().chain([at]).collect();
+                    record.areas.push((corners, state.fill));
                 }
                 CanvasOp::FillRect(rect) => {
                     record.boxes.push((rect.each_ref().map(number), state.fill));
