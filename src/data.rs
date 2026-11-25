@@ -13,7 +13,7 @@
 //!   itself for what Ferris does not carry (accounts), within the user's
 //!   own rate limit there.
 //! - [`lighter`] is the third: Lighter's own API, asked the same way for
-//!   the same reason.
+//!   the same reason, and traded on with an API key of the app's.
 //! - [`txflow`] is the fourth: TxFlow's own API, asked the same way again.
 //! - [`portfolio`] is what an account holds and has made, in one shape
 //!   whatever its exchange, and the exchanges that report accounts
@@ -185,7 +185,8 @@ impl DataServices {
         ];
         // The exchanges that can be traded on, in the order widgets offer
         // them: a new one is its integration above and its line here.
-        let venues: [Rc<dyn trading::TradingVenue>; 1] = [Rc::new(hyperliquid.clone())];
+        let venues: [Rc<dyn trading::TradingVenue>; 2] =
+            [Rc::new(hyperliquid.clone()), Rc::new(lighter.clone())];
         // A test's one more, after the build's own.
         #[cfg(test)]
         let extra = config.extra.0.as_ref().map(|make| make(status));
@@ -201,7 +202,9 @@ impl DataServices {
         // What prices each exchange's instruments, live: a new one is its
         // line here, the exchange's own integration or another stream of
         // its markets.
-        let prices = Prices::new([Rc::new(hyperliquid.clone()) as Rc<dyn prices::PriceSource>]);
+        let priced: [Rc<dyn prices::PriceSource>; 2] =
+            [Rc::new(hyperliquid.clone()), Rc::new(lighter.clone())];
+        let prices = Prices::new(priced);
         let sessions = Sessions::new();
         let markets = Markets::new(ferris.clone());
         let wallet = Wallet::new(config.wallet);

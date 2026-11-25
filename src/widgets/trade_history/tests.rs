@@ -1,4 +1,4 @@
-use nsh_core::{element::Root, prelude::*};
+use nsh_core::prelude::*;
 use serde_json::json;
 
 use super::{
@@ -174,7 +174,7 @@ fn Idle() -> impl IntoElement {
 
 #[test]
 fn the_table_shows_the_account_s_trades_newest_first() {
-    let (mut app, network) = start(Root::of::<Watching>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Watching>());
     app.wait_for("CLOSE SHORT").unwrap();
     // (Titles and actions are drawn in capitals.)
     for shown in [
@@ -219,7 +219,7 @@ fn the_table_shows_the_account_s_trades_newest_first() {
 
 #[test]
 fn an_account_that_never_traded_says_so() {
-    let (mut app, _network) = start(Root::of::<Idle>());
+    let (mut app, _network) = start(nsh_testing::windowed_root::<Idle>());
     app.wait_for("No trades").unwrap();
     assert!(app.shows("$0.00"));
     assert!(!app.shows("0 trades"), "no count of nothing");
@@ -233,7 +233,7 @@ fn Trading() -> impl IntoElement {
 
 #[test]
 fn a_lighter_address_lists_the_trades_of_its_accounts() {
-    let (mut app, network) = start(Root::of::<Trading>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Trading>());
     app.wait_for("$30,000.00").unwrap();
     for shown in [
         // Its main account bought BTC, taking, at 0.028%.
@@ -292,7 +292,7 @@ fn Everywhere() -> impl IntoElement {
 
 #[test]
 fn accounts_on_several_exchanges_are_one_list_of_trades() {
-    let (mut app, _network) = start(Root::of::<Everywhere>());
+    let (mut app, _network) = start(nsh_testing::windowed_root::<Everywhere>());
     app.wait_for("$30,000.00").unwrap();
     app.wait_for("CLOSE SHORT").unwrap();
     // The newest first, whichever exchange each is on; the totals are of
@@ -334,7 +334,7 @@ fn Flowing() -> impl IntoElement {
 
 #[test]
 fn a_txflow_address_lists_its_trades_with_what_each_did() {
-    let (mut app, network) = start(Root::of::<Flowing>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Flowing>());
     app.wait_for("$30,000.00").unwrap();
     assert!(
         app.screen()

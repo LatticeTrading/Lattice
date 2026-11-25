@@ -41,7 +41,7 @@ use nsh_core::{
 
 use super::{
     columns::{self, Column, NumberCell, Tone},
-    session::{Screener, Table},
+    session::{Screener, Table, WatchKey},
     settings::{self, MAX_WIDTH, MIN_WIDTH, ScreenerSettings, Side},
 };
 use crate::{
@@ -77,6 +77,23 @@ const REORDER_SLOP: f32 = 6.0;
 const GRIP: f32 = 6.0;
 /// One step of resizing a column from an assistive technology.
 const RESIZE_STEP: f32 = 10.0;
+/// A watchlist row's × cell: square, as wide as the row is tall.
+const REMOVE_WIDTH: f32 = ROW_HEIGHT;
+/// The gap between the plus and "Add pair", and their side padding.
+const ADD_GAP: f32 = 6.0;
+
+/// What a watchlist's table has besides a screener's: its bar in place of
+/// the search (the lists' tabs), strips under it, a × at the end of each
+/// row that stops watching its market, and "Add pair" after the last row
+/// (it opens the market picker).
+pub(super) struct Editing {
+    pub bar: View,
+    pub notes: View,
+    pub add: Rc<dyn Fn()>,
+    pub remove: Rc<dyn Fn(WatchKey)>,
+    /// The list shown: a new one starts at the top.
+    pub list: Memo<usize>,
+}
 
 /// The columns shown and where each is, as laid out.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -189,6 +206,8 @@ struct Columns {
     /// How far the symbol column is moved right to stay at the left edge:
     /// the scroll offset past `pin_from`, natively.
     pin: AnimatedNode,
+    /// The width of the cells after the columns (a watchlist's ×), or 0.
+    trailing: f32,
 }
 
 impl Columns {
@@ -201,7 +220,11 @@ impl Columns {
     }
 }
 
-pub(super) fn table_view(screener: Rc<Screener>, tab: TabContext<ScreenerSettings>) -> View {
+pub(super) fn table_view(
+    screener: Rc<Screener>,
+    tab: TabContext<ScreenerSettings>,
+    editing: Option<Editing>,
+) -> View {
     let list = element_ref();
     let table = screener.table;
     let saved = tab.settings;
@@ -209,14 +232,39 @@ pub(super) fn table_view(screener: Rc<Screener>, tab: TabContext<ScreenerSetting
         table.with(|table| table.0.order.len())
     });
 
-    let search = ui::text_field(screener.search)
-        .placeholder("Search markets…")
-        .label("Search markets")
-        .flex_none()
-        .w_full()
-        .border_b_1()
-        .border_color(theme::BORDER)
-        .on_change(move |_: &str| vertical.to(0.0));
+    let (search, notes, add, remove) = match editing {
+        None => (
+            ui::text_field(screener.search)
+                .placeholder("Search markets…")
+                .label("Search markets")
+                .on_change(move |_: &str| vertical.to(0.0))
+                .flex_none()
+                .w_full()
+                .border_b_1()
+                .border_color(theme::BORDER)
+                .into_element(),
+            None,
+            None,
+            None,
+        ),
+        Some(Editing {
+            bar,
+            notes,
+            add,
+            remove,
+            list,
+        }) => {
+            let first = Cell::new(true);
+            effect(move || {
+                list.with(|_| ());
+                if !first.replace(false) {
+                    vertical.to(0.0);
+                }
+            });
+            (bar.into_element(), Some(notes), Some(add), Some(remove))
+        }
+    };
+    let trailing = if remove.is_some() { REMOVE_WIDTH } else { 0.0 };
 
     // The pane's size, which the table fills (and scrolls past sideways).
     let viewport = signal(Size::new(px(0.0), px(0.0)));
@@ -234,7 +282,7 @@ pub(super) fn table_view(screener: Rc<Screener>, tab: TabContext<ScreenerSetting
                         .or_else(|| settings.width(column))
                         .unwrap_or_else(|| column.width())
                 };
-                let fill = (preview.is_none() && !settings.sized()).then_some(width);
+                let fill = (preview.is_none() && !settings.sized()).then_some(width - trailing);
                 visible.with(|visible| Geometry::lay_out(visible, width_of, fill))
             })
         })
@@ -259,6 +307,7 @@ pub(super) fn table_view(screener: Rc<Screener>, tab: TabContext<ScreenerSetting
         pin: scrolled
             .sub(&pinned_at)
             .interpolate(&[0.0, NEVER], &[0.0, NEVER]),
+        trailing,
     };
 
     // A new scope or product choice starts at the top, as a new search does.
@@ -282,20 +331,43 @@ pub(super) fn table_view(screener: Rc<Screener>, tab: TabContext<ScreenerSetting
     }
 
     let body = view()
-        .w(move || px(viewport.get().width.0.max(geometry.with(|g| g.total))))
+        .w(move || {
+            px(viewport
+                .get()
+                .width
+                .0
+                .max(geometry.with(|g| g.total) + trailing))
+        })
         .h(move || px(viewport.get().height.0))
         .flex_col()
-        .child(header(screener.clone(), tab.clone(), layout, vertical))
-        .child(rows(
-            table,
-            layout,
-            list,
-            vertical,
-            screener.clone(),
-            saved,
-            tips.clone(),
-        ))
-        .child(tips.tooltip(table));
+        .child(header(screener.clone(), tab.clone(), layout, vertical));
+    let lines = rows(
+        table,
+        layout,
+        list,
+        vertical,
+        screener.clone(),
+        tips.clone(),
+        remove,
+    )
+    .min_h(px(0.0));
+    let fitted = add.is_some();
+    // A watchlist's rows are as tall as they are, up to the room left
+    // above "Add pair", which follows the last of them.
+    let body = match add {
+        None => body.child(lines.flex_1()),
+        Some(add) => body
+            .child(
+                lines
+                    .h(move || {
+                        let count = table.with(|table| table.0.order.len()).max(1);
+                        px(count as f32 * ROW_HEIGHT)
+                    })
+                    .flex_shrink(1.0),
+            )
+            .child(add_pair(add, viewport, *scrolled.node())),
+    };
+    let body = body.child(tips.tooltip(table));
     // The scroll keys are the table's while the pointer is over it, as the
     // platform's keyboard scrolling follows the pointer.
     let hovered = signal(false);
@@ -322,7 +394,7 @@ pub(super) fn table_view(screener: Rc<Screener>, tab: TabContext<ScreenerSetting
                 .scrollbar("Scroll markets")
                 .absolute()
                 .top(px(ROW_HEIGHT))
-                .bottom(px(0.0))
+                .bottom(px(if fitted { ROW_HEIGHT } else { 0.0 }))
                 .right(px(0.0)),
         );
 
@@ -336,8 +408,42 @@ pub(super) fn table_view(screener: Rc<Screener>, tab: TabContext<ScreenerSetting
         .text_color(theme::TEXT)
         .text_size(px(11.0))
         .child(search)
+        .children(notes)
         .child(status(screener, tab))
         .child(area)
+}
+
+/// "Add pair", after a watchlist's last row: as wide as the pane, and kept
+/// in it while the columns scroll sideways (moved by the scroll offset,
+/// `scrolled`, natively, as the pinned symbol column is). It opens the
+/// market picker.
+fn add_pair(add: Rc<dyn Fn()>, viewport: Signal<Size<Points>>, scrolled: AnimatedNode) -> View {
+    view()
+        .h(px(ROW_HEIGHT))
+        .w(move || px(viewport.get().width.0))
+        .flex_none()
+        .bind_translate_x(&scrolled)
+        .flex_row()
+        .items_center()
+        .justify_center()
+        .gap(px(ADD_GAP))
+        .px(px(ADD_GAP))
+        .border_b_1()
+        .border_color(theme::BORDER)
+        .text_color(theme::TEXT_MUTED)
+        .role(AccessibilityRole::Button)
+        .label("Add pair")
+        .test_id("watchlist-add-pair")
+        .hover(|s| s.bg(theme::ACCENT.opacity(0.06)).text_color(theme::TEXT))
+        .active(|s| s.bg(theme::BORDER))
+        .on_press(move || add())
+        .child(
+            svg(nsh_core::element::ImageSrc::svg_markup(include_str!(
+                "../../../assets/icons/plus.svg"
+            )))
+            .size(px(14.0)),
+        )
+        .child(text("Add pair").number_of_lines(1))
 }
 
 /// A small bordered button in a status line.
@@ -495,6 +601,15 @@ fn header(
                     )
                 })
                 .collect::<Vec<_>>()
+        }))
+        // Over a watchlist's × column.
+        .children((layout.trailing > 0.0).then(|| {
+            view()
+                .h_full()
+                .w(px(layout.trailing))
+                .flex_none()
+                .border_l_1()
+                .border_color(theme::BORDER)
         }))
 }
 
@@ -794,19 +909,26 @@ fn rows(
     list: ElementRef,
     vertical: RowScroll,
     screener: Rc<Screener>,
-    saved: Memo<ScreenerSettings>,
     tips: Tips,
+    remove: Option<Rc<dyn Fn(WatchKey)>>,
 ) -> VirtualList {
     let discovery = screener.discovery();
+    let (saved, watched, search) = (screener.settings, screener.watched, screener.search);
     let empty = move || {
         let discovering = discovery.with(|state| state.is_loading());
         let none_shown = saved.with(|s| s.products().is_empty());
+        let unwatched = watched.is_some_and(|watched| watched.with(Vec::is_empty));
+        let searching = search.with(|search| !search.trim().is_empty());
         table.with(|table| {
             let universe = &table.0.universe;
-            if none_shown {
+            if unwatched {
+                "No pairs in this list yet."
+            } else if none_shown {
                 "No products selected in settings."
             } else if discovering || universe.waiting {
                 "Waiting for statistics; sources load independently…"
+            } else if watched.is_some() && !searching {
+                "No statistics for the watched markets."
             } else if !universe.answered {
                 "No supported product scopes."
             } else {
@@ -818,12 +940,10 @@ fn rows(
     vertical
         .drive(virtual_list(
             move || table.with(|table| table.0.order.len()),
-            move |at: Position| row(table, layout, at, tips.clone()),
+            move |at: Position| row(table, layout, at, tips.clone(), remove.clone()),
         ))
         .estimated_item_size(px(ROW_HEIGHT))
         .element_ref(&list)
-        .flex_1()
-        .min_h(px(0.0))
         .label("Market statistics")
         // A press anywhere in the rows hides the tooltip, as a press hides an
         // element's; it shows again once the pointer comes over a cell.
@@ -842,8 +962,14 @@ fn rows(
 }
 
 /// One row: its cells, bound to the market at its position, made again
-/// when the columns shown change.
-fn row(table: Signal<Shared<Table>>, layout: Columns, at: Position, tips: Tips) -> View {
+/// when the columns shown change, then a watchlist's ×.
+fn row(
+    table: Signal<Shared<Table>>,
+    layout: Columns,
+    at: Position,
+    tips: Tips,
+    remove: Option<Rc<dyn Fn(WatchKey)>>,
+) -> View {
     view()
         .h(px(ROW_HEIGHT))
         .w_full()
@@ -869,6 +995,35 @@ fn row(table: Signal<Shared<Table>>, layout: Columns, at: Position, tips: Tips) 
                 })
                 .collect::<Vec<_>>()
         }))
+        .children(remove.map(|remove| remove_cell(table, at, remove)))
+}
+
+/// A watchlist row's ×: stops watching the market at its position.
+fn remove_cell(table: Signal<Shared<Table>>, at: Position, remove: Rc<dyn Fn(WatchKey)>) -> View {
+    let label = move || {
+        table.with(|table| {
+            let table = &table.0;
+            table.row(at.index()).map_or_else(String::new, |row| {
+                let market = table.universe.market(row);
+                format!(
+                    "Remove {} {} from the watchlist",
+                    market.exchange, market.symbol
+                )
+            })
+        })
+    };
+    ui::button("×", ui::Tone::Quiet)
+        .w(px(REMOVE_WIDTH))
+        .flex_none()
+        .justify_center()
+        .border_l_1()
+        .border_color(theme::BORDER)
+        .label(label)
+        .on_press(move || {
+            if let Some(key) = table.with_untracked(|table| table.0.key(at.index())) {
+                remove(key);
+            }
+        })
 }
 
 /// A row's cell as one text showing `content`: `column`'s laid-out width

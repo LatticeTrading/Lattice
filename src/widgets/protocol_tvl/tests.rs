@@ -1,4 +1,4 @@
-use nsh_core::{element::Root, prelude::*};
+use nsh_core::prelude::*;
 use nsh_testing::{Headless, WAIT};
 use serde_json::json;
 
@@ -305,7 +305,7 @@ fn moved_since(ago: u64) -> String {
 
 #[test]
 fn the_plot_shows_the_range_its_settings_pick_of_one_reply() {
-    let (mut app, network) = start(Root::of::<Charting>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Charting>());
 
     // A year of Hyperliquid's TVL by default: its latest figure, how far it
     // moved since the range began, and where it is.
@@ -365,7 +365,7 @@ fn the_plot_shows_the_range_its_settings_pick_of_one_reply() {
 
 #[test]
 fn the_protocol_badge_opens_the_picker_which_lists_exchanges_and_searches() {
-    let (mut app, network) = start(Root::of::<Charting>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Charting>());
     app.wait_for("id:protocol-tvl-value >> text:$7.151B")
         .unwrap();
 
@@ -433,13 +433,13 @@ fn the_protocol_badge_opens_the_picker_which_lists_exchanges_and_searches() {
 
 #[test]
 fn a_protocol_with_no_tvl_or_that_is_not_listed_says_so() {
-    let (mut app, _network) = start(Root::of::<Unlocked>());
+    let (mut app, _network) = start(nsh_testing::windowed_root::<Unlocked>());
     app.wait_for(EMPTY).unwrap();
     assert!(reads(&app, "protocol", "Variational"));
     assert!(reads(&app, "value", NONE));
     assert!(reads(&app, "chains", "No chain breakdown"));
 
-    let (mut app, _network) = start(Root::of::<Unknown>());
+    let (mut app, _network) = start(nsh_testing::windowed_root::<Unknown>());
     app.wait_for(UNLISTED).unwrap();
     // Until DefiLlama names it, it goes by its slug's words.
     assert!(reads(&app, "protocol", "Nowhere"));

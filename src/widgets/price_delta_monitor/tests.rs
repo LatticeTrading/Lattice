@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use nsh_core::{
-    element::Root,
     platform::{Idiom, Os},
     prelude::*,
 };
@@ -310,7 +309,7 @@ fn a_monitor_shows_its_markets_against_the_base_and_edits_them() {
                 .collect()
         }
     };
-    let mut config = EngineConfig::new(Root::of::<Harness>());
+    let mut config = EngineConfig::new(nsh_testing::windowed_root::<Harness>());
     config.viewport = Size::new(px(1280.0), px(800.0));
     config.storage = Some(MemoryStorage::new([]));
     config.network = Some(network.clone());

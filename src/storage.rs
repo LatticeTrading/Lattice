@@ -158,9 +158,10 @@ fn trading_key(venue: &str) -> String {
 /// runs, as its integration wrote it (`crate::data::trading`); `None` when
 /// it keeps nothing or what is saved is not JSON.
 ///
-/// It is the one thing saved that is a secret: keys that can trade (and
-/// cannot withdraw), in the clear, as everything this storage holds is. An
-/// integration saves only what its exchange lets it revoke.
+/// It is the one thing saved that is a secret: keys that can trade, and
+/// cannot send an account's funds anywhere but to the wallet that owns it,
+/// in the clear, as everything this storage holds is. An integration saves
+/// only what its exchange lets it revoke.
 pub(crate) fn load_trading_keys(venue: &str) -> Option<serde_json::Value> {
     let contents = Storage::get_item(&trading_key(venue))?;
     serde_json::from_str(&contents)

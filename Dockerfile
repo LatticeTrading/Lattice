@@ -2,7 +2,7 @@
 # Lattice web: `nsh package --target web` builds a static site; Caddy serves it.
 
 FROM debian:trixie-slim AS build
-ARG NSH_VERSION=v0.6.1
+ARG NSH_VERSION=v0.7.0
 ARG WASM_BINDGEN_VERSION=0.2.130
 # Optional: another Ferris backend (read at compile time).
 ARG LATTICE_FERRIS_HTTP=

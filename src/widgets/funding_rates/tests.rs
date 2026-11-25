@@ -5,7 +5,6 @@ use std::{
 };
 
 use nsh_core::{
-    element::Root,
     platform::{Idiom, Os},
     prelude::*,
 };
@@ -448,7 +447,7 @@ fn the_table_shows_the_watched_markets_and_edits_them() {
             StubRoute::Handler(Arc::new(stub_ferris)),
         ),
     ]));
-    let mut config = EngineConfig::new(Root::of::<Harness>());
+    let mut config = EngineConfig::new(nsh_testing::windowed_root::<Harness>());
     config.viewport = Size::new(px(1280.0), px(800.0));
     config.storage = Some(MemoryStorage::new([]));
     config.network = Some(network.clone());

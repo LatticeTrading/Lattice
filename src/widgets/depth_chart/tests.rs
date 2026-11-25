@@ -5,7 +5,6 @@ use std::{
 
 use nsh_core::{
     MountItem,
-    element::Root,
     platform::{Idiom, Os},
     prelude::*,
     shader::ShaderLayer,
@@ -1296,7 +1295,7 @@ fn a_depth_chart_shows_its_book_and_follows_its_settings() {
                 .collect()
         }
     };
-    let mut config = EngineConfig::new(Root::of::<Harness>());
+    let mut config = EngineConfig::new(nsh_testing::windowed_root::<Harness>());
     config.viewport = Size::new(px(1280.0), px(800.0));
     config.storage = Some(MemoryStorage::new([]));
     config.network = Some(network.clone());

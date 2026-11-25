@@ -849,8 +849,12 @@ impl Panel {
                     .to_owned()
             }))
             .on_press(move || {
-                set_clipboard(snapshot.with_untracked(|snapshot| snapshot.0.report()));
-                copied.set(true);
+                let written =
+                    set_clipboard(snapshot.with_untracked(|snapshot| snapshot.0.report()));
+                // Said only once the clipboard took it (NSH 0.7 answers).
+                spawn(async move {
+                    copied.set(written.await != ClipboardWrite::Failed);
+                });
             });
         view()
             .w_full()

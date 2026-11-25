@@ -20,18 +20,37 @@ const PANEL_WIDTH: Points = px(300.0);
 /// What the scope dropdown saves for every exchange.
 const ALL: &str = "all";
 
-/// The settings panel of `screener`'s tab, below the pane's gear.
+/// The settings panel of `screener`'s tab, below the pane's gear. A
+/// watchlist's has the columns alone: its markets choose the exchanges and
+/// products.
 pub(super) fn panel(screener: Rc<Screener>, tab: TabContext<ScreenerSettings>) -> Overlay {
-    let body = view()
-        .test_id("screener-settings")
-        .flex_col()
-        .child(scope_row(screener.clone(), tab.clone()))
-        .child(
-            products_row(screener.clone(), tab.clone())
-                .border_t_1()
-                .border_color(theme::BORDER),
-        )
-        .child(columns_list(screener, tab.clone()));
+    let watchlist = screener.watched.is_some();
+    let body = if watchlist {
+        view()
+            .test_id("watchlist-settings")
+            .flex_col()
+            .child(columns_list(screener, tab.clone()))
+    } else {
+        view()
+            .test_id("screener-settings")
+            .flex_col()
+            .child(scope_row(screener.clone(), tab.clone()))
+            .child(
+                products_row(screener.clone(), tab.clone())
+                    .border_t_1()
+                    .border_color(theme::BORDER),
+            )
+            .child(
+                columns_list(screener, tab.clone())
+                    .border_t_1()
+                    .border_color(theme::BORDER),
+            )
+    };
+    let title = if watchlist {
+        "Watchlist settings"
+    } else {
+        "Market Screener settings"
+    };
     let close = {
         let tab = tab.clone();
         move || tab.close_settings()
@@ -40,7 +59,7 @@ pub(super) fn panel(screener: Rc<Screener>, tab: TabContext<ScreenerSettings>) -
         tab.settings_anchor(),
         Side::Right,
         PANEL_WIDTH,
-        "Market Screener settings",
+        title,
         close,
         body,
     )
@@ -187,8 +206,6 @@ fn columns_list(screener: Rc<Screener>, tab: TabContext<ScreenerSettings>) -> Vi
     });
     view()
         .flex_col()
-        .border_t_1()
-        .border_color(theme::BORDER)
         .child(
             view()
                 .h(px(28.0))

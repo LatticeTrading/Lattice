@@ -143,7 +143,7 @@ fn page_row(wallet: &Wallet, state: &WalletState) -> Option<View> {
                     .label("Copy the wallet page's link")
                     .border_l_1()
                     .border_color(theme::BORDER)
-                    .on_press(move || set_clipboard(page.clone())),
+                    .on_press(move || drop(set_clipboard(page.clone()))),
             ),
     )
 }

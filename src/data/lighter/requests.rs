@@ -1,18 +1,25 @@
 //! Lighter's REST requests: `GET`s under `/api/v1`, each named by its path
-//! and its query. Every request here reads public data, and is one Lighter
-//! answers without an auth token.
+//! and its query, and the one `POST` that sends a signed transaction
+//! ([`Api::send`]).
+//!
+//! What is read is public, and answered without an auth token, but for an
+//! account's open orders ([`Request::ActiveOrders`]), which Lighter tells
+//! only to a token one of the account's own API keys signed
+//! ([`Api::get_as`]).
 //!
 //! A request costs one of the address's allowance
 //! ([`super::REQUEST_LIMIT`] a minute, whatever is asked). It is spent from
 //! the client's budget before the request is sent, waiting while the minute
 //! is spent; Lighter refusing one all the same (`429`) spends what is left
 //! of the minute and fails the request as `RATE_LIMITED`, which its query
-//! retries once the budget has room.
+//! retries once the budget has room. What an order waits on is never held
+//! back so ([`Api::get_now`], [`Api::send`]): it is counted against the
+//! minute and sent at once, so it is the polls that make room for it.
 
-use serde::de::DeserializeOwned;
+use serde::{Deserialize, de::DeserializeOwned};
 
-use super::Api;
-use crate::data::net::ApiError;
+use super::{Api, tx::Signed};
+use crate::data::net::{ApiError, Request as HttpRequest};
 
 /// What every request's path starts with.
 const API: &str = "/api/v1";
@@ -66,6 +73,26 @@ pub enum Request {
     Trades { account_index: u64, limit: u32 },
     /// Every asset Lighter holds, with its index price.
     AssetDetails,
+    /// Every market: what it trades, how fine its sizes and prices are, and
+    /// what margin it asks.
+    Markets,
+    /// The best bid and the best offer of a market's book.
+    BookTop { market_id: u64 },
+    /// The nonce the next transaction of an account's API key takes.
+    NextNonce {
+        account_index: u64,
+        api_key_index: u8,
+    },
+    /// The public keys of an account's API keys: the one at an index, or
+    /// all of them (`None`). An index with no key is refused as
+    /// [`API_KEY_NOT_FOUND`].
+    ApiKeys {
+        account_index: u64,
+        api_key_index: Option<u8>,
+    },
+    /// An account's open orders, in every market. Answered only with an
+    /// auth token of the account's own.
+    ActiveOrders { account_index: u64 },
 }
 
 /// The most trades one request returns.
@@ -73,6 +100,12 @@ pub const TRADES_LIMIT: u32 = 100;
 
 /// The code Lighter refuses an address that holds no account with.
 pub(super) const ACCOUNT_NOT_FOUND: &str = "21100";
+/// The code Lighter refuses an API key index that holds no key with.
+pub(super) const API_KEY_NOT_FOUND: &str = "21109";
+/// What asks for every API key of an account, in an index's place.
+const EVERY_API_KEY: u8 = 255;
+/// Where a signed transaction is posted.
+const SEND: &str = "/api/v1/sendTx";
 
 impl Request {
     /// The request's path and query, from `/`.
@@ -89,6 +122,26 @@ impl Request {
                 (*limit).clamp(1, TRADES_LIMIT)
             ),
             Self::AssetDetails => format!("{API}/assetDetails"),
+            Self::Markets => format!("{API}/orderBookDetails"),
+            Self::BookTop { market_id } => {
+                format!("{API}/orderBookOrders?market_id={market_id}&limit=1")
+            }
+            Self::NextNonce {
+                account_index,
+                api_key_index,
+            } => format!(
+                "{API}/nextNonce?account_index={account_index}&api_key_index={api_key_index}"
+            ),
+            Self::ApiKeys {
+                account_index,
+                api_key_index,
+            } => format!(
+                "{API}/apikeys?account_index={account_index}&api_key_index={}",
+                api_key_index.unwrap_or(EVERY_API_KEY)
+            ),
+            Self::ActiveOrders { account_index } => {
+                format!("{API}/accountActiveOrders?account_index={account_index}")
+            }
             Self::Pnl {
                 account_index,
                 resolution,
@@ -110,15 +163,77 @@ impl Request {
     }
 }
 
+/// What Lighter answers a transaction it took with. It takes one before it
+/// runs it: what the transaction then does (an order resting, trading, or
+/// being refused for its margin) shows in the account, not here.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Sent {
+    code: i64,
+    message: String,
+}
+
 impl Api {
     /// Sends `request` once the budget has room for it, and reads the reply
     /// as `T`.
     pub(super) async fn get<T: DeserializeOwned>(&self, request: &Request) -> Result<T, ApiError> {
         self.budget.spend(1).await?;
-        match self.http.get(&request.path()).await {
+        self.limited(self.http.get(&request.path()).await)
+    }
+
+    /// [`Self::get`] sent at once, the budget having room for it or not:
+    /// for what an order waits on (its key's nonce, the price it is bounded
+    /// from).
+    pub(super) async fn get_now<T: DeserializeOwned>(
+        &self,
+        request: &Request,
+    ) -> Result<T, ApiError> {
+        self.budget.charge(1);
+        self.limited(self.http.get(&request.path()).await)
+    }
+
+    /// [`Self::get`] with the auth token `token`: for what Lighter tells
+    /// only an account's own key.
+    pub(super) async fn get_as<T: DeserializeOwned>(
+        &self,
+        request: &Request,
+        token: &str,
+    ) -> Result<T, ApiError> {
+        self.budget.spend(1).await?;
+        let authorized = HttpRequest::get(request.path()).header("authorization", token);
+        self.limited(self.http.send(authorized).await)
+    }
+
+    /// Posts the signed transaction `signed`, at once. `Ok` is Lighter
+    /// having taken it, which is before it runs it.
+    pub(super) async fn send(&self, signed: &Signed) -> Result<(), ApiError> {
+        self.budget.charge(1);
+        let kind = signed.kind.to_string();
+        let form = [
+            ("tx_type", kind.as_str()),
+            ("tx_info", signed.info.as_str()),
+        ];
+        let sent: Sent = self.limited(self.http.send(HttpRequest::post_form(SEND, form)).await)?;
+        // A refusal comes under an error status; one under a success would
+        // still say so in its code.
+        if sent.code == 200 || sent.code == 0 {
+            Ok(())
+        } else {
+            Err(ApiError::api(
+                Some(200),
+                sent.code.to_string(),
+                sent.message,
+            ))
+        }
+    }
+
+    /// `reply` as it came, unless Lighter refused the request for the
+    /// address's limit (a `429`): something else spends that limit too, so
+    /// what is left of the minute is spent here and the request fails as
+    /// `RATE_LIMITED`.
+    fn limited<T>(&self, reply: Result<T, ApiError>) -> Result<T, ApiError> {
+        match reply {
             Err(error) if error.status == Some(429) => {
-                // Something else spends the address's limit too: nothing
-                // more goes out until a minute has passed.
                 self.budget.exhaust();
                 Err(ApiError::api(
                     Some(429),
@@ -156,6 +271,38 @@ mod tests {
         );
         assert!(trades(5_000).path().ends_with("limit=100"));
         assert_eq!(Request::AssetDetails.path(), "/api/v1/assetDetails");
+        assert_eq!(Request::Markets.path(), "/api/v1/orderBookDetails");
+        assert_eq!(
+            Request::BookTop { market_id: 1 }.path(),
+            "/api/v1/orderBookOrders?market_id=1&limit=1"
+        );
+
+        // An API key is asked for by its account's index and its own; all of
+        // an account's by the index that is none's.
+        let key = |api_key_index| Request::ApiKeys {
+            account_index: 2_180,
+            api_key_index,
+        };
+        assert_eq!(
+            key(Some(253)).path(),
+            "/api/v1/apikeys?account_index=2180&api_key_index=253"
+        );
+        assert!(key(None).path().ends_with("api_key_index=255"));
+        let nonce = Request::NextNonce {
+            account_index: 2_180,
+            api_key_index: 253,
+        };
+        assert_eq!(
+            nonce.path(),
+            "/api/v1/nextNonce?account_index=2180&api_key_index=253"
+        );
+        let orders = Request::ActiveOrders {
+            account_index: 2_180,
+        };
+        assert_eq!(
+            orders.path(),
+            "/api/v1/accountActiveOrders?account_index=2180"
+        );
 
         // A week of hours: the times in milliseconds, and how many hours.
         let week = Request::Pnl {

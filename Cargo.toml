@@ -8,8 +8,8 @@ publish = false
 [dependencies]
 anyhow = "1.0"
 log = "0.4"
-nsh-core = "=0.6.1"
-nsh-base = { version = "=0.6.1", default-features = false }
+nsh-core = "=0.7.0"
+nsh-base = { version = "=0.7.0", default-features = false }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
 url = "2.5"
@@ -72,19 +72,19 @@ web-sys = { version = "0.3", features = ["BinaryType", "CloseEvent", "CustomEven
 # images (`svg`, the icons and exchange logos) are opt-in features too.
 # WebView2, media, the updater and the rest stay off.
 [target.'cfg(target_os = "windows")'.dependencies]
-nsh-platform-windows = { version = "=0.6.1", default-features = false, features = ["net", "shader", "svg", "websocket"] }
+nsh-platform-windows = { version = "=0.7.0", default-features = false, features = ["net", "shader", "svg", "websocket"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-nsh-platform-macos = { version = "=0.6.1", default-features = false, features = ["shader", "svg", "websocket"] }
+nsh-platform-macos = { version = "=0.7.0", default-features = false, features = ["shader", "svg", "websocket"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nsh-platform-linux = { version = "=0.6.1", default-features = false, features = ["net", "shader", "svg", "websocket"] }
+nsh-platform-linux = { version = "=0.7.0", default-features = false, features = ["net", "shader", "svg", "websocket"] }
 
 # `signer-local` is the key the wallet tests' stand-in wallet signs with.
 [dev-dependencies]
 alloy = { version = "2.6", default-features = false, features = ["signer-local"] }
-nsh-engine = { version = "=0.6.1", default-features = false }
-nsh-testing = { version = "=0.6.1", default-features = false }
+nsh-engine = { version = "=0.7.0", default-features = false }
+nsh-testing = { version = "=0.7.0", default-features = false }
 
 [lints.rust]
 unsafe_code = "forbid"

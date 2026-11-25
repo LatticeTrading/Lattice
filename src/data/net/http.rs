@@ -40,7 +40,10 @@ impl Default for HttpOptions {
 pub struct Request {
     method: &'static str,
     path: String,
-    body: Option<Vec<u8>>,
+    /// The body, and the content type it is sent as.
+    body: Option<(&'static str, Vec<u8>)>,
+    /// Sent with this request alone, after the client's own.
+    headers: Vec<(String, String)>,
     timeout: Option<Duration>,
 }
 
@@ -51,6 +54,7 @@ impl Request {
             method: "GET",
             path: path.into(),
             body: None,
+            headers: Vec::new(),
             timeout: None,
         }
     }
@@ -65,9 +69,35 @@ impl Request {
         Ok(Self {
             method: "POST",
             path: path.into(),
-            body: Some(body),
+            body: Some(("application/json", body)),
+            headers: Vec::new(),
             timeout: None,
         })
+    }
+
+    /// A `POST` of `fields` as a form (`application/x-www-form-urlencoded`),
+    /// each name and value percent-encoded.
+    pub fn post_form<'a>(
+        path: impl Into<String>,
+        fields: impl IntoIterator<Item = (&'a str, &'a str)>,
+    ) -> Self {
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(fields)
+            .finish();
+        Self {
+            method: "POST",
+            path: path.into(),
+            body: Some(("application/x-www-form-urlencoded", body.into_bytes())),
+            headers: Vec::new(),
+            timeout: None,
+        }
+    }
+
+    /// Sends `name: value` with this request (what authorizes it alone).
+    #[must_use]
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
     }
 
     /// Overrides the client's deadline for this request.
@@ -140,11 +170,11 @@ impl HttpClient {
         }
         let mut http = HttpRequest::new(request.method, format!("{origin}{}", request.path))
             .header("accept", "application/json");
-        for (name, value) in &options.headers {
-            http = http.header(name.clone(), value.clone());
+        for (name, value) in options.headers.iter().cloned().chain(request.headers) {
+            http = http.header(name, value);
         }
-        if let Some(body) = request.body {
-            http = http.header("content-type", "application/json").body(body);
+        if let Some((content_type, body)) = request.body {
+            http = http.header("content-type", content_type).body(body);
         }
 
         let limit = request.timeout.unwrap_or(options.timeout);

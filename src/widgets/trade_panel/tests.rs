@@ -9,7 +9,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use nsh_core::{element::Root, prelude::*, time::Clock};
+use nsh_core::{prelude::*, time::Clock};
 use nsh_testing::{Headless, StubNetwork, WAIT};
 use serde_json::{Value, json};
 
@@ -433,7 +433,7 @@ fn the_panel_connects_enables_and_trades() {
         network,
         exchange,
         ..
-    } = start_live(Root::of::<Fresh>());
+    } = start_live(nsh_testing::windowed_root::<Fresh>());
     // The market's best bid and offer, whose middle is between two ticks.
     exchange.quote("BTC", "61012.2", "61013.2");
 
@@ -612,7 +612,7 @@ fn the_panel_connects_enables_and_trades() {
 
 #[test]
 fn the_market_is_the_exchanges_and_the_settings_are_saved() {
-    let (mut app, network) = start(Root::of::<Quick>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Quick>());
     enable(&mut app);
 
     // The market as it was typed, traded as the exchange writes it.
@@ -676,7 +676,7 @@ fn the_market_is_the_exchanges_and_the_settings_are_saved() {
 
 #[test]
 fn another_account_in_the_wallet_has_enabled_nothing() {
-    let (mut app, network) = start(Root::of::<Fresh>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Fresh>());
     enable(&mut app);
     app.wait_for("$1,234.50").unwrap();
     app.type_text(SIZE, "0.01").unwrap();
@@ -720,7 +720,7 @@ fn placed(app: &Headless, id: &str) -> Bounds<Points> {
 
 #[test]
 fn the_panel_is_blocks_that_meet_edge_to_edge() {
-    let (mut app, _network) = start(Root::of::<Fresh>());
+    let (mut app, _network) = start(nsh_testing::windowed_root::<Fresh>());
     enable(&mut app);
     app.wait_for("$1,234.50").unwrap();
     let left = |cell: Bounds<Points>| cell.origin.x.0;
@@ -790,7 +790,7 @@ fn the_panel_is_blocks_that_meet_edge_to_edge() {
     assert_eq!(back.size.width, px(36.0));
 
     // A narrow pane leaves the last figure out, and the bar still fills it.
-    let (mut app, _network) = start_in(Root::of::<Fresh>(), 400.0);
+    let (mut app, _network) = start_in(nsh_testing::windowed_root::<Fresh>(), 400.0);
     enable(&mut app);
     app.wait_for("$1,234.50").unwrap();
     assert!(!app.screen().matches("id:trade-panel-margin-ratio").unwrap());
@@ -825,7 +825,7 @@ fn what_the_market_does_to_the_account_shows_as_it_happens() {
         network,
         exchange,
         ..
-    } = start_live(Root::of::<Fresh>());
+    } = start_live(nsh_testing::windowed_root::<Fresh>());
     enable(&mut app);
     app.wait_for("$1,234.50").unwrap();
     app.wait_for("No open orders").unwrap();
@@ -913,7 +913,7 @@ fn a_followed_account_is_polled_only_while_its_stream_is_silent() {
         exchange,
         ..
     } = start_on(
-        Root::of::<Fresh>(),
+        nsh_testing::windowed_root::<Fresh>(),
         1280.0,
         &Exchange::new(),
         BTreeMap::new(),
@@ -954,7 +954,7 @@ fn trading_stays_enabled_between_runs_while_hyperliquid_lists_the_agent() {
     let exchange = Exchange::new();
     let run = |saved: BTreeMap<String, String>| {
         start_on(
-            Root::of::<Fresh>(),
+            nsh_testing::windowed_root::<Fresh>(),
             1280.0,
             &exchange,
             saved,
@@ -1035,7 +1035,7 @@ fn the_leverage_and_the_margin_mode_are_shown_and_set() {
         network,
         exchange,
         ..
-    } = start_live(Root::of::<Fresh>());
+    } = start_live(nsh_testing::windowed_root::<Fresh>());
     enable(&mut app);
 
     // The account's setting for the market, as the exchange has it, and
@@ -1114,7 +1114,7 @@ fn the_leverage_and_the_margin_mode_are_shown_and_set() {
 
 #[test]
 fn an_order_is_placed_with_its_take_profit_and_stop_loss() {
-    let (mut app, network) = start(Root::of::<Fresh>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Fresh>());
     enable(&mut app);
     const TAKE: &str = "id:trade-panel-take-profit";
     const STOP: &str = "id:trade-panel-stop-loss";
@@ -1197,7 +1197,7 @@ fn a_positions_exits_are_placed_for_the_whole_of_it() {
         network,
         exchange,
         ..
-    } = start_live(Root::of::<Fresh>());
+    } = start_live(nsh_testing::windowed_root::<Fresh>());
     enable(&mut app);
     app.wait_for("No open orders").unwrap();
     const POSITION: &str = "id:trade-panel-position";
@@ -1311,7 +1311,7 @@ fn the_panel_trades_on_an_exchange_that_has_only_what_a_venue_must() {
         network,
         exchange,
         ..
-    } = start_live(Root::of::<OnPaper>());
+    } = start_live(nsh_testing::windowed_root::<OnPaper>());
 
     // The same way in: a wallet, then this exchange enabled for its
     // account, by the exchange's own rows.

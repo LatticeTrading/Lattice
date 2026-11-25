@@ -1,4 +1,4 @@
-use nsh_core::{element::Root, prelude::*};
+use nsh_core::prelude::*;
 use nsh_testing::{Headless, WAIT};
 use serde_json::json;
 
@@ -270,7 +270,7 @@ fn names(app: &Headless) -> Vec<String> {
 
 #[test]
 fn the_table_lists_protocols_by_tvl_and_orders_filters_and_searches_them() {
-    let (mut app, network) = start(Root::of::<Listing>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Listing>());
 
     // Every category, largest first, with what the strip says of them.
     app.wait_for("$108.1B").unwrap();
@@ -393,7 +393,7 @@ fn the_table_lists_protocols_by_tvl_and_orders_filters_and_searches_them() {
 
 #[test]
 fn a_saved_category_and_order_are_listed_as_saved() {
-    let (mut app, network) = start(Root::of::<Filtered>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Filtered>());
     app.wait_for("$567.1M").unwrap();
     app.wait_for("Name ▴").unwrap();
     assert_eq!(

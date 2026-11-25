@@ -21,13 +21,23 @@
 //!   trades and the prices), one with a sub-account 8.
 //! - What it pays to trade, has staked and holds of pools are not
 //!   reported: the widgets that show them leave them out.
+//! - What changes an address's accounts between two refreshes (an order of
+//!   its own, a trade its stream tells of) has them asked for again a
+//!   moment later ([`refresh_soon`]), with the reports read from them:
+//!   once however much changed in that moment. What the stream tells of
+//!   does so no oftener than every [`SPACING`] however busy the account,
+//!   so one that trades all the time does not spend the minute's requests
+//!   on itself; what the user did here is never kept waiting for that.
 
 use std::{future::Future, rc::Rc, time::Duration};
 
-use nsh_core::time::unix_ms;
+use nsh_core::{
+    prelude::*,
+    time::{Instant, now, unix_ms},
+};
 
 use super::{
-    Api, Lighter, Request, Resolution,
+    Api, Kept, Lighter, Request, Resolution,
     fills::TradesReply,
     performance::{History, PnlReply, performance},
     prices::AssetDetails,
@@ -35,7 +45,7 @@ use super::{
     state::{AccountStates, AccountsReply},
 };
 use crate::data::{
-    net::{ApiError, Queries, QuerySpec, Subject, WeakQueries},
+    net::{ApiError, Queries, QuerySpec, Subject, TaskHandle, WeakQueries},
     portfolio::{
         AccountSource, AddressError, Balances, Fills, MarginAccount, Performance, Prices,
         evm_address, short_address,
@@ -51,7 +61,25 @@ const REFRESH: Duration = Duration::from_secs(5 * 60);
 /// How old an address's accounts may be and still be what a report is read
 /// from: the reports of one refresh, which start within moments of each
 /// other, share one request.
-const ACCOUNTS_FRESH: Duration = Duration::from_secs(30);
+const ACCOUNTS_FRESH: Duration = Duration::from_secs(10);
+/// How long after something changed an address's accounts they are asked
+/// for again: long enough for Lighter to have run what changed them, and
+/// for several changes at once to be one asking.
+const SETTLE: Duration = Duration::from_millis(700);
+/// The least time between two such askings for one address, for those the
+/// stream sets off.
+const SPACING: Duration = Duration::from_secs(5);
+
+/// What sets off an asking again ([`refresh_soon`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Cause {
+    /// Something the user did here: asked for a moment later, whatever was
+    /// asked for before.
+    Own,
+    /// Something the account's stream told of: no oftener than every
+    /// [`SPACING`].
+    Stream,
+}
 /// How far back the hours of a history are asked for, in seconds: a week
 /// (Lighter keeps ten days of them).
 const HOURS_SPAN: u64 = 7 * 86_400;
@@ -84,7 +112,14 @@ impl Api {
             l1_address: address.to_owned(),
         };
         match self.get::<AccountsReply>(&request).await {
-            Ok(reply) => Ok(reply.into()),
+            Ok(reply) => {
+                let accounts = AccountStates::from(reply);
+                // Every entry names its market's index beside its symbol.
+                for (symbol, id) in accounts.markets() {
+                    self.directory.note(symbol, id);
+                }
+                Ok(accounts)
+            }
             Err(error) if error.code == ACCOUNT_NOT_FOUND => Ok(AccountStates::default()),
             Err(error) => Err(error),
         }
@@ -127,10 +162,21 @@ impl Api {
     }
 }
 
+/// The request for `address`'s accounts, which every report of it is read
+/// from.
+fn accounts_query(api: &Api, address: &str) -> QuerySpec<AccountStates> {
+    let (api, user) = (api.clone(), address.to_owned());
+    let query = QuerySpec::new(format!("accounts {address}"), move || {
+        let (api, user) = (api.clone(), user.clone());
+        async move { api.accounts(&user).await }
+    });
+    query.subject(subject(address, "Accounts"))
+}
+
 /// `address`'s accounts, as the hub last had them when that is no older
 /// than [`ACCOUNTS_FRESH`], else asked of Lighter (once, whichever reports
 /// wait for them).
-async fn accounts_of(
+pub(super) async fn accounts_of(
     api: &Api,
     hub: &WeakQueries,
     address: &str,
@@ -138,17 +184,25 @@ async fn accounts_of(
     let hub = hub
         .upgrade()
         .ok_or_else(|| ApiError::network("the data services shut down"))?;
-    let (api, user) = (api.clone(), address.to_owned());
-    let query = QuerySpec::new(format!("accounts {address}"), move || {
-        let (api, user) = (api.clone(), user.clone());
-        async move { api.accounts(&user).await }
-    });
-    hub.get(
-        query
-            .fresh_for(ACCOUNTS_FRESH)
-            .subject(subject(address, "Accounts")),
-    )
-    .await
+    hub.get(accounts_query(api, address).fresh_for(ACCOUNTS_FRESH))
+        .await
+}
+
+/// The key of the report of `address` named `name` ([`Lighter::report`]).
+pub(super) fn report_key(name: &str, address: &str) -> String {
+    format!("{name} {address}")
+}
+
+/// An asking again that waits a moment, for one address
+/// ([`Lighter::refresh_soon`]).
+#[derive(Default)]
+pub(super) struct Refreshing {
+    /// The asking that waits, while one does.
+    waiting: Option<TaskHandle>,
+    /// The other requests asked for again once the accounts are in.
+    also: Vec<String>,
+    /// When the address's accounts were last asked for this way.
+    last: Option<Instant>,
 }
 
 impl Lighter {
@@ -164,7 +218,7 @@ impl Lighter {
     {
         let (api, hub) = (self.api.clone(), self.queries.downgrade());
         let (user, read) = (address.to_owned(), Rc::new(read));
-        QuerySpec::new(format!("{name} {address}"), move || {
+        QuerySpec::new(report_key(name, address), move || {
             let (api, hub) = (api.clone(), hub.clone());
             let (user, read) = (user.clone(), read.clone());
             async move {
@@ -175,6 +229,90 @@ impl Lighter {
         .refresh_every(REFRESH)
         .subject(subject(address, detail))
     }
+
+    /// `address`'s accounts, no older than a report's may be.
+    pub(super) async fn accounts(&self, address: &str) -> Result<Rc<AccountStates>, ApiError> {
+        accounts_of(&self.api, &self.queries.downgrade(), address).await
+    }
+
+    /// [`refresh_soon`] for `address` after something the user did here,
+    /// with this client's own parts.
+    pub(super) fn refresh_soon(&self, address: &str, also: &[String]) {
+        refresh_soon(
+            &self.api,
+            &self.queries.downgrade(),
+            &self.kept,
+            address,
+            also,
+            Cause::Own,
+        );
+    }
+}
+
+/// Asks again, a moment from now, for `address`'s accounts and the reports
+/// read from them (its margin and its balances, and `also`, the keys of
+/// other requests that read them): after a transaction of its own, or when
+/// its stream says something changed (`cause`). Several within the moment
+/// are one asking, and what the stream sets off is spaced out
+/// ([`Cause::Stream`]). `kept` holds what waits.
+pub(super) fn refresh_soon(
+    api: &Api,
+    hub: &WeakQueries,
+    kept: &Rc<Kept>,
+    address: &str,
+    also: &[String],
+    cause: Cause,
+) {
+    let mut refreshes = kept.refreshes.borrow_mut();
+    let refreshing = refreshes.entry(address.to_owned()).or_default();
+    for key in also {
+        if !refreshing.also.contains(key) {
+            refreshing.also.push(key.clone());
+        }
+    }
+    let wait = match cause {
+        // In place of one that waits for its turn: this one is not kept
+        // waiting.
+        Cause::Own => SETTLE,
+        Cause::Stream if refreshing.waiting.is_some() => return,
+        Cause::Stream => refreshing.last.map_or(SETTLE, |last| {
+            (last + SPACING)
+                .saturating_duration_since(now())
+                .max(SETTLE)
+        }),
+    };
+    let (api, hub, kept) = (api.clone(), hub.clone(), Rc::downgrade(kept));
+    let user = address.to_owned();
+    refreshing.waiting = Some(TaskHandle::spawn(async move {
+        timer(wait).await;
+        // Its own handle is held until it is done: dropped any sooner, it
+        // would end at its next wait.
+        let (own, also) = {
+            let Some(kept) = kept.upgrade() else {
+                return;
+            };
+            let mut refreshes = kept.refreshes.borrow_mut();
+            let Some(refreshing) = refreshes.get_mut(&user) else {
+                return;
+            };
+            refreshing.last = Some(now());
+            (
+                refreshing.waiting.take(),
+                std::mem::take(&mut refreshing.also),
+            )
+        };
+        let Some(hub) = hub.upgrade() else {
+            return;
+        };
+        let anew = accounts_query(&api, &user).fresh_for(Duration::ZERO);
+        if hub.get(anew).await.is_ok() {
+            let reports = ["margin", "balances"].map(|name| report_key(name, &user));
+            for key in reports.iter().chain(&also) {
+                hub.refresh(key);
+            }
+        }
+        drop(own);
+    }));
 }
 
 impl AccountSource for Lighter {

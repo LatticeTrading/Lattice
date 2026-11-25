@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use nsh_core::{element::Root, prelude::*};
+use nsh_core::prelude::*;
 use nsh_testing::WAIT;
 use serde_json::json;
 
@@ -573,7 +573,7 @@ fn reads(app: &nsh_testing::Headless, id: &str, read: &str) -> bool {
 
 #[test]
 fn the_summary_shows_the_account_s_standing_and_its_balances() {
-    let (mut app, network) = start(Root::of::<Watching>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Watching>());
 
     // A figure of each report, once it has arrived.
     for arrived in ["$13,109.48", "+$58.00", "Tier 1", "$520.00", "PURR"] {
@@ -696,7 +696,7 @@ fn place(app: &nsh_testing::Headless, test_id: &str) -> (f32, f32, f32) {
 
 #[test]
 fn tiles_share_a_wide_pane_and_the_bar_splits_by_worth() {
-    let (mut app, _network) = start(Root::of::<Watching>());
+    let (mut app, _network) = start(nsh_testing::windowed_root::<Watching>());
     for arrived in ["+$58.00", "Tier 1", "$520.00", "$1,014.63"] {
         app.wait_for(arrived).unwrap();
     }
@@ -730,7 +730,7 @@ fn Whale() -> impl IntoElement {
 
 #[test]
 fn figures_in_the_millions_stay_inside_their_tiles() {
-    let (mut app, _network) = start(Root::of::<Whale>());
+    let (mut app, _network) = start(nsh_testing::windowed_root::<Whale>());
     app.wait_for("$2,268,633.27").unwrap();
     let nodes = app.screen().layout_nodes();
     let bounds = |id: &str| {
@@ -773,7 +773,7 @@ fn figures_in_the_millions_stay_inside_their_tiles() {
 
 #[test]
 fn an_account_that_holds_nothing_says_so() {
-    let (mut app, _network) = start(Root::of::<Idle>());
+    let (mut app, _network) = start(nsh_testing::windowed_root::<Idle>());
     app.wait_for("No balances").unwrap();
     app.wait_for("0.045% / 0.015%").unwrap();
     assert!(reads(&app, "equity", "$0.00"));
@@ -794,7 +794,7 @@ fn Trading() -> impl IntoElement {
 
 #[test]
 fn a_lighter_address_is_summed_up_from_what_lighter_reports() {
-    let (mut app, network) = start(Root::of::<Trading>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Trading>());
     // (Its history's total is also what its parts come to.)
     for arrived in ["$23,900.00", "+$72.00", "LIT"] {
         app.wait_for(arrived).unwrap();
@@ -869,7 +869,7 @@ fn Flowing() -> impl IntoElement {
 
 #[test]
 fn a_txflow_address_is_summed_up_from_what_txflow_reports() {
-    let (mut app, network) = start(Root::of::<Flowing>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Flowing>());
     for arrived in ["$20,000.00", "+$504.00", "$1,000.00", "Tier 1"] {
         app.wait_for(arrived).unwrap();
     }
@@ -922,7 +922,7 @@ fn Everywhere() -> impl IntoElement {
 
 #[test]
 fn accounts_on_several_exchanges_are_one_summary() {
-    let (mut app, _network) = start(Root::of::<Everywhere>());
+    let (mut app, _network) = start(nsh_testing::windowed_root::<Everywhere>());
     for arrived in ["$37,009.48", "$37,458.00", "Tier 1", "LIT", "PURR"] {
         app.wait_for(arrived).unwrap();
     }

@@ -1,7 +1,6 @@
 use super::*;
-use nsh_core::element::Root;
 use nsh_engine::EngineConfig;
-use nsh_testing::Headless;
+use nsh_testing::{DragOptions, Headless};
 
 const WIDTH: f32 = 1264.0;
 
@@ -240,12 +239,16 @@ fn Harness() -> impl IntoElement {
 fn responder_survives_live_updates_and_commits_on_release() {
     let mut app = Headless::start(EngineConfig {
         viewport: Size::new(px(1280.0), px(900.0)),
-        ..EngineConfig::new(Root::of::<Harness>())
+        ..EngineConfig::new(nsh_testing::windowed_root::<Harness>())
     })
     .unwrap();
     app.wait_for("Saved 0 0 24 30").unwrap();
-    app.drag_and_hold("id:pane-resize-1", point(px(0.0), px(64.0)))
-        .unwrap();
+    app.drag_and_hold(
+        "id:pane-resize-1",
+        point(px(0.0), px(64.0)),
+        DragOptions::default(),
+    )
+    .unwrap();
     assert!(
         app.shows("Saved 0 0 24 30"),
         "preview must not change committed state"
@@ -253,8 +256,12 @@ fn responder_survives_live_updates_and_commits_on_release() {
     app.drop_held().unwrap();
     app.wait_for("Saved 0 0 24 34").unwrap();
     // A second gesture also proves the first responder was released.
-    app.drag("id:pane-move-1", point(px(106.0), px(32.0)))
-        .unwrap();
+    app.drag(
+        "id:pane-move-1",
+        point(px(106.0), px(32.0)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait_for("Saved 4 2 24 34").unwrap();
 }
 
@@ -262,7 +269,7 @@ fn responder_survives_live_updates_and_commits_on_release() {
 fn a_dragged_tab_goes_to_another_pane_or_another_place_among_its_tabs() {
     let mut app = Headless::start(EngineConfig {
         viewport: Size::new(px(1280.0), px(900.0)),
-        ..EngineConfig::new(Root::of::<Harness>())
+        ..EngineConfig::new(nsh_testing::windowed_root::<Harness>())
     })
     .unwrap();
     app.wait_for("Tabs 1: 1[1*] 2[2*]").unwrap();
@@ -275,8 +282,12 @@ fn a_dragged_tab_goes_to_another_pane_or_another_place_among_its_tabs() {
     // Held over the leading half of the other pane's tab, the tab would go
     // before it: its title follows the pointer and a bar marks the gap, and
     // nothing has moved yet.
-    app.drag_and_hold("id:pane-tab-1-1", point(px(-10.0), px(below)))
-        .unwrap();
+    app.drag_and_hold(
+        "id:pane-tab-1-1",
+        point(px(-10.0), px(below)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait_for("id:tab-drag-ghost").unwrap();
     app.wait_for("id:pane-drop-2-0").unwrap();
     assert!(app.shows("Tabs 1: 1[1*] 2[2*]"));
@@ -288,42 +299,66 @@ fn a_dragged_tab_goes_to_another_pane_or_another_place_among_its_tabs() {
     app.wait_for("id:pane-tab-2-1").unwrap();
 
     // An empty pane takes it anywhere on its box, and says so.
-    app.drag_and_hold("id:pane-tab-2-1", point(px(0.0), px(100.0 - below)))
-        .unwrap();
+    app.drag_and_hold(
+        "id:pane-tab-2-1",
+        point(px(0.0), px(100.0 - below)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait_for("Drop tab here").unwrap();
     app.drop_held().unwrap();
     app.wait_for("Tabs 1: 1[1*] 2[2*]").unwrap();
     assert!(!app.shows("Drop tab here"));
 
     // Past the middle of the last tab it goes after it.
-    app.drag_and_hold("id:pane-tab-1-1", point(px(10.0), px(below)))
-        .unwrap();
+    app.drag_and_hold(
+        "id:pane-tab-1-1",
+        point(px(10.0), px(below)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait_for("id:pane-drop-2-1").unwrap();
     assert!(!shown(&app, "id:pane-drop-2-0"));
     app.drop_held().unwrap();
     app.wait_for("Tabs 1: 1[] 2[2 1*]").unwrap();
 
     // Along its own pane's tabs it changes place, and the active tab stays.
-    app.drag("id:pane-tab-2-1", point(px(-tab_width - 10.0), px(0.0)))
-        .unwrap();
+    app.drag(
+        "id:pane-tab-2-1",
+        point(px(-tab_width - 10.0), px(0.0)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait_for("Tabs 1: 1[] 2[1* 2]").unwrap();
     // A press still shows a tab; a drag that ends on the tab it began on
     // does not, and moves nothing.
     app.press("id:pane-tab-2-2").unwrap();
     app.wait_for("Tabs 1: 1[] 2[1 2*]").unwrap();
-    app.drag("id:pane-tab-2-1", point(px(12.0), px(0.0)))
-        .unwrap();
+    app.drag(
+        "id:pane-tab-2-1",
+        point(px(12.0), px(0.0)),
+        DragOptions::default(),
+    )
+    .unwrap();
     settle(&mut app);
     assert!(app.shows("Tabs 1: 1[] 2[1 2*]"));
     // Dropped off every pane, it stays where it was.
-    app.drag("id:pane-tab-2-1", point(px(900.0), px(-200.0)))
-        .unwrap();
+    app.drag(
+        "id:pane-tab-2-1",
+        point(px(900.0), px(-200.0)),
+        DragOptions::default(),
+    )
+    .unwrap();
     settle(&mut app);
     assert!(app.shows("Tabs 1: 1[] 2[1 2*]"));
 
     // Escape puts a tab in hand back.
-    app.drag_and_hold("id:pane-tab-2-1", point(px(0.0), px(100.0 - below)))
-        .unwrap();
+    app.drag_and_hold(
+        "id:pane-tab-2-1",
+        point(px(0.0), px(100.0 - below)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait_for("Drop tab here").unwrap();
     app.press_key("escape").unwrap();
     settle(&mut app);
@@ -335,8 +370,12 @@ fn a_dragged_tab_goes_to_another_pane_or_another_place_among_its_tabs() {
 
     // A tab in hand whose page goes is put back: lifting the pointer on the
     // page shown then moves nothing, there or where the tab is.
-    app.drag_and_hold("id:pane-tab-2-1", point(px(0.0), px(100.0 - below)))
-        .unwrap();
+    app.drag_and_hold(
+        "id:pane-tab-2-1",
+        point(px(0.0), px(100.0 - below)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait_for("Drop tab here").unwrap();
     app.press("Add a page").unwrap();
     app.wait_for("Tabs 1: 1[] 2[1 2*] / 2:").unwrap();
@@ -362,7 +401,7 @@ fn rise(app: &Headless, test_id: &str) -> (f32, f32) {
 fn a_tab_held_at_the_grids_edge_scrolls_it_to_the_panes_out_of_view() {
     let mut app = Headless::start(EngineConfig {
         viewport: Size::new(px(1280.0), px(900.0)),
-        ..EngineConfig::new(Root::of::<Harness>())
+        ..EngineConfig::new(nsh_testing::windowed_root::<Harness>())
     })
     .unwrap();
     app.wait_for("Tabs 1: 1[1*] 2[2*]").unwrap();
@@ -376,8 +415,12 @@ fn a_tab_held_at_the_grids_edge_scrolls_it_to_the_panes_out_of_view() {
     // grid to its end; dropped there, it is on the second pane.
     let (tab_top, tab_height) = rise(&app, "pane-tab-1-1");
     let to_edge = 900.0 - 12.0 - (tab_top + tab_height / 2.0);
-    app.drag_and_hold("id:pane-tab-1-1", point(px(0.0), px(to_edge)))
-        .unwrap();
+    app.drag_and_hold(
+        "id:pane-tab-1-1",
+        point(px(0.0), px(to_edge)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait(std::time::Duration::from_millis(1000)).unwrap();
     let scrolled = top - rise(&app, "pane-1").0;
     assert!((scrolled - hidden).abs() < 0.01, "{scrolled} of {hidden}");
@@ -386,8 +429,12 @@ fn a_tab_held_at_the_grids_edge_scrolls_it_to_the_panes_out_of_view() {
     // Held near the grid's top edge, a tab scrolls it back.
     let (tab_top, tab_height) = rise(&app, "pane-tab-2-1");
     let to_edge = rise(&app, "pane-1").0 + hidden - GAP + 12.0 - (tab_top + tab_height / 2.0);
-    app.drag_and_hold("id:pane-tab-2-1", point(px(0.0), px(to_edge)))
-        .unwrap();
+    app.drag_and_hold(
+        "id:pane-tab-2-1",
+        point(px(0.0), px(to_edge)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait(std::time::Duration::from_millis(1000)).unwrap();
     assert!((rise(&app, "pane-1").0 - top).abs() < 0.01);
 }
@@ -430,7 +477,7 @@ fn span(app: &Headless, test_id: &str) -> (f32, f32) {
 fn a_narrow_pane_keeps_its_controls_and_scrolls_its_tabs() {
     let mut app = Headless::start(EngineConfig {
         viewport: Size::new(px(1280.0), px(900.0)),
-        ..EngineConfig::new(Root::of::<NarrowHarness>())
+        ..EngineConfig::new(nsh_testing::windowed_root::<NarrowHarness>())
     })
     .unwrap();
     app.wait_for("id:pane-tab-1-5").unwrap();
@@ -519,13 +566,21 @@ fn a_narrow_pane_keeps_its_controls_and_scrolls_its_tabs() {
         let row = node(app, "pane-tab-row-1");
         listens.lock().unwrap().get(&row).copied()
     };
-    app.drag("id:pane-resize-1", point(px(900.0), px(0.0)))
-        .unwrap();
+    app.drag(
+        "id:pane-resize-1",
+        point(px(900.0), px(0.0)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait(std::time::Duration::from_millis(200)).unwrap();
     assert!(near(first(&app), span(&app, "pane-tabs-1").0));
     assert_ne!(hears_wheel(&app), Some(true));
-    app.drag("id:pane-resize-1", point(px(-900.0), px(0.0)))
-        .unwrap();
+    app.drag(
+        "id:pane-resize-1",
+        point(px(-900.0), px(0.0)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait(std::time::Duration::from_millis(200)).unwrap();
     assert_eq!(hears_wheel(&app), Some(true));
 }
@@ -534,7 +589,7 @@ fn a_narrow_pane_keeps_its_controls_and_scrolls_its_tabs() {
 fn narrow_app() -> Headless {
     let mut app = Headless::start(EngineConfig {
         viewport: Size::new(px(1280.0), px(900.0)),
-        ..EngineConfig::new(Root::of::<NarrowHarness>())
+        ..EngineConfig::new(nsh_testing::windowed_root::<NarrowHarness>())
     })
     .unwrap();
     app.wait_for("id:pane-tab-1-5").unwrap();
@@ -567,15 +622,23 @@ fn tabs_that_reach_past_their_room_pan_under_a_touch_and_scroll_under_a_tab_in_h
     assert_eq!(first(&app), strip_left);
 
     // A touch dragged sideways over them pans them, and picks no tab up...
-    app.drag_and_hold("id:pane-tab-1-3", point(px(-60.0), px(0.0)))
-        .unwrap();
+    app.drag_and_hold(
+        "id:pane-tab-1-3",
+        point(px(-60.0), px(0.0)),
+        DragOptions::default(),
+    )
+    .unwrap();
     settle(&mut app, 200);
     assert!(first(&app) < strip_left - 20.0, "{}", first(&app));
     assert!(!app.screen().matches("id:tab-drag-ghost").unwrap());
     app.drop_held().unwrap();
     // ...and one pulled out of them does: the tab goes to the pane below.
-    app.drag("id:pane-tab-1-3", point(px(0.0), px(30.0 * ROW_STEP)))
-        .unwrap();
+    app.drag(
+        "id:pane-tab-1-3",
+        point(px(0.0), px(30.0 * ROW_STEP)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait_for("id:pane-tab-2-3").unwrap();
     assert_eq!(app.screen().count("id:pane-tab-1-3").unwrap(), 0);
 
@@ -588,7 +651,8 @@ fn tabs_that_reach_past_their_room_pan_under_a_touch_and_scroll_under_a_tab_in_h
     let hidden = tabs + 32.0 - strip_width;
     assert!(hidden > 50.0, "{hidden}");
     let by = to_tabs_edge(&app, -10.0);
-    app.drag_and_hold("id:pane-tab-2-2", by).unwrap();
+    app.drag_and_hold("id:pane-tab-2-2", by, DragOptions::default())
+        .unwrap();
     settle(&mut app, 1000);
     assert!(near(first(&app), strip_left - hidden), "{}", first(&app));
     app.wait_for("id:pane-drop-1-3").unwrap();
@@ -606,7 +670,8 @@ fn tabs_that_reach_past_their_room_pan_under_a_touch_and_scroll_under_a_tab_in_h
     );
     assert!(first(&app) < strip_left - 50.0, "{}", first(&app));
     let by = to_tabs_edge(&app, 10.0);
-    app.drag_and_hold("id:pane-tab-2-2", by).unwrap();
+    app.drag_and_hold("id:pane-tab-2-2", by, DragOptions::default())
+        .unwrap();
     settle(&mut app, 1000);
     assert!(near(first(&app), strip_left), "{}", first(&app));
     app.wait_for("id:pane-drop-1-0").unwrap();

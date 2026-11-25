@@ -225,6 +225,25 @@ impl<S: KindSettings> TabContext<S> {
     pub fn settings_anchor(&self) -> &ElementRef {
         &self.panel.anchor
     }
+
+    /// The same tab seen through a part of its settings, for a widget whose
+    /// settings hold another kind's (the Watchlist holds a screener's):
+    /// the part is read with `get`, and saving it saves the whole as `put`
+    /// makes it of the settings saved now.
+    pub fn project<T: KindSettings>(
+        &self,
+        get: impl Fn(&S) -> T + 'static,
+        put: impl Fn(S, T) -> S + 'static,
+    ) -> TabContext<T> {
+        let saved = self.settings;
+        let save = self.save.clone();
+        TabContext {
+            settings: computed(move || saved.with(&get)),
+            shown: self.shown,
+            save: Rc::new(move |part: &T| save(&put(saved.get_untracked(), part.clone()))),
+            panel: self.panel,
+        }
+    }
 }
 
 /// A `W` widget's session state as the host keeps it: the widget's own,

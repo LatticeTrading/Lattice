@@ -200,7 +200,6 @@ fn preview(template: &Template, hovered: Signal<bool>) -> View {
 mod tests {
     use std::sync::Arc;
 
-    use nsh_core::element::Root;
     use nsh_engine::EngineConfig;
     use nsh_testing::{Headless, MemoryStorage, WAIT};
 
@@ -251,7 +250,7 @@ mod tests {
         let mut app = Headless::start(EngineConfig {
             viewport: Size::new(px(width), px(800.0)),
             storage: Some(storage),
-            ..EngineConfig::new(Root::of::<Harness>())
+            ..EngineConfig::new(nsh_testing::windowed_root::<Harness>())
         })
         .unwrap();
         app.wait_for(workspace).unwrap();

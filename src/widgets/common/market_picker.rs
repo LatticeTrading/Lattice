@@ -12,8 +12,8 @@
 //!   `filterExchange`), a capability requirement (only markets whose
 //!   exchange and product are not denied it: unknown metadata keeps the old
 //!   behavior and offers them), a statistics field (only markets whose
-//!   exchange serves it for their product), the current selection (marked),
-//!   and a "Clear" action.
+//!   exchange serves it for their product), some products only, the
+//!   current selection (marked), and a "Clear" action.
 //! - Search ignores case and punctuation ("btcusd" finds "BTC/USD") and
 //!   ranks as the old app did ([`SymbolQuery`]): the whole pair, then the
 //!   pair as typed, then its start, then anywhere, ties in list order.
@@ -48,7 +48,7 @@ use super::Shared;
 use crate::{
     data::{
         DataServices,
-        ferris::{MarketSelection, Requirement, StatsFieldName, SymbolQuery},
+        ferris::{MarketSelection, Product, Requirement, StatsFieldName, SymbolQuery},
     },
     theme,
     ui::{self, RowScroll},
@@ -64,6 +64,7 @@ pub struct MarketPicker {
     exchange: Option<String>,
     requirement: Requirement,
     statistics: Option<StatsFieldName>,
+    products: Option<Vec<Product>>,
     current: Option<MarketSelection>,
     on_pick: Rc<dyn Fn(MarketSelection)>,
     clear: Option<(String, Rc<dyn Fn()>)>,
@@ -76,6 +77,7 @@ impl MarketPicker {
             exchange: None,
             requirement: Requirement::default(),
             statistics: None,
+            products: None,
             current: None,
             on_pick: Rc::new(on_pick),
             clear: None,
@@ -101,6 +103,13 @@ impl MarketPicker {
     /// the perpetuals of the exchanges that report it).
     pub fn with_statistics(mut self, field: StatsFieldName) -> Self {
         self.statistics = Some(field);
+        self
+    }
+
+    /// Only markets of `products` (the Watchlist: perpetuals and futures,
+    /// which the screener's statistics cover).
+    pub fn products(mut self, products: &[Product]) -> Self {
+        self.products = Some(products.to_vec());
         self
     }
 
@@ -136,6 +145,7 @@ impl MarketPicker {
             exchange,
             requirement,
             statistics,
+            products,
             current,
             on_pick,
             clear,
@@ -152,6 +162,7 @@ impl MarketPicker {
                     &directory.0,
                     requirement,
                     statistics,
+                    products.as_deref(),
                     exchange.as_deref(),
                 )))
             })

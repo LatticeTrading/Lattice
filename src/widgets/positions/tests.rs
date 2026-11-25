@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use nsh_core::{element::Root, prelude::*, time::Clock};
+use nsh_core::{prelude::*, time::Clock};
 use nsh_testing::{Headless, WAIT};
 use serde_json::json;
 
@@ -244,7 +244,7 @@ fn Refused() -> impl IntoElement {
 
 #[test]
 fn the_table_shows_the_account_s_positions_and_follows_its_settings() {
-    let (mut app, network) = start(Root::of::<Unset>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Unset>());
 
     // No account: the widget asks for one, and asks Hyperliquid nothing.
     app.wait_for("id:positions-no-account").unwrap();
@@ -347,7 +347,7 @@ fn the_table_shows_the_account_s_positions_and_follows_its_settings() {
 
 #[test]
 fn a_request_hyperliquid_refuses_is_said_and_not_shown_as_an_empty_account() {
-    let (mut app, _network) = start(Root::of::<Refused>());
+    let (mut app, _network) = start(nsh_testing::windowed_root::<Refused>());
     app.wait_for(
         "Could not load positions: Hyperliquid's request limit for this connection was \
          reached; requests resume within a minute",
@@ -370,7 +370,7 @@ fn Paced() -> impl IntoElement {
 
 #[test]
 fn the_account_is_asked_for_every_five_minutes_within_a_small_budget() {
-    let (mut app, network) = start_manual(Root::of::<Paced>());
+    let (mut app, network) = start_manual(nsh_testing::windowed_root::<Paced>());
     let polls = || count(&asked(&network), "clearinghouseState", USER);
     app.wait_for("$6,100.00").unwrap();
     assert_eq!(polls(), 1);
@@ -401,7 +401,7 @@ fn Trading() -> impl IntoElement {
 
 #[test]
 fn a_lighter_address_lists_the_positions_of_its_accounts() {
-    let (mut app, network) = start(Root::of::<Trading>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Trading>());
     app.wait_for("$31,000.00").unwrap();
     assert!(
         app.screen()
@@ -457,7 +457,7 @@ fn Flowing() -> impl IntoElement {
 
 #[test]
 fn a_txflow_address_lists_its_perpetuals_positions() {
-    let (mut app, network) = start(Root::of::<Flowing>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Flowing>());
     app.wait_for("$31,000.00").unwrap();
     assert!(
         app.screen()
@@ -497,7 +497,7 @@ fn Everywhere() -> impl IntoElement {
 
 #[test]
 fn accounts_on_several_exchanges_are_one_table() {
-    let (mut app, _network) = start(Root::of::<Everywhere>());
+    let (mut app, _network) = start(nsh_testing::windowed_root::<Everywhere>());
     // Both exchanges' positions, the largest first.
     app.wait_for("$31,000.00").unwrap();
     app.wait_for("$6,100.00").unwrap();
@@ -563,7 +563,7 @@ fn Halved() -> impl IntoElement {
 
 #[test]
 fn an_account_that_cannot_be_read_is_named_over_the_others_positions() {
-    let (mut app, _network) = start(Root::of::<Halved>());
+    let (mut app, _network) = start(nsh_testing::windowed_root::<Halved>());
     app.wait_for(
         "Not every account is shown. Lighter 0x0000…00ff: Lighter's request limit for this \
          connection was reached; requests resume within a minute",
@@ -590,7 +590,7 @@ fn Waiting() -> impl IntoElement {
 
 #[test]
 fn an_account_shows_as_soon_as_it_arrives_without_waiting_for_the_others() {
-    let (mut app, _network) = start_manual(Root::of::<Staggered>());
+    let (mut app, _network) = start_manual(nsh_testing::windowed_root::<Staggered>());
     // The account that has arrived is listed, under how many show so far.
     app.wait_for("$6,100.00").unwrap();
     app.wait_for("Loading positions… 1 of 2 accounts shown.")
@@ -611,7 +611,7 @@ fn an_account_shows_as_soon_as_it_arrives_without_waiting_for_the_others() {
 
     // An account with nothing open does not say so for the rest: the one
     // still on its way may have some.
-    let (mut app, _network) = start_manual(Root::of::<Waiting>());
+    let (mut app, _network) = start_manual(nsh_testing::windowed_root::<Waiting>());
     app.wait_for("Loading positions… 1 of 2 accounts shown.")
         .unwrap();
     assert!(!app.shows("No open positions"));
@@ -970,7 +970,7 @@ fn the_wallets_own_positions_are_reduced_and_closed_at_market() {
         exchange,
         ..
     } = start_on(
-        Root::of::<Own>(),
+        nsh_testing::windowed_root::<Own>(),
         1280.0,
         &exchange,
         BTreeMap::new(),
@@ -1178,7 +1178,7 @@ fn prices_heard_between_reports_move_the_rows_and_what_they_come_to() {
         exchange,
         ..
     } = start_on(
-        Root::of::<Own>(),
+        nsh_testing::windowed_root::<Own>(),
         1280.0,
         &exchange,
         BTreeMap::new(),
@@ -1258,7 +1258,7 @@ fn the_settings_say_which_price_values_the_rows() {
     let Bench {
         mut app, exchange, ..
     } = start_on(
-        Root::of::<Own>(),
+        nsh_testing::windowed_root::<Own>(),
         1280.0,
         &exchange,
         BTreeMap::new(),
@@ -1317,7 +1317,7 @@ fn a_market_hyperliquid_does_not_know_is_never_asked_for_its_book() {
     let Bench {
         mut app, exchange, ..
     } = start_on(
-        Root::of::<Own>(),
+        nsh_testing::windowed_root::<Own>(),
         1280.0,
         &exchange,
         BTreeMap::new(),
@@ -1365,7 +1365,7 @@ fn the_wallets_own_account_is_followed_live_and_says_its_exits() {
         exchange,
         ..
     } = start_on(
-        Root::of::<Own>(),
+        nsh_testing::windowed_root::<Own>(),
         1280.0,
         &exchange,
         BTreeMap::new(),
@@ -1429,7 +1429,7 @@ fn another_exchanges_positions_are_reduced_and_closed_through_the_same_table() {
         exchange,
         ..
     } = start_on(
-        Root::of::<OnPaper>(),
+        nsh_testing::windowed_root::<OnPaper>(),
         1280.0,
         &Exchange::new(),
         BTreeMap::new(),

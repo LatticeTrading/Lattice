@@ -1,4 +1,4 @@
-use nsh_core::{Checked, element::Root, prelude::*};
+use nsh_core::{Checked, prelude::*};
 use nsh_testing::{Headless, WAIT};
 use serde_json::json;
 
@@ -225,7 +225,7 @@ fn reads(app: &Headless, id: &str, read: &str) -> bool {
 
 #[test]
 fn the_plot_shows_the_window_its_settings_pick_of_one_report() {
-    let (mut app, network) = start(Root::of::<Watching>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Watching>());
 
     // A month of the whole account's value by default: the newest value's
     // tag, and what the month made and traded under the header.
@@ -312,7 +312,7 @@ fn badge_is(app: &Headless, label: &str) -> bool {
 
 #[test]
 fn the_account_badge_opens_the_rows_that_list_add_and_take_out_accounts() {
-    let (mut app, network) = start(Root::of::<Watching>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Watching>());
     app.wait_for("12450.0").unwrap();
     app.press("id:account-performance-account").unwrap();
     app.wait_for("id:account-performance-account-panel")
@@ -389,7 +389,7 @@ fn Trading() -> impl IntoElement {
 
 #[test]
 fn a_lighter_address_plots_its_accounts_together() {
-    let (mut app, network) = start(Root::of::<Trading>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Trading>());
 
     // A month of what its main account and its sub-account are worth
     // together, and made and traded together.
@@ -453,7 +453,7 @@ fn Everywhere() -> impl IntoElement {
 
 #[test]
 fn accounts_on_several_exchanges_are_plotted_as_one() {
-    let (mut app, network) = start(Root::of::<Everywhere>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Everywhere>());
 
     // A month of what both are worth, made and traded, together.
     app.wait_for("36850.0").unwrap();
@@ -508,7 +508,7 @@ fn Halved() -> impl IntoElement {
 
 #[test]
 fn an_account_that_cannot_be_read_is_named_over_what_the_others_add_up_to() {
-    let (mut app, _network) = start(Root::of::<Halved>());
+    let (mut app, _network) = start(nsh_testing::windowed_root::<Halved>());
     app.wait_for(
         "Not every account is shown. Lighter 0x0000…00ff: Lighter's request limit for this \
          connection was reached; requests resume within a minute",
@@ -529,7 +529,7 @@ fn Unknown() -> impl IntoElement {
 
 #[test]
 fn an_address_with_no_account_on_lighter_is_an_empty_account() {
-    let (mut app, network) = start(Root::of::<Unknown>());
+    let (mut app, network) = start(nsh_testing::windowed_root::<Unknown>());
     app.wait_for(EMPTY).unwrap();
     assert!(reads(&app, "pnl", NONE));
     assert!(reads(&app, "volume", "$0.00"));
@@ -539,7 +539,7 @@ fn an_address_with_no_account_on_lighter_is_an_empty_account() {
 
 #[test]
 fn an_account_with_no_history_says_so_in_the_plot() {
-    let (mut app, _network) = start(Root::of::<Idle>());
+    let (mut app, _network) = start(nsh_testing::windowed_root::<Idle>());
     app.wait_for(EMPTY).unwrap();
     assert!(reads(&app, "pnl", NONE));
     assert!(reads(&app, "volume", "$0.00"));

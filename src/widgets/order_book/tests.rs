@@ -5,7 +5,6 @@ use std::{
 
 use nsh_core::{
     MountItem,
-    element::Root,
     platform::{Idiom, Os},
     prelude::*,
     shader::ShaderLayer,
@@ -1515,7 +1514,7 @@ fn an_order_book_shows_its_book_and_follows_its_settings() {
                 .collect()
         }
     };
-    let mut config = EngineConfig::new(Root::of::<Harness>());
+    let mut config = EngineConfig::new(nsh_testing::windowed_root::<Harness>());
     config.viewport = Size::new(px(1280.0), px(800.0));
     config.storage = Some(MemoryStorage::new([]));
     config.network = Some(network.clone());
@@ -1660,7 +1659,7 @@ fn a_book_ferris_cannot_convert_is_asked_for_natively_and_says_so() {
         format!("POST {FERRIS}/v1/fetchOrderBook"),
         StubRoute::Handler(Arc::new(stub_unconverted)),
     )]));
-    let mut config = EngineConfig::new(Root::of::<Harness>());
+    let mut config = EngineConfig::new(nsh_testing::windowed_root::<Harness>());
     config.viewport = Size::new(px(1280.0), px(800.0));
     config.storage = Some(MemoryStorage::new([]));
     config.network = Some(network.clone());

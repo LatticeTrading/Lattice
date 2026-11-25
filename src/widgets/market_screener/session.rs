@@ -2,7 +2,7 @@
 //! its settings ask for, and the table its view shows (the widget's data,
 //! described in the parent module).
 
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{cell::RefCell, collections::HashSet, rc::Rc, time::Duration};
 
 use nsh_core::{prelude::*, time::unix_ms};
 
@@ -14,8 +14,8 @@ use crate::{
     data::{
         SessionScope,
         ferris::{
-            Capabilities, Ferris, MarketStatsScope, Product, StatsFieldName, StatsSnapshot,
-            stats_scopes,
+            Capabilities, Ferris, MarketSelection, MarketStatsScope, Product, StatsFieldName,
+            StatsSnapshot, stats_scopes,
             universe::{self, FeedSnap, Universe},
         },
         net::{ApiError, QueryState, Watch},
@@ -26,7 +26,34 @@ use crate::{
 
 /// Every product the screener can show (`settings::PRODUCT_CHOICES`).
 /// Spot and options have their own metrics and get screeners of their own.
-const PRODUCTS: [Product; 2] = [Product::Perp, Product::Future];
+pub(super) const PRODUCTS: [Product; 2] = [Product::Perp, Product::Future];
+
+/// A market a watchlist shows: its exchange and the id the catalog issued
+/// it, which its statistics row carries too, and its product.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(super) struct WatchKey {
+    pub exchange: String,
+    pub market_id: String,
+    pub product: Product,
+}
+
+impl WatchKey {
+    /// `market`'s key, when it is one the screener's statistics cover: a
+    /// perpetual or future with a catalog id.
+    pub fn of(market: &MarketSelection) -> Option<Self> {
+        let product = market.kind.product();
+        let market_id = market
+            .market_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default();
+        (PRODUCTS.contains(&product) && !market_id.is_empty()).then(|| Self {
+            exchange: market.exchange.trim().to_ascii_lowercase(),
+            market_id: market_id.to_owned(),
+            product,
+        })
+    }
+}
 
 /// A scope the settings can choose: a partition the capabilities offer.
 #[derive(Clone, Debug, PartialEq)]
@@ -93,13 +120,43 @@ pub(super) struct Table {
     pub universe: Rc<Universe>,
     /// Indices into the universe's rows.
     pub order: Vec<usize>,
+    /// How many watched markets no row shows, search aside (a watchlist's;
+    /// a screener's is 0).
+    pub missing: usize,
 }
 
 impl Table {
-    fn project(universe: Rc<Universe>, search: &str, sort: Sort) -> Self {
+    /// The rows of `universe` that match `search` (and are `watched`, for a
+    /// watchlist), sorted by `sort`.
+    fn project(
+        universe: Rc<Universe>,
+        search: &str,
+        sort: Sort,
+        watched: Option<&[WatchKey]>,
+    ) -> Self {
         let query = search.trim().to_lowercase();
+        let wanted: Option<HashSet<(&str, &str)>> = watched.map(|watched| {
+            watched
+                .iter()
+                .map(|key| (key.exchange.as_str(), key.market_id.as_str()))
+                .collect()
+        });
+        // The watched markets some row shows (a market two of its exchange's
+        // scopes list shows twice, and is one market found).
+        let mut found = HashSet::new();
         let mut order: Vec<usize> = (0..universe.rows.len())
             .filter(|&index| {
+                if let Some(wanted) = &wanted {
+                    let row = &universe.rows[index];
+                    let key = (
+                        universe.feed(row).scope.exchange.as_str(),
+                        universe.market(row).market_id.as_str(),
+                    );
+                    if !wanted.contains(&key) {
+                        return false;
+                    }
+                    found.insert(key);
+                }
                 if query.is_empty() {
                     return true;
                 }
@@ -117,12 +174,28 @@ impl Table {
             })
             .collect();
         columns::sort_rows(&universe, &mut order, sort);
-        Self { universe, order }
+        let missing = wanted.map_or(0, |wanted| wanted.len().saturating_sub(found.len()));
+        Self {
+            universe,
+            order,
+            missing,
+        }
     }
 
     /// The universe row shown at `position`, if there is one.
     pub fn row(&self, position: usize) -> Option<&universe::Row> {
         self.universe.rows.get(*self.order.get(position)?)
+    }
+
+    /// The market shown at `position`, as a watchlist keeps it.
+    pub fn key(&self, position: usize) -> Option<WatchKey> {
+        let row = self.row(position)?;
+        let feed = self.universe.feed(row);
+        Some(WatchKey {
+            exchange: feed.scope.exchange.clone(),
+            market_id: self.universe.market(row).market_id.clone(),
+            product: feed.scope.partition.product,
+        })
     }
 }
 
@@ -146,6 +219,9 @@ pub(crate) struct Screener {
     pub(super) sort: Signal<Option<Sort>>,
     /// What the view shows, updated while the widget is visible.
     pub(super) table: Signal<Shared<Table>>,
+    /// A watchlist's markets, which alone it polls and shows; `None` for a
+    /// screener, which shows every market of its scope and products.
+    pub(super) watched: Option<Memo<Vec<WatchKey>>>,
 }
 
 impl Screener {
@@ -153,6 +229,7 @@ impl Screener {
         scope: SessionScope,
         ferris: Ferris,
         settings: Signal<ScreenerSettings>,
+        watched: Option<Memo<Vec<WatchKey>>>,
     ) -> Self {
         let discovery = ferris.watch_capabilities();
         let watches: Watches = Rc::default();
@@ -163,13 +240,14 @@ impl Screener {
         let table = signal(Shared::new(Table {
             universe: Rc::new(Universe::empty()),
             order: Vec::new(),
+            missing: 0,
         }));
 
         follow_scopes(
             scope,
             ferris,
             discovery.state(),
-            settings,
+            demand(settings, watched),
             watches.clone(),
             feeds,
             offered,
@@ -226,7 +304,11 @@ impl Screener {
                 let sort = sort
                     .get()
                     .unwrap_or_else(|| products.with(|p| default_sort(p)));
-                let projected = search.with(|search| Table::project(universe.0, search, sort));
+                let projected = search.with(|search| match watched {
+                    Some(watched) => watched
+                        .with(|watched| Table::project(universe.0, search, sort, Some(watched))),
+                    None => Table::project(universe.0, search, sort, None),
+                });
                 table.set(Shared::new(projected));
             });
         });
@@ -240,6 +322,7 @@ impl Screener {
             search,
             sort,
             table,
+            watched,
         }
     }
 
@@ -303,9 +386,38 @@ impl Screener {
     }
 }
 
-/// What the settings ask to poll: the products shown, and the one scope
-/// shown (`None`: every exchange).
-type Demand = (Vec<Product>, Option<String>);
+/// What the settings ask to poll: the products shown, the one scope shown
+/// (`None`: every exchange), and the exchanges polled (`None`: every one;
+/// a watchlist's are those of its markets).
+type Demand = (Vec<Product>, Option<String>, Option<Vec<String>>);
+
+/// What `settings` ask to poll, or for a watchlist what its `watched`
+/// markets do: every scope of their exchanges and products.
+fn demand(
+    settings: Signal<ScreenerSettings>,
+    watched: Option<Memo<Vec<WatchKey>>>,
+) -> Memo<Demand> {
+    computed(move || match watched {
+        Some(watched) => watched.with(|watched| {
+            let products = PRODUCTS
+                .into_iter()
+                .filter(|product| watched.iter().any(|key| key.product == *product))
+                .collect();
+            let mut exchanges: Vec<String> =
+                watched.iter().map(|key| key.exchange.clone()).collect();
+            exchanges.sort();
+            exchanges.dedup();
+            (products, None, Some(exchanges))
+        }),
+        None => settings.with(|settings| {
+            (
+                settings.products(),
+                settings.scope().map(str::to_owned),
+                None,
+            )
+        }),
+    })
+}
 
 /// Keeps one statistics watch per scope the capabilities offer that the
 /// settings show, and `feeds` listing them in order: a new scope is
@@ -318,14 +430,11 @@ fn follow_scopes(
     session: SessionScope,
     ferris: Ferris,
     discovery: ReadSignal<QueryState<Capabilities>>,
-    settings: Signal<ScreenerSettings>,
+    demand: Memo<Demand>,
     watches: Watches,
     feeds: Signal<Vec<Feed>>,
     offered: Signal<Option<Rc<Vec<ScopeChoice>>>>,
 ) {
-    let demand: Memo<Demand> = computed(move || {
-        settings.with(|settings| (settings.products(), settings.scope().map(str::to_owned)))
-    });
     let followed: RefCell<Option<(Rc<Capabilities>, Demand)>> = RefCell::new(None);
     effect(move || {
         let Some(capabilities) = discovery.with(|state| state.data.clone()) else {
@@ -346,7 +455,7 @@ fn follow_scopes(
             return;
         }
         *followed.borrow_mut() = Some((capabilities.clone(), wanted.clone()));
-        let (products, chosen) = wanted;
+        let (products, chosen, exchanges) = wanted;
         untracked(|| {
             let scopes = stats_scopes(&capabilities, &PRODUCTS, &StatsFieldName::ALL);
             if !same_document {
@@ -367,6 +476,9 @@ fn follow_scopes(
             let shown = scopes.into_iter().filter(|scope| {
                 products.contains(&scope.partition.product)
                     && chosen.as_ref().is_none_or(|id| *id == scope.partition.id)
+                    && exchanges
+                        .as_ref()
+                        .is_none_or(|exchanges| exchanges.contains(&scope.exchange))
             });
             // A kept scope keeps its watch unless its cadence changed (the
             // new watch is made before the old one goes, so the value stays

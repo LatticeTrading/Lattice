@@ -221,7 +221,7 @@ fn address_row(account: &Account) -> View {
                 .border_l_1()
                 .border_color(theme::BORDER)
                 .label("Copy the account's address")
-                .on_press(move || set_clipboard(address.clone())),
+                .on_press(move || drop(set_clipboard(address.clone()))),
         )
 }
 

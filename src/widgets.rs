@@ -44,6 +44,7 @@ registry::registry! {
     depth_chart::DepthChart,
     funding_rates::FundingRates,
     market_screener::MarketScreener,
+    market_screener::Watchlist,
     order_book::OrderBook,
     positions::Positions,
     premium_arb_chart::PremiumArbChart,

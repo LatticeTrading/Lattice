@@ -1,6 +1,6 @@
 # Lattice
 
-Native Rust trading terminal built with **Native Shell (NSH) 0.6.1**, a port
+Native Rust trading terminal built with **Native Shell (NSH) 0.7.0**, a port
 of the lattice-pro web app. Lattice has one shared Rust UI for native desktop
 and WebAssembly web targets.
 
@@ -53,8 +53,9 @@ and the desktop build opens a page it serves on this machine in the user's
 browser, which carries its requests to the wallet there. The wallet's key is
 never in the app. The connected account can trade: the Trade Panel places
 and cancels orders for it (limit and market, each with a take profit and a
-stop loss if wanted, on Hyperliquid's perpetuals first), sets its leverage
-and margin mode per market, and places exits for a position it holds; the
+stop loss if wanted, on Hyperliquid's perpetuals first and on Lighter's),
+sets its leverage and margin mode per market, and places exits for a
+position it holds; the
 Positions reduces and closes the account's own positions at the market's
 price, from their rows, and says the take profit and stop loss that wait on
 each. Every position it shows, anybody's, is valued at its market's live
@@ -71,7 +72,13 @@ trading stays enabled between runs: connecting the account again is enough
 while the exchange still lists the agent, and disabling trading forgets it.
 The agent can place and cancel orders and cannot withdraw; its key is saved
 in the app's storage in the clear, as Hyperliquid's own site keeps its
-agent. An account that trades is followed live over the exchange's
+agent. On Lighter the key is an API key of Lighter's own kind, registered
+for the wallet's main account at an index nothing else holds and kept the
+same way; Lighter's signatures (Schnorr over ECgFp5 with Poseidon2, which
+Lighter publishes in Go alone) are made in Rust in the app, checked against
+Lighter's own signer. Such a key trades, and can have funds paid out only
+to the wallet that owns the account. An account that trades is followed
+live over the exchange's
 WebSocket: its open orders, margin and fills arrive as the market changes
 them, into the same shared requests every widget watching the account
 reads, with polling as the fallback. No exchange SDK is linked: each
@@ -156,7 +163,7 @@ visual and native-caption acceptance remains a user-run check.
 - `src/storage.rs`: versioned NSH storage-service persistence.
 - `src/theme.rs`, `src/theme/roles.rs`: the theme engine and its color roles.
 - `src/assets.rs`, `assets/`: compile-time fonts and app assets (icons, exchange logos).
-- `src/data.rs`, `src/data/`: the data layer (`net/`: shared HTTP, WebSocket, polling, live-feed and rate-limit plumbing; `ferris/`: the Ferris integration, with per-exchange rules in `ferris/venues.rs` and the DefiLlama data it proxies in `ferris/defillama.rs`; `hyperliquid/`: Hyperliquid's own API, asked by the app itself within its rate limit; `lighter/`: Lighter's, asked the same way; `txflow/`: TxFlow's, the same again; `portfolio/`: what an account holds and has made, in one shape whatever its exchange, the trait an exchange's integration implements to report accounts, and several accounts' reports combined into one; `trading.rs`, `trading/`: orders for the connected wallet's account in one shape whatever the exchange, and the trait an exchange's integration implements to be traded on (Hyperliquid's is `hyperliquid/trading.rs`, with `exchange.rs`, `signing.rs`, `agent.rs` and `pack.rs`, and `stream.rs` with `live.rs` for its WebSocket); `session.rs`: per-widget data sessions; `markets.rs`: the app's one directory of every market, which the search and the market picker read; `wallet.rs`, `wallet/`: the user's browser wallet through alloy, `web.rs` for the page's own wallets and `bridge.rs` with `bridge.html` for the desktop's page in the user's browser).
+- `src/data.rs`, `src/data/`: the data layer (`net/`: shared HTTP, WebSocket, polling, live-feed and rate-limit plumbing; `ferris/`: the Ferris integration, with per-exchange rules in `ferris/venues.rs` and the DefiLlama data it proxies in `ferris/defillama.rs`; `hyperliquid/`: Hyperliquid's own API, asked by the app itself within its rate limit; `lighter/`: Lighter's, asked the same way, with `crypto/` for its signature scheme, `tx.rs` and `key.rs` for the transactions an API key of the app's signs, `trading.rs` for it as a trading venue, and `stream.rs` with `live.rs` and `pricing.rs` for its WebSocket; `txflow/`: TxFlow's, the same again; `portfolio/`: what an account holds and has made, in one shape whatever its exchange, the trait an exchange's integration implements to report accounts, and several accounts' reports combined into one; `trading.rs`, `trading/`: orders for the connected wallet's account in one shape whatever the exchange, and the trait an exchange's integration implements to be traded on (Hyperliquid's is `hyperliquid/trading.rs`, with `exchange.rs`, `signing.rs`, `agent.rs` and `pack.rs`, and `stream.rs` with `live.rs` for its WebSocket); `session.rs`: per-widget data sessions; `markets.rs`: the app's one directory of every market, which the search and the market picker read; `wallet.rs`, `wallet/`: the user's browser wallet through alloy, `web.rs` for the page's own wallets and `bridge.rs` with `bridge.html` for the desktop's page in the user's browser).
 - `src/widgets.rs`, `src/widgets/`: the widget registry, the widget picker, shared widget parts (`common/`: market picker, exchange logos, number field, double clicks, in `common/books/` what the widgets that draw order books share, in `common/plot/` the GPU plot the charts share, in `common/accounts/` what the widgets that show an account share, and in `common/access.rs` the rows that connect a wallet and enable an exchange for it), and one folder per widget (`account_performance/`, `account_summary/`, `chart/`, `defi_protocols/`, `depth_chart/`, `funding_rates/`, `market_screener/`, `order_book/`, `positions/`, `premium_arb_chart/`, `price_delta_monitor/`, `protocol_tvl/`, `trade_history/`, `trade_panel/`, `trade_stream/`).
 - `src/link.rs`: color linking (the link colors, and the Everything Bar's).
 - `src/exchanges.rs`, `src/format.rs`: exchange names and logos; number formatting.

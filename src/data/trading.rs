@@ -17,7 +17,8 @@
 //! Whose orders: the account of the connected wallet
 //! ([`Wallet`](super::Wallet)), and no other. Each venue is enabled for it
 //! on its own ([`Trading::enable`]), which is where the wallet is asked to
-//! sign. What a venue holds afterwards (Hyperliquid: an agent's key) it
+//! sign. What a venue holds afterwards (Hyperliquid: an agent's key;
+//! Lighter: an API key of its own kind) it
 //! also keeps on this device, so trading stays enabled between runs: when
 //! an account connects, each venue that kept something for it takes it up
 //! again once the exchange says it still holds ([`Access::Resuming`]), and
@@ -35,9 +36,9 @@
 //! [`AccountSource`](super::portfolio::AccountSource) to report accounts,
 //! and [`DataServices`](super::DataServices) lists it among trading's
 //! venues. No widget changes: the venue shows up in their Exchange select.
-//! Hyperliquid's ([`super::hyperliquid`]) is the first. [`paper`] (tests
-//! only) is a second that is no exchange, with only what a venue must
-//! have: the widgets that trade are run over it too, so that nothing above
+//! Hyperliquid's ([`super::hyperliquid`]) is the first and Lighter's
+//! ([`super::lighter`]) the second. [`paper`] (tests only) is another
+//! that is no exchange, with only what a venue must have: the widgets that trade are run over it too, so that nothing above
 //! a venue comes to count on what one exchange's integration does.
 
 mod model;

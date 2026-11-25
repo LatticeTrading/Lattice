@@ -196,7 +196,7 @@ fn try_send(
 }
 
 fn start() -> Headless {
-    start_root(Root::of::<Harness>())
+    start_root(nsh_testing::windowed_root::<Harness>())
 }
 
 fn start_root(root: Root) -> Headless {
@@ -341,7 +341,7 @@ fn a_reloaded_page_takes_over_and_is_asked_again() {
 
 #[test]
 fn a_closed_page_ends_the_session() {
-    let mut app = start_root(Root::of::<Impatient>());
+    let mut app = start_root(nsh_testing::windowed_root::<Impatient>());
     let page = Page::open(&mut app);
     // The page says hello and never asks what there is to do: its tab was
     // closed.
@@ -365,7 +365,7 @@ fn a_closed_page_ends_the_session() {
 
 #[test]
 fn a_page_waiting_to_be_asked_is_not_a_closed_one() {
-    let mut app = start_root(Root::of::<Impatient>());
+    let mut app = start_root(nsh_testing::windowed_root::<Impatient>());
     let page = Page::open(&mut app);
     hello(&page, "p1");
     assert_eq!(page.next("p1").1[0]["method"], "eth_requestAccounts");

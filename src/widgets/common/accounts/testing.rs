@@ -116,6 +116,16 @@ fn silent(frame: &str) -> Vec<String> {
     }
 }
 
+/// What the stubbed Lighter's WebSocket answers a frame with: a pong to a
+/// ping, and nothing to anything else.
+fn silent_lighter(frame: &str) -> Vec<String> {
+    if frame.contains(r#""ping""#) {
+        vec![r#"{"type":"pong"}"#.to_owned()]
+    } else {
+        Vec::new()
+    }
+}
+
 /// [`workspace_of`] with `weight_per_minute` as all the app may ask of
 /// Hyperliquid a minute.
 pub(crate) fn workspace_within(
@@ -140,6 +150,8 @@ pub(crate) fn workspace_within(
         },
         lighter: LighterConfig {
             http_base: LIGHTER.to_owned(),
+            // Nor Lighter's: its socket answers a ping the same way.
+            transport: Some(ScriptedSocket::new(silent_lighter).transport()),
             ..LighterConfig::production()
         },
         txflow: TxFlowConfig {

@@ -20,17 +20,22 @@
 //!
 //! The view ([`table`]) binds to the session's signals and the tab's
 //! settings; the settings panel ([`panel`]) opens from the pane's gear.
+//!
+//! The Watchlist ([`watchlist`]) is the same table over the markets the
+//! user adds to it, so it lives here and shares all of the above.
 
 mod columns;
 mod panel;
 mod session;
 mod settings;
 mod table;
+mod watchlist;
 
 use std::rc::Rc;
 
 use nsh_core::prelude::*;
 
+pub(crate) use self::watchlist::Watchlist;
 use self::{session::Screener, settings::ScreenerSettings};
 use crate::{
     data::{DataServices, SessionScope},
@@ -55,13 +60,13 @@ impl Widget for MarketScreener {
         services: &DataServices,
         settings: Signal<ScreenerSettings>,
     ) -> Screener {
-        Screener::new(scope, services.ferris.clone(), settings)
+        Screener::new(scope, services.ferris.clone(), settings, None)
     }
 
     /// Its rows, as its tab's settings say.
     fn view(screener: &Rc<Screener>, tab: &TabContext<ScreenerSettings>) -> View {
         forget_unusable_scope(screener, tab);
-        table::table_view(screener.clone(), tab.clone())
+        table::table_view(screener.clone(), tab.clone(), None)
     }
 
     fn panel(screener: &Rc<Screener>, tab: &TabContext<ScreenerSettings>) -> Option<Overlay> {

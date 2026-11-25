@@ -59,7 +59,7 @@ fn start_with(storage: Arc<MemoryStorage>) -> Headless {
     let mut app = Headless::start(EngineConfig {
         viewport: Size::new(px(1280.0), px(800.0)),
         storage: Some(storage),
-        ..EngineConfig::new(Root::of::<Harness>())
+        ..EngineConfig::new(nsh_testing::windowed_root::<Harness>())
     })
     .unwrap();
     app.wait_for("Pages 2 active 2").unwrap();
@@ -73,7 +73,7 @@ fn open(app: &mut Headless) {
 
 /// The bar on its own, on a desktop of `os`.
 fn start_on(os: Os) -> Headless {
-    let mut config = EngineConfig::new(Root::of::<Harness>());
+    let mut config = EngineConfig::new(nsh_testing::windowed_root::<Harness>());
     config.viewport = Size::new(px(1280.0), px(800.0));
     config.storage = Some(MemoryStorage::new([]));
     config.environment.os = os;
@@ -395,7 +395,7 @@ fn stub_ferris(request: HttpRequest, reply: StubReply) {
 }
 
 fn start_shell() -> Headless {
-    start_root(Root::of::<Shell>())
+    start_root(nsh_testing::windowed_root::<Shell>())
 }
 
 fn start_root(root: Root) -> Headless {
@@ -465,7 +465,7 @@ fn the_connection_indicator_opens_nothing_without_data_services() {
 
 #[test]
 fn the_connection_panel_lists_what_the_widgets_stream_and_poll() {
-    let mut app = start_root(Root::of::<TwoCharts>());
+    let mut app = start_root(nsh_testing::windowed_root::<TwoCharts>());
 
     // The indicator has the sources' health: the charts ask for a stream,
     // and nothing listens where the socket connects.
@@ -782,7 +782,7 @@ fn wallet_bar(reach: Reach, names: &[&str]) -> View {
         ))
         .child(acts(
             "what was asked",
-            Box::new(|wallets| set_clipboard(wallets.asked().join(" "))),
+            Box::new(|wallets| drop(set_clipboard(wallets.asked().join(" ")))),
         ))
         .child(says(
             "the wallet changes chain",
@@ -976,7 +976,7 @@ fn placed(app: &Headless, id: &str) -> Bounds<Points> {
 #[test]
 fn the_wallet_stands_between_the_wordmark_and_the_layout_button() {
     for os in [Os::Windows, Os::Web] {
-        let app = start_wallet(Root::of::<OneWallet>(), os);
+        let app = start_wallet(nsh_testing::windowed_root::<OneWallet>(), os);
         let [wordmark, wallet, layout] =
             ["wordmark", "wallet", "layout-button"].map(|id| placed(&app, id));
         let right = |cell: Bounds<Points>| cell.origin.x.0 + cell.size.width.0;
@@ -997,13 +997,13 @@ fn the_wallet_stands_between_the_wordmark_and_the_layout_button() {
         assert!(app.shows("Connect"));
     }
     // A wide window has room to say it in full.
-    let app = start_wallet_in(Root::of::<OneWallet>(), Os::Web, 1440.0);
+    let app = start_wallet_in(nsh_testing::windowed_root::<OneWallet>(), Os::Web, 1440.0);
     assert!(app.shows("Connect Wallet"));
 }
 
 #[test]
 fn the_one_wallet_there_is_connects_and_enables_trading() {
-    let (mut app, network) = start_trading(Root::of::<OneWallet>(), Os::Web);
+    let (mut app, network) = start_trading(nsh_testing::windowed_root::<OneWallet>(), Os::Web);
     connect_wallet(&mut app);
     // The bar's cell is the account now, and the panel says what is
     // connected.
@@ -1121,7 +1121,7 @@ fn the_one_wallet_there_is_connects_and_enables_trading() {
 
 #[test]
 fn what_the_user_turns_down_is_said_and_can_be_tried_again() {
-    let (mut app, network) = start_trading(Root::of::<OneWallet>(), Os::Web);
+    let (mut app, network) = start_trading(nsh_testing::windowed_root::<OneWallet>(), Os::Web);
     app.press("the user rejects").unwrap();
     open_wallet(&mut app);
     app.press("Connect wallet").unwrap();
@@ -1158,7 +1158,7 @@ fn what_the_user_turns_down_is_said_and_can_be_tried_again() {
 
 #[test]
 fn the_wallets_of_the_browser_are_chosen_from_on_desktop() {
-    let mut app = start_wallet(Root::of::<BrowserWallets>(), Os::Windows);
+    let mut app = start_wallet(nsh_testing::windowed_root::<BrowserWallets>(), Os::Windows);
     open_wallet(&mut app);
     assert!(app.shows(
         "A page opens in your browser, where your wallet is. Keep it open while connected."
@@ -1192,7 +1192,7 @@ fn the_wallets_of_the_browser_are_chosen_from_on_desktop() {
 
 #[test]
 fn the_wallet_keeps_the_connection_current() {
-    let mut app = start_wallet(Root::of::<OneWallet>(), Os::Web);
+    let mut app = start_wallet(nsh_testing::windowed_root::<OneWallet>(), Os::Web);
     connect_wallet(&mut app);
     app.press(ENABLE).unwrap();
     app.wait_for("Trading on").unwrap();
@@ -1219,7 +1219,7 @@ fn the_wallet_keeps_the_connection_current() {
 
 #[test]
 fn a_browser_without_a_wallet_says_so() {
-    let mut app = start_wallet(Root::of::<NoWallet>(), Os::Web);
+    let mut app = start_wallet(nsh_testing::windowed_root::<NoWallet>(), Os::Web);
     open_wallet(&mut app);
     app.press("Connect wallet").unwrap();
     app.wait_until("the missing wallet being said", WAIT, |screen| {

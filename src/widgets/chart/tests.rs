@@ -6,14 +6,14 @@ use std::{
 
 use nsh_core::{
     MountItem, NodeId,
-    element::Root,
     platform::{Idiom, Os},
     prelude::*,
     time::unix_ms,
 };
 use nsh_engine::{EngineConfig, HttpBody, HttpRequest};
 use nsh_testing::{
-    Headless, MemoryStorage, Screen, StubNetwork, StubReply, StubResponse, StubRoute, WAIT,
+    DragOptions, Headless, MemoryStorage, Screen, StubNetwork, StubReply, StubResponse, StubRoute,
+    WAIT,
 };
 use serde_json::{Value, json};
 
@@ -222,7 +222,7 @@ fn a_chart_loads_its_candles_and_follows_the_pointer() {
                 .count()
         }
     };
-    let mut config = EngineConfig::new(Root::of::<Harness>());
+    let mut config = EngineConfig::new(nsh_testing::windowed_root::<Harness>());
     config.viewport = Size::new(px(1280.0), px(800.0));
     config.storage = Some(MemoryStorage::new([]));
     config.network = Some(network.clone());
@@ -292,8 +292,12 @@ fn a_chart_loads_its_candles_and_follows_the_pointer() {
     // A drag pans: the bar under the pointer stays under it, and both
     // tiles are drawn again as it goes.
     let drawn = layers.lock().unwrap().len();
-    app.drag("id:chart-plot", Point::new(px(200.0), px(0.0)))
-        .unwrap();
+    app.drag(
+        "id:chart-plot",
+        Point::new(px(200.0), px(0.0)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait(pause).unwrap();
     assert_eq!(texts_starting(&app, "T "), hovered);
     assert!(layers.lock().unwrap().len() > drawn);
@@ -301,8 +305,12 @@ fn a_chart_loads_its_candles_and_follows_the_pointer() {
 
     // A drag on the time axis zooms: 150 points left shows e^(-150/220)
     // of the slots.
-    app.drag("id:chart-time-axis", Point::new(px(-150.0), px(0.0)))
-        .unwrap();
+    app.drag(
+        "id:chart-time-axis",
+        Point::new(px(-150.0), px(0.0)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait(pause).unwrap();
     let per = newest(1).unwrap();
     assert!(
@@ -313,27 +321,43 @@ fn a_chart_loads_its_candles_and_follows_the_pointer() {
 
     // A drag on the price axis scales the prices about their middle (80
     // points down: e^0.5 of the span), which frees them...
-    app.drag("id:chart-price-axis", Point::new(px(0.0), px(80.0)))
-        .unwrap();
+    app.drag(
+        "id:chart-price-axis",
+        Point::new(px(0.0), px(80.0)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait(pause).unwrap();
     assert!(app.shows("1146.08") && app.shows("952.918"));
     // ...so a drag on the plot now moves them too...
-    app.drag("id:chart-plot", Point::new(px(0.0), px(40.0)))
-        .unwrap();
+    app.drag(
+        "id:chart-plot",
+        Point::new(px(0.0), px(40.0)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait(pause).unwrap();
     assert!(!app.shows("1146.08"));
     // ...until a double click on an axis fits them again.
     for _ in 0..2 {
-        app.drag("id:chart-price-axis", Point::new(px(0.0), px(0.0)))
-            .unwrap();
+        app.drag(
+            "id:chart-price-axis",
+            Point::new(px(0.0), px(0.0)),
+            DragOptions::default(),
+        )
+        .unwrap();
     }
     app.wait(pause).unwrap();
     assert!(app.shows("1108.08") && app.shows("990.920"));
 
     // Zoomed out past the oldest bar, the pages before it are asked for
     // while the pointer moves, and no more once it rests.
-    app.drag("id:chart-time-axis", Point::new(px(700.0), px(0.0)))
-        .unwrap();
+    app.drag(
+        "id:chart-time-axis",
+        Point::new(px(700.0), px(0.0)),
+        DragOptions::default(),
+    )
+    .unwrap();
     app.wait_until("a page of older candles", WAIT, |_| asked() > 3)
         .unwrap();
     app.wait_for_gone("Loading older candles...", WAIT).unwrap();
@@ -924,7 +948,7 @@ fn drawings_are_made_picked_moved_and_removed_on_the_plot() {
         StubRoute::Handler(Arc::new(stub_candles)),
     )]));
     let storage = MemoryStorage::new([]);
-    let mut config = EngineConfig::new(Root::of::<Harness>());
+    let mut config = EngineConfig::new(nsh_testing::windowed_root::<Harness>());
     config.viewport = Size::new(px(1280.0), px(800.0));
     config.storage = Some(storage.clone());
     config.network = Some(network);
@@ -987,7 +1011,8 @@ fn drawings_are_made_picked_moved_and_removed_on_the_plot() {
     // middle) draws one instead of panning: it is saved on the market
     // charted, and picked, a handle on each of its points.
     app.press("Trend line").unwrap();
-    app.drag("id:chart-plot", by(120.0, -60.0)).unwrap();
+    app.drag("id:chart-plot", by(120.0, -60.0), DragOptions::default())
+        .unwrap();
     app.wait_until("the trend line", WAIT, |_| drawings().len() == 1)
         .unwrap();
     app.wait(pause).unwrap();
@@ -1004,14 +1029,16 @@ fn drawings_are_made_picked_moved_and_removed_on_the_plot() {
     app.press_key("Escape").unwrap();
     app.wait_until("no handles", WAIT, |_| painted().boxes == 0)
         .unwrap();
-    app.drag("id:chart-plot", by(0.0, 0.0)).unwrap();
+    app.drag("id:chart-plot", by(0.0, 0.0), DragOptions::default())
+        .unwrap();
     app.wait_until("its handles", WAIT, |_| painted().boxes == 2)
         .unwrap();
     assert_eq!(drawings(), made);
 
     // A drag from its first point moves that point with the pointer and
     // leaves the other where it was.
-    app.drag("id:chart-plot", by(40.0, 30.0)).unwrap();
+    app.drag("id:chart-plot", by(40.0, 30.0), DragOptions::default())
+        .unwrap();
     app.wait_until("the moved point", WAIT, |_| drawings() != made)
         .unwrap();
     app.wait(pause).unwrap();
@@ -1033,7 +1060,8 @@ fn drawings_are_made_picked_moved_and_removed_on_the_plot() {
     // the middle and 50 under it: older, and lower), is not saved, and
     // goes with the next press.
     app.press("Measure").unwrap();
-    app.drag("id:chart-plot", by(-80.0, 50.0)).unwrap();
+    app.drag("id:chart-plot", by(-80.0, 50.0), DragOptions::default())
+        .unwrap();
     app.wait_until("the measurement", WAIT, |_| painted().texts.len() == 2)
         .unwrap();
     let said = painted().texts;
@@ -1043,21 +1071,24 @@ fn drawings_are_made_picked_moved_and_removed_on_the_plot() {
     );
     assert!(said[1].starts_with("34 bars, 34m"), "{said:?}");
     assert!(drawings().is_empty());
-    app.drag("id:chart-plot", by(0.0, 0.0)).unwrap();
+    app.drag("id:chart-plot", by(0.0, 0.0), DragOptions::default())
+        .unwrap();
     app.wait_until("no measurement", WAIT, |_| painted().texts.is_empty())
         .unwrap();
 
     // Escape puts a tool away: the drag after it draws nothing.
     app.press("Trend line").unwrap();
     app.press_key("Escape").unwrap();
-    app.drag("id:chart-plot", by(60.0, 0.0)).unwrap();
+    app.drag("id:chart-plot", by(60.0, 0.0), DragOptions::default())
+        .unwrap();
     app.wait(pause).unwrap();
     assert!(drawings().is_empty() && painted().lines.is_empty());
 
     // A horizontal line by one click: it is across the plot at the price
     // pressed, which it says, with its one handle.
     app.press("Horizontal line").unwrap();
-    app.drag("id:chart-plot", by(0.0, 0.0)).unwrap();
+    app.drag("id:chart-plot", by(0.0, 0.0), DragOptions::default())
+        .unwrap();
     app.wait_until("the horizontal line", WAIT, |_| drawings().len() == 1)
         .unwrap();
     assert_eq!(drawings()[0]["type"], "hline");
@@ -1075,7 +1106,8 @@ fn drawings_are_made_picked_moved_and_removed_on_the_plot() {
     // A rectangle by a drag, corner to corner: its tint, its four edges
     // and a handle on each of its points.
     app.press("Rectangle").unwrap();
-    app.drag("id:chart-plot", by(120.0, -60.0)).unwrap();
+    app.drag("id:chart-plot", by(120.0, -60.0), DragOptions::default())
+        .unwrap();
     app.wait_until("the rectangle", WAIT, |_| drawings().len() == 1)
         .unwrap();
     assert_eq!(drawings()[0]["type"], "rect");
@@ -1095,10 +1127,12 @@ fn drawings_are_made_picked_moved_and_removed_on_the_plot() {
     // where the first began). Its dashed middle, its two lines and a
     // handle on each of its three points.
     app.press("Parallel channel").unwrap();
-    app.drag("id:chart-plot", by(120.0, -60.0)).unwrap();
+    app.drag("id:chart-plot", by(120.0, -60.0), DragOptions::default())
+        .unwrap();
     app.wait(pause).unwrap();
     assert!(drawings().is_empty());
-    app.drag("id:chart-plot", by(0.0, 0.0)).unwrap();
+    app.drag("id:chart-plot", by(0.0, 0.0), DragOptions::default())
+        .unwrap();
     app.wait_until("the channel", WAIT, |_| drawings().len() == 1)
         .unwrap();
     assert_eq!(drawings()[0]["type"], "channel");
@@ -1117,10 +1151,12 @@ fn drawings_are_made_picked_moved_and_removed_on_the_plot() {
     // price, where it risks nothing yet. The reward's zone, its three
     // lines and handles, and what the target, the stop and the entry say.
     app.press("Long/short position").unwrap();
-    app.drag("id:chart-plot", by(120.0, -60.0)).unwrap();
+    app.drag("id:chart-plot", by(120.0, -60.0), DragOptions::default())
+        .unwrap();
     app.wait(pause).unwrap();
     assert!(drawings().is_empty());
-    app.drag("id:chart-plot", by(0.0, 0.0)).unwrap();
+    app.drag("id:chart-plot", by(0.0, 0.0), DragOptions::default())
+        .unwrap();
     app.wait_until("the position", WAIT, |_| drawings().len() == 1)
         .unwrap();
     assert_eq!(drawings()[0]["type"], "position");
@@ -1146,10 +1182,12 @@ fn drawings_are_made_picked_moved_and_removed_on_the_plot() {
     // A retracement by two presses: a click places its first point, and
     // the next press, wherever it is let go, its second.
     app.press("Fib retracement").unwrap();
-    app.drag("id:chart-plot", by(0.0, 0.0)).unwrap();
+    app.drag("id:chart-plot", by(0.0, 0.0), DragOptions::default())
+        .unwrap();
     app.wait(pause).unwrap();
     assert!(drawings().is_empty());
-    app.drag("id:chart-plot", by(100.0, 80.0)).unwrap();
+    app.drag("id:chart-plot", by(100.0, 80.0), DragOptions::default())
+        .unwrap();
     app.wait_until("the retracement", WAIT, |_| drawings().len() == 1)
         .unwrap();
     app.wait(pause).unwrap();
@@ -1683,7 +1721,7 @@ fn indicators_are_added_hidden_set_and_removed_on_the_plot() {
         StubRoute::Handler(Arc::new(stub_candles)),
     )]));
     let storage = MemoryStorage::new([]);
-    let mut config = EngineConfig::new(Root::of::<Harness>());
+    let mut config = EngineConfig::new(nsh_testing::windowed_root::<Harness>());
     config.viewport = Size::new(px(1280.0), px(800.0));
     config.storage = Some(storage.clone());
     config.network = Some(network);
@@ -1923,7 +1961,7 @@ fn the_timeframe_badge_charts_the_interval_picked() {
         StubRoute::Handler(Arc::new(stub_candles)),
     )]));
     let storage = MemoryStorage::new([]);
-    let mut config = EngineConfig::new(Root::of::<Harness>());
+    let mut config = EngineConfig::new(nsh_testing::windowed_root::<Harness>());
     config.viewport = Size::new(px(1280.0), px(800.0));
     config.storage = Some(storage.clone());
     config.network = Some(network);
@@ -2130,7 +2168,7 @@ fn the_fast_mode_badge_makes_the_newest_candle_from_trades() {
         }
     };
     let storage = MemoryStorage::new([]);
-    let mut config = EngineConfig::new(Root::of::<Harness>());
+    let mut config = EngineConfig::new(nsh_testing::windowed_root::<Harness>());
     config.viewport = Size::new(px(1280.0), px(800.0));
     config.storage = Some(storage.clone());
     config.network = Some(network);

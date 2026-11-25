@@ -33,14 +33,16 @@ pub(super) struct Listing {
 impl Listing {
     /// What `directory` has for a picker of `only` (one exchange, or
     /// every one) that needs `requirement` and, when given, the
-    /// `statistics` field: markets whose exchange and product are denied
-    /// the requirement, or are not served the field, are left out, and so
+    /// `statistics` field, and of `products` when given: markets whose
+    /// exchange and product are denied the requirement, are not served the
+    /// field, or are of another product, are left out, and so
     /// is an exchange with none of its products on offer (what it is
     /// loading or failed to load is not this picker's business).
     pub fn new(
         directory: &Directory,
         requirement: Requirement,
         statistics: Option<StatsFieldName>,
+        products: Option<&[Product]>,
         only: Option<&str>,
     ) -> Self {
         let mut listing = Self::default();
@@ -66,7 +68,8 @@ impl Listing {
                 (field, contract)
             });
             let offered = |product: Product| {
-                requirement.availability(document, id, product) != Availability::Unsupported
+                products.is_none_or(|products| products.contains(&product))
+                    && requirement.availability(document, id, product) != Availability::Unsupported
                     && served.as_ref().is_none_or(|(field, contract)| {
                         contract.as_ref().is_some_and(|contract| {
                             !contract.bulk_fields(id, product, &[*field]).is_empty()

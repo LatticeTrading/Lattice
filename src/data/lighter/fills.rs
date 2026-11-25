@@ -17,8 +17,12 @@
 //!
 //! A trade is told apart by its id with its account's index: an address's
 //! two accounts may be the two sides of one trade.
+//!
+//! The stream of an account's trades ([`super::live`]) writes them the
+//! same way, by market ([`streamed`]).
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::state::{figure, list};
 use crate::data::portfolio::{Fill, TradeSide};
@@ -118,6 +122,28 @@ impl TradesReply {
     }
 }
 
+/// The trades a frame of the stream names (its `trades`, by market) as
+/// `account`'s, the newest first. One that does not read is left out, not
+/// the rest with it; a frame that names none gives none.
+pub(super) fn streamed(frame: &Value, account: u64) -> Vec<Fill> {
+    let Some(by_market) = frame.get("trades").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let mut fills: Vec<Fill> = by_market
+        .values()
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter_map(|trade| {
+            Trade::deserialize(trade)
+                .map_err(|error| log::warn!("Lighter realtime: unreadable trade: {error}"))
+                .ok()
+        })
+        .filter_map(|trade| trade.fill(account))
+        .collect();
+    fills.sort_by(|a, b| b.time_ms.total_cmp(&a.time_ms));
+    fills
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -192,5 +218,47 @@ mod tests {
         let none: TradesReply =
             serde_json::from_value(json!({ "code": 200, "trades": null })).unwrap();
         assert!(none.fills(1).is_empty());
+    }
+
+    #[test]
+    fn the_streams_trades_read_by_market_the_newest_first() {
+        // As the live socket sent an account's on 2026-11-22, cut to what is
+        // read.
+        let frame = json!({
+            "channel": "account_all_trades:765951",
+            "trades": {
+                "0": [
+                    { "trade_id": 42_152_232_117_u64, "type": "trade", "market_id": 0,
+                      "market_symbol": "ETH", "size": "0.0012", "price": "1720.68",
+                      "usd_amount": "2.064816", "ask_account_id": 765_951,
+                      "bid_account_id": 766_485, "is_maker_ask": true,
+                      "timestamp": 1_795_341_542_199_u64, "maker_fee": 40 },
+                    { "trade_id": 7, "price": "not one" },
+                ],
+                "1": [
+                    { "trade_id": 42_152_504_248_u64, "market_id": 1, "market_symbol": "BTC",
+                      "size": "0.00287", "price": "61093.1", "usd_amount": "175.337197",
+                      "ask_account_id": 52_367, "bid_account_id": 765_951,
+                      "is_maker_ask": false, "timestamp": 1_795_341_608_548_u64,
+                      "maker_fee": 40 },
+                ],
+                "2": "not trades",
+            },
+            "type": "update/account_all_trades",
+        });
+        let fills = streamed(&frame, 765_951);
+        let read: Vec<(&str, TradeSide)> = fills
+            .iter()
+            .map(|fill| (fill.instrument.as_str(), fill.side))
+            .collect();
+        assert_eq!(read, [("BTC", TradeSide::Buy), ("ETH", TradeSide::Sell)]);
+        // Told apart as a request's are, so one is never listed twice.
+        assert_eq!(fills[0].id, "42152504248:765951");
+        assert_eq!(fills[1].taker, Some(false));
+        // An account's first frame may hold none, and another channel's has
+        // none to read.
+        let empty = json!({ "trades": {}, "type": "subscribed/account_all_trades" });
+        assert!(streamed(&empty, 765_951).is_empty());
+        assert!(streamed(&json!({ "type": "connected" }), 765_951).is_empty());
     }
 }

@@ -573,10 +573,19 @@ fn layout_manager(
         .on_press(
             move || match layout::export_code(&workspace.get_untracked()) {
                 Ok(code) => {
-                    set_clipboard(code.clone());
+                    let copied = set_clipboard(code.clone());
                     manager.code.set(code);
                     manager.pending.set(None);
-                    manager.report(false, "Layout code generated and copied.");
+                    manager.report(false, "Layout code generated.");
+                    // Since NSH 0.7 the clipboard says whether it took the
+                    // code; a refusal (another app holding it) is not a copy.
+                    spawn(async move {
+                        if copied.await == ClipboardWrite::Failed {
+                            manager.report(true, "Layout code generated; copy it from the field.");
+                        } else {
+                            manager.report(false, "Layout code generated and copied.");
+                        }
+                    });
                 }
                 Err(error) => manager.report(true, error),
             },

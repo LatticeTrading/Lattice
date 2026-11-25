@@ -129,12 +129,22 @@ impl Inner {
                 "User rejected the request.",
             ));
         }
+        let unreadable = |what: &str| Refusal::new(-32602, what);
+        let failed =
+            |error: alloy::signers::Error| Refusal::new(Refusal::INTERNAL, error.to_string());
+        // The key that signs: the account's, unless somebody else's does.
+        let key = || -> PrivateKeySigner {
+            if self.impostor.get() {
+                OTHER_KEY.parse().expect("the key is one")
+            } else {
+                self.key.clone()
+            }
+        };
         match call.method.as_str() {
             "eth_requestAccounts" | "eth_accounts" => Ok(json!([self.key.address()])),
             "eth_chainId" => Ok(json!(format!("{:#x}", self.chain_id.get()))),
             "eth_signTypedData_v4" => {
                 // As a wallet reads it: the account, then the data as text.
-                let unreadable = |what: &str| Refusal::new(-32602, what);
                 let data = call.params[1]
                     .as_str()
                     .ok_or_else(|| unreadable("the typed data is not text"))?;
@@ -143,14 +153,18 @@ impl Inner {
                 let hash = data
                     .eip712_signing_hash()
                     .map_err(|error| unreadable(&error.to_string()))?;
-                let key = if self.impostor.get() {
-                    OTHER_KEY.parse().expect("the key is one")
-                } else {
-                    self.key.clone()
-                };
-                let signature = key
-                    .sign_hash_sync(&hash)
-                    .map_err(|error| Refusal::new(Refusal::INTERNAL, error.to_string()))?;
+                let signature = key().sign_hash_sync(&hash).map_err(failed)?;
+                Ok(json!(hex::encode_prefixed(signature.as_bytes())))
+            }
+            "personal_sign" => {
+                // As a wallet reads it: the message in hexadecimal, then the
+                // account.
+                let message = call.params[0]
+                    .as_str()
+                    .ok_or_else(|| unreadable("the message is not text"))?;
+                let message =
+                    hex::decode(message).map_err(|error| unreadable(&error.to_string()))?;
+                let signature = key().sign_message_sync(&message).map_err(failed)?;
                 Ok(json!(hex::encode_prefixed(signature.as_bytes())))
             }
             _ => Err(Refusal::new(

@@ -1,6 +1,6 @@
 //! The address groups' manager, opened from an account widget's rows.
 
-use nsh_core::{element::Root, prelude::*};
+use nsh_core::prelude::*;
 use nsh_testing::{Headless, MemoryStorage, WAIT};
 use serde_json::{Value, json};
 
@@ -33,7 +33,7 @@ fn saved(storage: &MemoryStorage) -> Value {
 
 #[test]
 fn a_group_is_made_filled_and_given_to_a_widget_whole() {
-    let (mut app, storage) = start_storing(Root::of::<Unset>(), []);
+    let (mut app, storage) = start_storing(nsh_testing::windowed_root::<Unset>(), []);
     app.wait_for("id:positions-no-account").unwrap();
 
     // "Groups", beside Add, opens the manager: no group yet, none to use.
@@ -161,7 +161,7 @@ fn saved_groups_are_shown_renamed_and_removed_and_take_several_addresses_at_once
         { "name": "Funds", "addresses": [] },
     ] });
     let (mut app, storage) = start_storing(
-        Root::of::<Watching>(),
+        nsh_testing::windowed_root::<Watching>(),
         [(KEY.to_owned(), groups.to_string())],
     );
     app.wait_for("label:Change account: Hyperliquid 0x0123…4567")

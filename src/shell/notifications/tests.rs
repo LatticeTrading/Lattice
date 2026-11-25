@@ -9,7 +9,6 @@ use std::{
 };
 
 use nsh_core::{
-    element::Root,
     platform::{Idiom, Os},
     time::Clock as EngineClock,
 };
@@ -94,7 +93,7 @@ fn start() -> Headless {
 
 /// The board on a desktop, on a clock the test moves.
 fn start_with(storage: Arc<MemoryStorage>) -> Headless {
-    let mut config = EngineConfig::new(Root::of::<Board>());
+    let mut config = EngineConfig::new(nsh_testing::windowed_root::<Board>());
     config.viewport = Size::new(px(WINDOW.0), px(WINDOW.1));
     config.storage = Some(storage);
     config.clock = EngineClock::manual(SystemTime::now());
@@ -306,7 +305,7 @@ fn Desk() -> impl IntoElement {
 fn the_connected_account_s_trades_are_told_whatever_shows_them() {
     let Bench {
         mut app, exchange, ..
-    } = trade_bench::start_live(Root::of::<Desk>());
+    } = trade_bench::start_live(nsh_testing::windowed_root::<Desk>());
     app.wait_for("the wallet connects").unwrap();
     assert!(exchange.subscribed().is_empty());
 

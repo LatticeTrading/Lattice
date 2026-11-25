@@ -33,6 +33,13 @@
 //! An address's accounts are one report, added up as the portfolio adds up
 //! accounts ([`MarginAccount::combined`], [`Balances::combined`]).
 //!
+//! What trading reads of it besides: which of the accounts orders are placed
+//! for ([`AccountStates::trading`], the address's main one), and how that
+//! one is set to trade a market ([`AccountStates::setting`]), which its
+//! entry there says whether it holds any or not. And every entry names its
+//! market's index beside its symbol ([`AccountStates::markets`]), which is
+//! what a market's price is followed by.
+//!
 //! Figures come as decimal text, some of them empty: one that does not
 //! read is not reported.
 
@@ -93,6 +100,8 @@ struct AccountState {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct PositionState {
+    /// Its market's index.
+    market_id: Option<u64>,
     symbol: String,
     /// Below zero short, else long.
     sign: i64,
@@ -134,6 +143,26 @@ impl PositionState {
         self.margin_mode == 1
     }
 
+    /// How the account is set to trade the market: its leverage (the
+    /// market's initial margin fraction the other way round) and whose
+    /// margin backs a position there. None for an entry that names no
+    /// fraction.
+    fn setting(&self) -> Option<Leverage> {
+        let fraction = self
+            .initial_margin_fraction
+            .filter(|percent| *percent > 0.0)?
+            / 100.0;
+        Some(Leverage {
+            // To the hundredth: a third of the worth is 3x, not 3.0003x.
+            value: (100.0 / fraction).round() / 100.0,
+            mode: if self.isolated() {
+                MarginMode::Isolated
+            } else {
+                MarginMode::Cross
+            },
+        })
+    }
+
     /// The position it is; none for an entry with no size.
     fn position(&self) -> Option<Position> {
         let size = self.position.map(f64::abs).filter(|size| *size > 0.0)?;
@@ -142,11 +171,6 @@ impl PositionState {
             .initial_margin_fraction
             .filter(|percent| *percent > 0.0)
             .map(|percent| percent / 100.0);
-        let mode = if self.isolated() {
-            MarginMode::Isolated
-        } else {
-            MarginMode::Cross
-        };
         // The margin it was opened with: its market's fraction of what it
         // was worth then.
         let opened_with = self
@@ -178,11 +202,7 @@ impl PositionState {
                     .zip(fraction)
                     .map(|(value, fraction)| value * fraction)
             },
-            leverage: fraction.map(|fraction| Leverage {
-                // To the hundredth: a third of the worth is 3x, not 3.0003x.
-                value: (100.0 / fraction).round() / 100.0,
-                mode,
-            }),
+            leverage: self.setting(),
         })
     }
 }
@@ -266,6 +286,34 @@ impl AccountStates {
     /// The accounts' indexes, which the requests about one of them name.
     pub fn indexes(&self) -> Vec<u64> {
         self.0.iter().map(|account| account.index).collect()
+    }
+
+    /// The index of the account orders are placed for: the address's main
+    /// one. None for an address with no account.
+    pub fn trading(&self) -> Option<u64> {
+        self.main().map(|account| account.index)
+    }
+
+    fn main(&self) -> Option<&AccountState> {
+        self.0.iter().find(|account| account.account_type == 0)
+    }
+
+    /// How the main account is set to trade the market named `symbol`,
+    /// whether it holds any of it or not. None for a market it never
+    /// traded, which is set as the market's defaults are.
+    pub fn setting(&self, symbol: &str) -> Option<Leverage> {
+        self.main()?
+            .positions
+            .iter()
+            .find(|entry| entry.symbol == symbol)?
+            .setting()
+    }
+
+    /// Every market an account of the address has an entry for: its symbol
+    /// and its index.
+    pub fn markets(&self) -> impl Iterator<Item = (&str, u64)> {
+        let entries = self.0.iter().flat_map(|account| &account.positions);
+        entries.filter_map(|entry| Some((entry.symbol.as_str(), entry.market_id?)))
     }
 
     /// The address's margin trading: its accounts' together.
@@ -472,5 +520,39 @@ mod tests {
         let margin = none.margin();
         assert!(margin.positions.is_empty());
         assert_eq!((margin.equity, margin.funding), (None, Some(0.0)));
+    }
+
+    #[test]
+    fn trading_is_the_main_accounts_and_set_market_by_market() {
+        let states = read(reply());
+        // Orders are placed for the main account, not the sub-account.
+        assert_eq!(states.trading(), Some(2180));
+        // A market it holds, and one it holds none of any more.
+        assert_eq!(
+            states.setting("ETH"),
+            Some(Leverage {
+                value: 50.0,
+                mode: MarginMode::Cross
+            })
+        );
+        assert_eq!(
+            states.setting("POL"),
+            Some(Leverage {
+                value: 3.0,
+                mode: MarginMode::Cross
+            })
+        );
+        assert_eq!(
+            states.setting("XAG").map(|setting| setting.mode),
+            Some(MarginMode::Isolated)
+        );
+        // One it never traded has no setting of its own.
+        assert_eq!(states.setting("SOL"), None);
+        // Every entry that names its market's index, the pool's left out.
+        let markets: Vec<(&str, u64)> = states.markets().collect();
+        assert_eq!(markets, [("ETH", 0), ("BTC", 1), ("POL", 14), ("XAG", 93)]);
+
+        let none = read(json!({ "code": 200, "accounts": null }));
+        assert_eq!((none.trading(), none.setting("ETH")), (None, None));
     }
 }
